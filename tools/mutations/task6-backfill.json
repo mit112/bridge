@@ -1,0 +1,38 @@
+[
+  {
+    "name": "make writing the default instead of dry-run",
+    "file": "src/bridge/backfill.py",
+    "old": "def run(store, cfg, write: bool = False) -> BackfillStats:",
+    "new": "def run(store, cfg, write: bool = True) -> BackfillStats:",
+    "tests": [
+      "tests/test_backfill.py::test_dry_run_is_the_default_and_writes_nothing"
+    ]
+  },
+  {
+    "name": "use a random id so backfill is not idempotent",
+    "file": "src/bridge/backfill.py",
+    "old": "        return str(uuid.uuid5(NAMESPACE, f\"{self.path}\\n{digest}\"))",
+    "new": "        return str(uuid.uuid4())",
+    "tests": [
+      "tests/test_backfill.py::test_writing_twice_creates_one_handoff_per_file"
+    ]
+  },
+  {
+    "name": "keep the whole file even when a section was found",
+    "file": "src/bridge/backfill.py",
+    "old": "    return section, True",
+    "new": "    return text.strip(), True",
+    "tests": [
+      "tests/test_backfill.py::test_extract_takes_only_the_delimited_next_session_section"
+    ]
+  },
+  {
+    "name": "report an unstructured file as structured",
+    "file": "src/bridge/backfill.py",
+    "old": "    if match is None:\n        return text.strip(), False",
+    "new": "    if match is None:\n        return text.strip(), True",
+    "tests": [
+      "tests/test_backfill.py::test_an_unstructured_file_is_flagged_in_its_summary"
+    ]
+  }
+]
