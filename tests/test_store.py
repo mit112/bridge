@@ -221,3 +221,21 @@ def test_transaction_commits_both_writes(store):
         store.upsert_session(rec("sy"), pid)
     assert store.get_scan_state("/t/y.jsonl")["parsed_offset"] == 50
     assert len(store.sessions(pid)) == 1
+
+
+def test_alias_map_round_trips_what_was_set(store):
+    store.set_alias("/old/a", "/new/a")
+    store.set_alias("/old/b", "/new/b")
+    assert store.alias_map() == {"/old/a": "/new/a", "/old/b": "/new/b"}
+
+
+def test_alias_map_is_empty_before_anything_is_seeded(store):
+    assert store.alias_map() == {}
+
+
+def test_reseeding_an_alias_replaces_its_target(store):
+    """Seeding runs on every index, so the same alias is written repeatedly.
+    It must update in place rather than raising on the primary key."""
+    store.set_alias("/old/a", "/new/a")
+    store.set_alias("/old/a", "/newer/a")
+    assert store.alias_map() == {"/old/a": "/newer/a"}

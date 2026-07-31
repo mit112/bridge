@@ -125,3 +125,91 @@ def test_two_projects_are_separated(env):
           dirname="-Users-mitsheth-dev-other")
     reindex(store, cfg)
     assert {p["name"] for p in store.projects()} == {"demo", "other"}
+
+
+# --- Path aliasing -----------------------------------------------------------
+#
+# Old `~/Documents/...` cwds and their `~/dev/...` successors are the same
+# logical project. `aliased_env` models that with one alias, one unrelated
+# project, and one archived path.
+
+OLD = "/Users/mitsheth/Documents/demo"
+NEW = "/Users/mitsheth/dev/demo"
+GONE = "/Users/mitsheth/Documents/deleted-thing"
+OLD_DIR = "-Users-mitsheth-Documents-demo"
+GONE_DIR = "-Users-mitsheth-Documents-deleted-thing"
+SID_B = "44444444-4444-4444-4444-444444444444"
+
+
+@pytest.fixture
+def aliased_env(tmp_path):
+    projects = tmp_path / "projects"
+    for d in ("-Users-mitsheth-dev-demo", OLD_DIR, GONE_DIR,
+              "-Users-mitsheth-dev-other"):
+        (projects / d).mkdir(parents=True)
+    cfg = load({
+        "claude_projects_dir": projects,
+        "db_path": tmp_path / "b.db",
+        "aliases": {OLD: NEW},
+        "archived_paths": (GONE,),
+    })
+    store = Store(cfg.db_path)
+    yield cfg, store, projects
+    store.close()
+
+
+def test_session_recorded_under_an_alias_attributes_to_the_canonical_path(aliased_env):
+    cfg, store, projects = aliased_env
+    write(projects, "old.jsonl", transcript_lines(cwd=OLD), dirname=OLD_DIR)
+    reindex(store, cfg)
+    assert [p["path"] for p in store.projects()] == [NEW]
+
+
+def test_split_history_across_an_alias_merges_into_one_project(aliased_env):
+    """The point of the feature: sessions from before and after the move land
+    in a single card with a single history."""
+    cfg, store, projects = aliased_env
+    write(projects, "old.jsonl", transcript_lines(cwd=OLD), dirname=OLD_DIR)
+    write(projects, "new.jsonl", transcript_lines(sid=SID_B, cwd=NEW))
+    reindex(store, cfg)
+    projs = store.projects()
+    assert len(projs) == 1
+    assert projs[0]["path"] == NEW
+    assert {s["id"] for s in store.sessions(projs[0]["id"])} == {SID, SID_B}
+
+
+def test_a_path_with_no_alias_is_attributed_unchanged(aliased_env):
+    cfg, store, projects = aliased_env
+    write(projects, "o.jsonl", transcript_lines(cwd="/Users/mitsheth/dev/other"),
+          dirname="-Users-mitsheth-dev-other")
+    reindex(store, cfg)
+    assert [p["path"] for p in store.projects()] == ["/Users/mitsheth/dev/other"]
+
+
+def test_configured_archive_path_is_created_then_hidden(aliased_env):
+    """The project row does not exist until this run creates it, so archiving
+    must happen after indexing, not before."""
+    cfg, store, projects = aliased_env
+    write(projects, "g.jsonl", transcript_lines(cwd=GONE), dirname=GONE_DIR)
+    reindex(store, cfg)
+    assert store.projects() == []
+    hidden = store.projects(include_hidden=True)
+    assert [(p["path"], p["status"]) for p in hidden] == [(GONE, "archived")]
+
+
+def test_reindexing_a_changed_file_does_not_unarchive_its_project(aliased_env):
+    cfg, store, projects = aliased_env
+    p = write(projects, "g.jsonl", transcript_lines(cwd=GONE), dirname=GONE_DIR)
+    reindex(store, cfg)
+    with p.open("a") as f:
+        f.write(jline(type="ai-title", sessionId=SID, aiTitle="Renamed"))
+    reindex(store, cfg)
+    assert store.projects() == []
+
+
+def test_aliases_from_config_are_persisted_to_the_alias_table(aliased_env):
+    """Seeded into the DB, not just applied in memory, so a future UI-added
+    alias and a config-declared one live in the same place."""
+    cfg, store, projects = aliased_env
+    reindex(store, cfg)
+    assert store.alias_map() == {OLD: NEW}

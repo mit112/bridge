@@ -58,6 +58,12 @@ SCHEMA = [
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS project_aliases (
+        alias_path TEXT PRIMARY KEY,
+        canonical_path TEXT NOT NULL
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS git_cache (
         project_id INTEGER PRIMARY KEY REFERENCES projects(id),
         payload_json TEXT NOT NULL,
@@ -150,6 +156,12 @@ class Store:
                 "SELECT id FROM projects WHERE path=?", (path,)
             ).fetchone()["id"]
 
+    def project_by_path(self, path: str) -> sqlite3.Row | None:
+        with self._lock:
+            return self.conn.execute(
+                "SELECT * FROM projects WHERE path=?", (path,)
+            ).fetchone()
+
     def get_project(self, project_id: int) -> sqlite3.Row | None:
         with self._lock:
             return self.conn.execute(
@@ -168,6 +180,27 @@ class Store:
             if not include_hidden:
                 sql += " WHERE status='active'"
             return list(self.conn.execute(sql + " ORDER BY name"))
+
+    def set_alias(self, alias_path: str, canonical_path: str) -> None:
+        """Seeding re-runs on every index, so this must update in place."""
+        with self._lock:
+            self.conn.execute(
+                "INSERT INTO project_aliases(alias_path, canonical_path) VALUES(?,?) "
+                "ON CONFLICT(alias_path) DO UPDATE SET "
+                "canonical_path=excluded.canonical_path",
+                (alias_path, canonical_path),
+            )
+
+    def alias_map(self) -> dict[str, str]:
+        """Read once per index run; attribution then resolves in memory rather
+        than round-tripping per record."""
+        with self._lock:
+            return {
+                row["alias_path"]: row["canonical_path"]
+                for row in self.conn.execute(
+                    "SELECT alias_path, canonical_path FROM project_aliases"
+                )
+            }
 
     def upsert_session(self, rec: SessionRecord, project_id: int) -> None:
         with self._lock:

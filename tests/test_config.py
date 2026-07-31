@@ -28,3 +28,27 @@ def test_config_is_frozen():
     except Exception:
         return
     raise AssertionError("Config must be immutable")
+
+
+def test_default_aliases_are_the_verified_moved_project_mappings():
+    """These seven cwds are old locations of projects that now live in ~/dev.
+    Without the mapping each shows as a duplicate card with split history."""
+    h = str(Path.home())
+    assert load().aliases == {
+        f"{h}/Documents/Job apps": f"{h}/dev/Job apps",
+        f"{h}/Documents/projectX": f"{h}/dev/projectX",
+        f"{h}/Documents/projectX/hookrail": f"{h}/dev/projectX/hookrail",
+        f"{h}/Documents/claude-stuff/dota2": f"{h}/dev/claude-stuff/dota2",
+        f"{h}/Documents/claude-stuff/Houston social":
+            f"{h}/dev/claude-stuff/Houston social",
+        # A rename as well as a move: the two spellings genuinely differ.
+        f"{h}/Documents/anhkhooey": f"{h}/dev/anghkooey",
+        # A deleted worktree folded back into its parent repo.
+        f"{h}/dev/StreakSync/.worktrees/streaksync-ui-polish": f"{h}/dev/StreakSync",
+    }
+
+
+def test_vanditzeel_is_archived_because_it_has_no_alias_target():
+    assert load().archived_paths == (
+        f"{Path.home()}/Documents/Vandit & Zeel/VANDITZEEL",
+    )

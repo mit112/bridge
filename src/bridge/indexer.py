@@ -32,18 +32,33 @@ def reindex(
     files = transcript_files(cfg.claude_projects_dir)
     total = len(files)
 
+    # Seed before indexing so this run's sessions attribute to canonical paths,
+    # and read back the union of config-declared and already-stored aliases.
+    for alias, canonical in cfg.aliases.items():
+        store.set_alias(alias, canonical)
+    aliases = store.alias_map()
+
     for i, path in enumerate(files):
         stats.files_seen += 1
         if progress:
             progress(i + 1, total)
         try:
-            _index_one(store, path, stats)
+            _index_one(store, path, stats, aliases)
         except OSError:
             continue  # file vanished or unreadable mid-run; never fatal
+
+    # After indexing: a path only worth archiving may not have had a project
+    # row until this run created it.
+    for archived in cfg.archived_paths:
+        row = store.project_by_path(archived)
+        if row is not None and row["status"] != "archived":
+            store.set_project_status(row["id"], "archived")
     return stats
 
 
-def _index_one(store: Store, path: Path, stats: IndexStats) -> None:
+def _index_one(
+    store: Store, path: Path, stats: IndexStats, aliases: dict[str, str]
+) -> None:
     st = path.stat()
     prior = store.get_scan_state(str(path))
     start, prev = 0, None
@@ -84,6 +99,9 @@ def _index_one(store: Store, path: Path, stats: IndexStats) -> None:
 
         if not project_path:
             return  # no resolvable project; nothing to attribute the session to
+        # Exact match only: `~/Documents/projectX` and its `hookrail` child are
+        # separate projects with separate mappings, so no prefix rewriting.
+        project_path = aliases.get(project_path, project_path)
         pid = store.upsert_project(project_path, display_name(project_path))
         store.upsert_session(rec, pid)
         stats.sessions_upserted += 1
