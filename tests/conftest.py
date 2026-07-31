@@ -48,8 +48,12 @@ def never_touch_the_real_bridge_dir(monkeypatch):
 
         return wrapper
 
-    for name in ("write", "journal", "drain", "rebuild_if_empty", "pending",
-                 "pending_count"):
+    # Every spool entry point that takes a directory belongs here. `journal_status`
+    # is Phase 3's and was added to this tuple with it: a writer that is missing
+    # from the list is not guarded at all, and the omission is invisible until a
+    # test has already written to the real spool.
+    for name in ("write", "journal", "journal_status", "drain", "rebuild_if_empty",
+                 "pending", "pending_count"):
         monkeypatch.setattr(spool, name, guarded(name, getattr(spool, name)))
 
 
