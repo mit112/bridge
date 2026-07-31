@@ -1,9 +1,9 @@
 # Bridge — Handoff
 
 **Date:** 2026-07-31
-**Branch:** `phase1-read-only-panel` — 29 commits, 93 tests passing, tree clean
-**Status:** Phase 1 complete and working, **plus path aliasing**. **Not merged.**
-Phase 2 is planned but not started.
+**Branch:** `main` at `08d5eab` — 93 tests passing, tree clean
+**Status:** Phase 1 **merged**, including path aliasing. `phase1-read-only-panel`
+is merged and deleted. Phase 2 is planned but not started.
 
 There is an irony worth noting: this file exists because Bridge's Phase 2 — the
 handoff loop that would store this automatically — isn't built yet. This is the
@@ -56,9 +56,7 @@ no migration — delete `~/.bridge/bridge.db` and re-index (~11s).
 
 ## Open items
 
-1. **Merge decision** for `phase1-read-only-panel`. Mit's call; nothing is
-   blocking it now.
-2. **Four Phase 2 decisions** were put to Mit and timed out unanswered. They are
+1. **Four Phase 2 decisions** were put to Mit and timed out unanswered. They are
    implemented as assumptions in the Phase 2 plan's first table — queue
    semantics, server uptime model, Phase 2's usable surface, and backfill.
    Confirm before Task 2.
