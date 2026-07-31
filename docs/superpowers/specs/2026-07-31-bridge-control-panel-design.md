@@ -301,7 +301,9 @@ what's at risk → what it cost → what's next.
   colored; everything else earns attention through weight and whitespace.
 - **One number per concern, unit implied.** `47 dirty`, not `Uncommitted changes: 47 files`.
 - **The ⚠ is the highest-value element on the card.** Uncommitted-work age is the real risk signal.
-  It is the only warning treatment, so it never competes for attention.
+  It is the only warning treatment, so it never competes for attention. It appears when
+  `oldest_uncommitted_at` exceeds **12 hours**, configurable as `stale_hours` in
+  `~/.bridge/config.toml`. A project with no tracked modifications never shows it regardless of age.
 - **Single column; two columns at ≥1400px.** Readability was an explicit requirement, and a dense
   grid at this information level stops being scannable.
 - Relative timestamps (`12m ago`) with absolute times on hover.
