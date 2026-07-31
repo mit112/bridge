@@ -18,10 +18,16 @@ GIT = "/usr/bin/git"
 
 
 def _git(path: Path, *args: str, timeout: float) -> tuple[int, str]:
+    """Returns (returncode, RAW stdout).
+
+    Deliberately unstripped: `git status --porcelain` encodes status in the
+    first two columns, and an unstaged modification is ' M path'. Stripping
+    the whole output shifts that line left and corrupts the path.
+    """
     proc = subprocess.run(
         [GIT, *args], cwd=path, capture_output=True, text=True, timeout=timeout
     )
-    return proc.returncode, proc.stdout.strip()
+    return proc.returncode, proc.stdout
 
 
 def probe(path: Path, timeout: float = 2.0) -> GitState:
@@ -30,11 +36,12 @@ def probe(path: Path, timeout: float = 2.0) -> GitState:
         return GitState(status="unavailable")
     try:
         code, out = _git(path, "rev-parse", "--is-inside-work-tree", timeout=timeout)
-        if code != 0 or out != "true":
+        if code != 0 or out.strip() != "true":
             return GitState(status="not_a_repo")
 
         g = GitState(status="ok")
-        _, g.branch = _git(path, "rev-parse", "--abbrev-ref", "HEAD", timeout=timeout)
+        _, branch_out = _git(path, "rev-parse", "--abbrev-ref", "HEAD", timeout=timeout)
+        g.branch = branch_out.strip()
 
         _, porcelain = _git(path, "status", "--porcelain", timeout=timeout)
         entries = [l for l in porcelain.splitlines() if l.strip()]
@@ -44,11 +51,13 @@ def probe(path: Path, timeout: float = 2.0) -> GitState:
         code, counts = _git(
             path, "rev-list", "--left-right", "--count", "@{u}...HEAD", timeout=timeout
         )
+        counts = counts.strip()
         if code == 0 and "\t" in counts:
             behind, ahead = counts.split("\t")[:2]
             g.behind, g.ahead = int(behind), int(ahead)
 
         code, last = _git(path, "log", "-1", "--format=%s%x09%ct", timeout=timeout)
+        last = last.strip()
         if code == 0 and "\t" in last:
             summary, ct = last.rsplit("\t", 1)
             g.last_commit_summary = summary

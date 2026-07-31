@@ -136,7 +136,10 @@ def test_oldest_uncommitted_at_is_genuinely_the_oldest(repo):
     os.utime(repo / "a.txt", (newer, newer))   # sorts first, but is NEWER
     os.utime(repo / "b.txt", (older, older))   # sorts second, but is OLDER
     g = probe(repo)
+    # Both files must actually reach the age computation, or the oldest/newest
+    # distinction is untestable (this is how the porcelain-strip bug hid).
     assert g.dirty_count == 2
+    assert g.oldest_uncommitted_at is not None
     assert g.oldest_uncommitted_at == older
 
 
@@ -165,3 +168,20 @@ def test_ahead_behind_against_a_real_upstream(repo, tmp_path):
     ahead_one = probe(repo)
     assert ahead_one.ahead == 1, "ahead/behind may be swapped"
     assert ahead_one.behind == 0
+
+
+def test_unstaged_modified_file_is_included_in_age(repo):
+    """Porcelain marks an unstaged modification with a LEADING space: ' M path'.
+
+    Stripping the whole stdout shifts that line left, so `line[3:]` yields
+    '.txt' instead of 'a.txt', stat() raises OSError, and the file is silently
+    dropped from the age computation while still counted in dirty_count. With a
+    single modified file the bug makes oldest_uncommitted_at None.
+    """
+    (repo / "a.txt").write_text("changed\n")   # tracked -> ' M a.txt'
+    old = 1_500_000_000
+    os.utime(repo / "a.txt", (old, old))
+    g = probe(repo)
+    assert g.status == "ok"
+    assert g.dirty_count == 1
+    assert g.oldest_uncommitted_at == old, "unstaged-modified file was dropped"
