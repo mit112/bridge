@@ -150,6 +150,15 @@ Repo path → `branch`, `dirty_count`, `ahead`, `behind`, `last_commit_summary`,
 mutates. `oldest_uncommitted_at` is the oldest mtime among tracked-and-modified files, which is
 what makes the staleness warning meaningful.
 
+**Never strip `git status --porcelain` output as a whole.** Porcelain encodes status in the first
+two columns, and an unstaged modification is ` M path` with a leading space. Stripping the full
+stdout shifts that line left, so a fixed `line[3:]` slice mangles the path, `stat()` raises
+`OSError`, and the file is silently dropped from the age computation while still counted in
+`dirty_count` — corrupting the staleness signal for the most common git state there is. Strip only
+where a scalar is wanted (branch, counts, log); split porcelain raw. Rename entries (`R old -> new`)
+must have the arrow split off *before* quotes are stripped, or a quoted destination keeps a stray
+leading quote.
+
 ### 3. `agents`
 Wraps `claude agents --json` → list of live sessions with `session_id`, `cwd`, `model`, `effort`,
 `started_at`. Tolerates non-zero exit, malformed JSON, and unexpected shape by returning
