@@ -197,16 +197,6 @@ def test_configured_archive_path_is_created_then_hidden(aliased_env):
     assert [(p["path"], p["status"]) for p in hidden] == [(GONE, "archived")]
 
 
-def test_reindexing_a_changed_file_does_not_unarchive_its_project(aliased_env):
-    cfg, store, projects = aliased_env
-    p = write(projects, "g.jsonl", transcript_lines(cwd=GONE), dirname=GONE_DIR)
-    reindex(store, cfg)
-    with p.open("a") as f:
-        f.write(jline(type="ai-title", sessionId=SID, aiTitle="Renamed"))
-    reindex(store, cfg)
-    assert store.projects() == []
-
-
 def test_aliases_from_config_are_persisted_to_the_alias_table(aliased_env):
     """Seeded into the DB, not just applied in memory, so a future UI-added
     alias and a config-declared one live in the same place."""

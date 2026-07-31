@@ -239,3 +239,13 @@ def test_reseeding_an_alias_replaces_its_target(store):
     store.set_alias("/old/a", "/new/a")
     store.set_alias("/old/a", "/newer/a")
     assert store.alias_map() == {"/old/a": "/newer/a"}
+
+
+def test_upsert_project_does_not_reset_an_existing_status(store):
+    """Re-indexing upserts every project it sees, so an archived project must
+    survive the upsert. This is what makes a status set from outside the
+    config's archive list durable."""
+    pid = store.upsert_project("/d", "d")
+    store.set_project_status(pid, "archived")
+    assert store.upsert_project("/d", "d") == pid
+    assert store.get_project(pid)["status"] == "archived"
