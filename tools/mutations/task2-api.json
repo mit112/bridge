@@ -20,7 +20,7 @@
   {
     "name": "remove the boot-time spool drain",
     "file": "src/bridge/api.py",
-    "old": "    try:\n        app.state.boot_drain = asdict(spool.drain(store, cfg.spool_dir))\n    except Exception as exc:  # noqa: BLE001\n        app.state.boot_drain = {\"error\": repr(exc)}",
+    "old": "    try:\n        app.state.boot_drain = asdict(spool.drain(store, cfg.spool_dir))\n    except OSError as exc:\n        app.state.boot_drain = {\"error\": repr(exc)}",
     "new": "    app.state.boot_drain = {\"skipped\": True}",
     "tests": [
       "tests/test_api.py::test_boot_drain_ingests_a_spooled_handoff_before_serving"
@@ -29,8 +29,8 @@
   {
     "name": "let a broken spool abort startup",
     "file": "src/bridge/api.py",
-    "old": "    except Exception as exc:  # noqa: BLE001\n        app.state.boot_drain = {\"error\": repr(exc)}",
-    "new": "    except ValueError as exc:  # noqa: BLE001\n        app.state.boot_drain = {\"error\": repr(exc)}",
+    "old": "    except OSError as exc:\n        app.state.boot_drain = {\"error\": repr(exc)}",
+    "new": "    except ValueError as exc:\n        app.state.boot_drain = {\"error\": repr(exc)}",
     "tests": [
       "tests/test_api.py::test_an_unreadable_spool_does_not_stop_the_panel_from_starting"
     ]
@@ -84,7 +84,7 @@
     "name": "server rewrites the CLI-minted id, breaking POST idempotency",
     "file": "src/bridge/api.py",
     "old": "            id=body.id,",
-    "new": "            id=body.id + \"-x\",",
+    "new": "            id=__import__(\"uuid\").uuid4().hex,",
     "tests": [
       "tests/test_api.py::test_posting_the_same_id_twice_yields_one_row"
     ]
