@@ -414,3 +414,54 @@ def test_a_live_post_is_journaled_so_the_database_stays_disposable(tmp_path):
     pid = store2.project_by_path(DEMO)["id"]
     assert store2.queued_handoff(pid)["next_prompt"] == "captured while up"
     store2.close()
+
+
+def test_a_queued_prompt_is_html_escaped_on_the_card(handoff_app):
+    """A prompt is arbitrary text and routinely contains markup."""
+    c, _, _ = handoff_app
+    prompt = "before <script>alert('xss')</script> after"
+    c.post("/api/handoff", json=body("h1", prompt=prompt))
+
+    html = c.get("/").text
+
+    assert "<script>alert(" not in html, "the prompt was rendered as live markup"
+    assert "&lt;script&gt;alert(" in html
+    assert "Copy prompt" in html
+
+
+def test_the_card_shows_the_handoff_and_a_labelled_copy_affordance(handoff_app):
+    c, _, _ = handoff_app
+    c.post("/api/handoff", json=body("h1", prompt="carry on from here"))
+
+    html = c.get("/").text
+
+    assert "Next step queued" in html
+    assert "a summary" in html
+    # The button says what it does, and the confirmation is a live region so it
+    # is announced without moving focus.
+    assert ">Copy prompt<" in html
+    assert 'role="status"' in html
+    assert 'aria-live="polite"' in html
+    assert 'data-copy-target="handoff-h1"' in html
+    assert 'id="handoff-h1"' in html
+
+
+def test_a_card_with_no_handoff_shows_no_empty_affordance(client):
+    """No orphan Copy button, no empty block, on the majority of cards."""
+    c, _, _ = client
+    html = c.get("/").text
+    assert "Next step queued" not in html
+    assert "Copy prompt" not in html
+    assert "data-copy-target" not in html
+
+
+def test_the_project_page_lists_past_handoffs_with_their_status(handoff_app):
+    c, store, _ = handoff_app
+    pid = c.post("/api/handoff", json=body("old", prompt="first")).json()["project_id"]
+    c.post("/api/handoff", json=body("new", prompt="second"))
+
+    html = c.get(f"/project/{pid}").text
+
+    assert "Handoffs, most recent first" in html
+    assert "superseded" in html
+    assert "queued" in html

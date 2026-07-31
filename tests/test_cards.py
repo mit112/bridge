@@ -105,3 +105,48 @@ def test_sort_key_rank_is_first_element(store, tmp_path):
     cfg = load({"db_path": tmp_path / "c.db"})
     card = build_cards(store, cfg, probe_fn=lambda p: GitState(status="ok"))[0]
     assert isinstance(sort_key(card)[0], int)
+
+
+# --- Phase 2: queued handoffs outrank everything else ------------------------
+
+
+def test_a_queued_handoff_sorts_above_a_dirty_and_stale_project(tmp_path):
+    """A card that already knows its next step is more actionable than one that
+    only knows something is wrong."""
+    from bridge.models import Handoff
+
+    cfg = load({"db_path": tmp_path / "sort.db",
+                "spool_dir": tmp_path / "spool", "stale_hours": 1})
+    store = Store(cfg.db_path)
+
+    stale_pid = store.upsert_project("/Users/mitsheth/dev/aaa-stale", "aaa-stale")
+    queued_pid = store.upsert_project("/Users/mitsheth/dev/zzz-queued", "zzz-queued")
+    for pid, sid in ((stale_pid, "s-stale"), (queued_pid, "s-queued")):
+        store.upsert_session(
+            SessionRecord(session_id=sid, transcript_path=f"/t/{sid}",
+                          title="work", ended_at="2026-07-30T10:00:00.000Z"),
+            pid,
+        )
+    store.create_handoff(
+        Handoff(id="h1", project_path="/Users/mitsheth/dev/zzz-queued",
+                next_prompt="do the next thing", summary="a summary",
+                created_at=1000),
+        queued_pid,
+    )
+
+    # The stale one is dirty and old; the queued one is a clean repo.
+    def probe(path):
+        if path.endswith("aaa-stale"):
+            return GitState(status="ok", branch="main", dirty_count=9,
+                            oldest_uncommitted_at=1)
+        return GitState(status="ok", branch="main", dirty_count=0)
+
+    cards = build_cards(store, cfg, probe_fn=probe)
+    store.close()
+
+    assert [c.name for c in cards] == ["zzz-queued", "aaa-stale"], (
+        "the queued handoff must outrank dirty-and-stale, and must not be "
+        "decided by name order"
+    )
+    assert cards[0].handoff["summary"] == "a summary"
+    assert cards[1].handoff is None

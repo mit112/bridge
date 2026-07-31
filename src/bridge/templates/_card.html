@@ -1,4 +1,4 @@
-<article class="card{% if card.is_stale %} card--risk{% endif %}">
+<article class="card{% if card.handoff %} card--queued{% elif card.is_stale %} card--risk{% endif %}">
   <header class="card__head">
     <h2><a href="/project/{{ card.project_id }}">{{ card.name }}</a></h2>
     {% if card.session and card.session.model %}
@@ -31,6 +31,25 @@
       <span class="card__note">git unavailable</span>
     {% endif %}
   </p>
+
+  {% if card.handoff %}
+    {% set hid = "handoff-" ~ card.handoff.id %}
+    <section class="handoff" aria-labelledby="{{ hid }}-title">
+      <h3 class="handoff__title" id="{{ hid }}-title">Next step queued</h3>
+      {% if card.handoff.summary %}
+        <p class="handoff__summary">{{ card.handoff.summary }}</p>
+      {% endif %}
+      {# tabindex so keyboard users can scroll the region, with a name for it. #}
+      <pre class="handoff__prompt" id="{{ hid }}" tabindex="0"
+           aria-label="Queued prompt for {{ card.name }}">{{ card.handoff.next_prompt }}</pre>
+      <p class="handoff__actions">
+        <button type="button" class="btn" data-copy-target="{{ hid }}">Copy prompt</button>
+        {# Confirmation carries a glyph and words, never colour alone. #}
+        <span class="handoff__status" role="status" aria-live="polite"
+              data-copy-status="{{ hid }}"></span>
+      </p>
+    </section>
+  {% endif %}
 
   <p class="card__burn">
     <span>{{ card.tokens_today | kilo }} today</span>

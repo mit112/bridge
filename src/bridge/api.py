@@ -49,8 +49,8 @@ def create_app(store: Store, cfg: Config) -> FastAPI:
     app = FastAPI(title="Bridge")
 
     # Drain before serving. Under the manual-`bridge serve` uptime model this is
-    # the main way handoffs arrive, so it runs on every boot — and a spool that
-    # cannot be read must never stop the panel from starting.
+    # the main way handoffs arrive, so it runs on every boot.
+    #
     # `OSError` and not `Exception`: an unreadable or missing spool must not stop
     # the panel, but a *programming* error in the drain must not be swallowed
     # either. A catch-all here silently absorbed a test guard, and would just as
@@ -89,7 +89,11 @@ def create_app(store: Store, cfg: Config) -> FastAPI:
         return templates.TemplateResponse(
             request,
             "project.html",
-            {"project": row, "sessions": store.sessions(project_id)},
+            {
+                "project": row,
+                "sessions": store.sessions(project_id),
+                "handoffs": store.handoffs(project_id),
+            },
         )
 
     @app.get("/api/projects")

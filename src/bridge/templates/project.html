@@ -3,6 +3,24 @@
 {% block content %}
 <h2>{{ project.name }}</h2>
 <p class="card__path">{{ project.path }}</p>
+{% if handoffs %}
+<table class="handoffs">
+  <caption>Handoffs, most recent first</caption>
+  <thead>
+    <tr><th scope="col">Status</th><th scope="col">Created</th><th scope="col">Summary</th></tr>
+  </thead>
+  <tbody>
+    {% for h in handoffs %}
+    <tr>
+      <td class="status--{{ h['status'] }}">{{ h["status"] }}</td>
+      <td><time datetime="{{ h['created_at'] }}">{{ h["created_at"] | ago_epoch }} ago</time></td>
+      <td>{{ h["summary"] or "(no summary)" }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
 <table class="sessions">
   <caption>Indexed sessions, most recent first</caption>
   <thead>

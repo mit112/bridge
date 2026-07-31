@@ -1,0 +1,29 @@
+[
+  {
+    "name": "unquote the prompt heredoc delimiter so the shell expands the prompt",
+    "file": "commands/handoff.md",
+    "old": "  --prompt-file - <<'BRIDGE_PROMPT'",
+    "new": "  --prompt-file - <<BRIDGE_PROMPT",
+    "tests": [
+      "tests/test_handoff_command.py::test_the_documented_command_captures_a_realistic_prompt"
+    ]
+  },
+  {
+    "name": "interpolate the summary into the command line instead of a heredoc",
+    "file": "commands/handoff.md",
+    "old": "summary=$(cat <<'BRIDGE_SUMMARY'\n<your one-line summary>\nBRIDGE_SUMMARY\n)\nbridge handoff \\\n  --summary \"$summary\" \\",
+    "new": "bridge handoff \\\n  --summary \"<your one-line summary>\" \\",
+    "tests": [
+      "tests/test_handoff_command.py::test_the_documented_command_captures_a_realistic_prompt"
+    ]
+  },
+  {
+    "name": "drop the --session-id flag so the handoff loses its transcript link",
+    "file": "commands/handoff.md",
+    "old": "  --session-id \"$CLAUDE_CODE_SESSION_ID\" \\\n",
+    "new": "",
+    "tests": [
+      "tests/test_handoff_command.py::test_the_documented_command_captures_a_realistic_prompt"
+    ]
+  }
+]

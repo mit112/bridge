@@ -69,3 +69,6 @@ class Card:
     tokens_5h: int
     spark: list[int] = field(default_factory=list)
     is_stale: bool = False
+    # The queued handoff, as a plain dict. A card carries at most one: the store
+    # supersedes the rest, so "what next" is never ambiguous.
+    handoff: dict | None = None
