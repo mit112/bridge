@@ -150,6 +150,15 @@ Repo path → `branch`, `dirty_count`, `ahead`, `behind`, `last_commit_summary`,
 mutates. `oldest_uncommitted_at` is the oldest mtime among tracked-and-modified files, which is
 what makes the staleness warning meaningful.
 
+**Never strip `git status --porcelain` output as a whole.** Porcelain encodes status in the first
+two columns, and an unstaged modification is ` M path` with a leading space. Stripping the full
+stdout shifts that line left, so a fixed `line[3:]` slice mangles the path, `stat()` raises
+`OSError`, and the file is silently dropped from the age computation while still counted in
+`dirty_count` — corrupting the staleness signal for the most common git state there is. Strip only
+where a scalar is wanted (branch, counts, log); split porcelain raw. Rename entries (`R old -> new`)
+must have the arrow split off *before* quotes are stripped, or a quoted destination keeps a stray
+leading quote.
+
 ### 3. `agents`
 Wraps `claude agents --json` → list of live sessions with `session_id`, `cwd`, `model`, `effort`,
 `started_at`. Tolerates non-zero exit, malformed JSON, and unexpected shape by returning
@@ -175,6 +184,57 @@ git_cache(project_id PK, payload_json, probed_at)
 ```
 
 Migrations are **additive only** — new columns and tables, never a table rebuild.
+
+SQLite has no `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`, so replaying a schema
+list on every open cannot add a column: the second open raises `duplicate column
+name`. Column evolution therefore goes through a `COLUMN_MIGRATIONS` map plus an
+`_ensure_columns()` step that consults `PRAGMA table_info` and issues `ALTER
+TABLE` only for columns genuinely absent. Tables keep using `CREATE TABLE IF NOT
+EXISTS`. This is what makes the additive-only doctrine executable rather than
+aspirational.
+
+### 4b. Path aliasing (Phase 2)
+
+Projects move. Seven of this machine's transcript `cwd` values point at old
+`~/Documents/...` locations for projects that now live under `~/dev`, so the same
+logical project appears twice with split history. Approved resolution: **alias old
+paths to canonical ones and merge the history**, rather than archiving the old
+halves.
+
+```
+project_aliases(alias_path TEXT PRIMARY KEY, canonical_path TEXT NOT NULL)
+```
+
+`indexer._index_one` maps `rec.project_path` through `project_aliases` before
+calling `upsert_project`, so sessions recorded under an old path attribute to the
+canonical project. Verified mappings (all targets confirmed present on disk):
+
+| alias_path | canonical_path |
+|---|---|
+| `~/Documents/Job apps` | `~/dev/Job apps` |
+| `~/Documents/projectX` | `~/dev/projectX` |
+| `~/Documents/projectX/hookrail` | `~/dev/projectX/hookrail` |
+| `~/Documents/claude-stuff/dota2` | `~/dev/claude-stuff/dota2` |
+| `~/Documents/claude-stuff/Houston social` | `~/dev/claude-stuff/Houston social` |
+| `~/Documents/anhkhooey` | `~/dev/anghkooey` |
+| `~/dev/StreakSync/.worktrees/streaksync-ui-polish` | `~/dev/StreakSync` |
+
+Two notes on that table. The `anhkhooey` → `anghkooey` entry is a rename as well as
+a move — the spellings genuinely differ. The StreakSync entry folds a deleted
+worktree into its parent repo, which is a judgment call: the work landed in the
+parent, so its sessions belong there.
+
+`~/Documents/Vandit & Zeel/VANDITZEEL` has **no alias target** — the directory is
+gone entirely. It gets archived via `set_project_status`, not aliased.
+
+**Re-attribution needs no migration.** The SQLite database is a pure derived cache
+of the transcripts; a full rebuild costs ~11 seconds. Any change to attribution,
+schema, or parsing is applied by deleting `~/.bridge/bridge.db` and re-indexing.
+This is why `COLUMN_MIGRATIONS` matters only for preserving a *running* server's
+data, never for correctness.
+
+Wiring this up also requires exposing `set_project_status`, which Phase 1 left
+unreachable.
 
 ### 5. `registry`
 Discovers and classifies projects. Opt-out, not opt-in: auto-discover from transcript directory

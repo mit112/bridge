@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block topbar %}
+<dl class="totals">
+  <dt>projects</dt><dd>{{ totals.projects }}</dd>
+  <dt>tokens today</dt><dd>{{ totals.today | kilo }}</dd>
+  <dt>last 5h</dt><dd>{{ totals.last_5h | kilo }}</dd>
+</dl>
+{% endblock %}
+{% block content %}
+{% if not cards %}
+  <p class="empty">No projects indexed yet. Run <code>uv run python -m bridge index</code>.</p>
+{% else %}
+  <ul class="cards">
+    {% for card in cards %}<li>{% include "_card.html" %}</li>{% endfor %}
+  </ul>
+{% endif %}
+{% endblock %}

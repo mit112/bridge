@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}{{ project.name }} — Bridge{% endblock %}
+{% block content %}
+<h2>{{ project.name }}</h2>
+<p class="card__path">{{ project.path }}</p>
+<table class="sessions">
+  <caption>Indexed sessions, most recent first</caption>
+  <thead>
+    <tr><th scope="col">Session</th><th scope="col">Ended</th><th scope="col">Model</th><th scope="col">Turns</th><th scope="col">Tokens</th></tr>
+  </thead>
+  <tbody>
+    {% for s in sessions %}
+    <tr>
+      <td>{{ s["title"] or "Untitled" }}</td>
+      <td><time datetime="{{ s['ended_at'] }}">{{ s["ended_at"] | ago }} ago</time></td>
+      <td>{{ s["model"] or "—" }}{% if s["effort"] %}/{{ s["effort"] }}{% endif %}</td>
+      <td>{{ s["user_msgs"] }}/{{ s["assistant_msgs"] }}</td>
+      <td>{{ (s["tokens_in"] + s["tokens_out"]) | kilo }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

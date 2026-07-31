@@ -423,9 +423,10 @@ class Card:
 
 Design notes driven by the real corpus (9,229 files, 3.5 GB):
   * `attachment` records are ~62% of all lines and carry nothing we need, so
-    they get a cheap prefix check before the JSON parse. If key order ever
-    changes the check simply misses and we parse normally — correctness is
-    never at stake, only speed.
+    `_apply` ignores them by `type`. A byte-prefix fast path was tried and
+    removed: measured against the real corpus it never matched once across
+    13,796 attachment records, because the attachment payload precedes the
+    record's own `type` key on the line.
   * Unknown `type` values and absent keys are normal across CLI versions.
   * A truncated final line means the session is still being written. It is not
     an error, and the returned offset stops before it so the next scan re-reads
@@ -437,8 +438,6 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from bridge.models import SessionRecord
-
-_ATTACHMENT_HINT = b'"type":"attachment"'
 
 
 @dataclass
@@ -465,8 +464,6 @@ def scan(path: Path, start_offset: int = 0, prev: SessionRecord | None = None) -
             if not raw.endswith(b"\n"):
                 break  # partial trailing line; leave offset before it
             offset += len(raw)
-            if _ATTACHMENT_HINT in raw[:64]:
-                continue
             try:
                 obj = json.loads(raw)
             except (ValueError, UnicodeDecodeError):
@@ -589,24 +586,61 @@ def test_rescan_parses_only_appended_lines(write_transcript, normal_session):
     assert second.record.user_msgs == 2
 
 
-def test_incremental_totals_match_full_scan(write_transcript, normal_session):
-    sid, lines = normal_session
-    p = write_transcript("s.jsonl", lines[:2])
+def test_incremental_totals_match_full_scan(write_transcript):
+    """Accumulation across the offset boundary must not lose or double-count.
+
+    BOTH halves must carry a user turn and an assistant turn with tokens. A
+    fixture whose asserted fields are fed only by the post-offset half passes
+    even when `prev` is discarded entirely, proving nothing.
+    """
+    sid = "44444444-4444-4444-4444-444444444444"
+    cwd = "/Users/mitsheth/dev/demo"
+
+    def user(ts, text):
+        return jline(type="user", sessionId=sid, isSidechain=False,
+                     timestamp=ts, cwd=cwd, gitBranch="main",
+                     message={"role": "user", "content": text})
+
+    def assistant(ts, tin, tout):
+        return jline(type="assistant", sessionId=sid, isSidechain=False,
+                     timestamp=ts, cwd=cwd,
+                     message={"role": "assistant", "model": "claude-opus-5",
+                              "usage": {"input_tokens": tin, "output_tokens": tout}})
+
+    first = [user("2026-07-30T10:00:00.000Z", "one"),
+             assistant("2026-07-30T10:00:01.000Z", 1, 2)]
+    second = [user("2026-07-30T10:00:02.000Z", "two"),
+              assistant("2026-07-30T10:00:03.000Z", 10, 20),
+              jline(type="ai-title", sessionId=sid, aiTitle="Both halves")]
+
+    p = write_transcript("s.jsonl", first)
     partial = scan(p)
+    # The pre-offset half must really carry totals, or this test decays again.
+    assert partial.record.user_msgs == 1
+    assert partial.record.tokens_in == 1
+
     with p.open("a") as f:
-        f.write("".join(lines[2:]))
+        f.write("".join(second))
+
     incremental = scan(p, start_offset=partial.new_offset, prev=partial.record)
     full = scan(p)
-    assert incremental.record.tokens_in == full.record.tokens_in
-    assert incremental.record.tokens_out == full.record.tokens_out
-    assert incremental.record.assistant_msgs == full.record.assistant_msgs
-    assert incremental.record.title == full.record.title
+
+    for field in ("user_msgs", "assistant_msgs", "tokens_in", "tokens_out",
+                  "title", "started_at", "ended_at"):
+        assert getattr(incremental.record, field) == getattr(full.record, field), field
+
+    # State the arithmetic being protected, so a regression names itself.
+    assert full.record.user_msgs == 2
+    assert full.record.assistant_msgs == 2
+    assert full.record.tokens_in == 11
+    assert full.record.tokens_out == 22
+    assert incremental.lines_parsed == 3
 ```
 
 - [ ] **Step 2: Run tests**
 
 Run: `uv run pytest tests/test_transcripts.py -v`
-Expected: 13 passed. The Task 2 implementation already satisfies these; if any fail, the accumulation logic in `scan`/`_apply` is wrong and must be fixed here rather than in a later task.
+Expected: 15 passed. The Task 2 implementation already satisfies these; if any fail, the accumulation logic in `scan`/`_apply` is wrong and must be fixed here rather than in a later task.
 
 - [ ] **Step 3: Commit**
 

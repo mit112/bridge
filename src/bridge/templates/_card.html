@@ -1,0 +1,39 @@
+<article class="card{% if card.is_stale %} card--risk{% endif %}">
+  <header class="card__head">
+    <h2><a href="/project/{{ card.project_id }}">{{ card.name }}</a></h2>
+    {% if card.session and card.session.model %}
+      <span class="card__meta">{{ card.session.model }}{% if card.session.effort %}/{{ card.session.effort }}{% endif %}</span>
+    {% endif %}
+  </header>
+  <p class="card__path">{{ card.path }}</p>
+
+  {% if card.session %}
+    <div class="card__session">
+      <h3>{{ card.session.title or "Untitled session" }}</h3>
+      <time datetime="{{ card.session.ended_at }}" title="{{ card.session.ended_at }}">{{ card.session.ended_at | ago }} ago</time>
+      {% if card.session.interrupted %}<span class="card__note">interrupted</span>{% endif %}
+    </div>
+  {% else %}
+    <p class="card__note">No indexed sessions.</p>
+  {% endif %}
+
+  <p class="card__git">
+    {% if card.git.status == "ok" %}
+      <span>{{ card.git.branch }}</span>
+      {% if card.git.dirty_count %}<span> · {{ card.git.dirty_count }} dirty</span>{% endif %}
+      {% if card.git.ahead %}<span> · {{ card.git.ahead }} ahead</span>{% endif %}
+      {% if card.is_stale %}
+        <span class="risk" title="Uncommitted work is older than the staleness threshold">⚠ uncommitted for {{ card.git.oldest_uncommitted_at | ago_epoch }}</span>
+      {% endif %}
+    {% elif card.git.status == "not_a_repo" %}
+      <span class="card__note">not a git repo</span>
+    {% else %}
+      <span class="card__note">git unavailable</span>
+    {% endif %}
+  </p>
+
+  <p class="card__burn">
+    <span>{{ card.tokens_today | kilo }} today</span>
+    <span>{{ card.tokens_5h | kilo }} last 5h</span>
+  </p>
+</article>
