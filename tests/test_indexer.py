@@ -77,11 +77,14 @@ def test_shrunk_file_is_rescanned_from_zero(env):
     cfg, store, projects = env
     p = write(projects, "s.jsonl", transcript_lines())
     reindex(store, cfg)
-    p.write_text("".join(transcript_lines(title="Rewritten")))
+    # Title must be shorter than "Did work" so the file genuinely shrinks in
+    # bytes and exercises the shrink-detection path (not just a same-size
+    # rewrite), which is the real-world rewrite case this test targets.
+    p.write_text("".join(transcript_lines(title="X")))
     stats = reindex(store, cfg)
     assert stats.files_scanned == 1
     pid = store.projects()[0]["id"]
-    assert store.latest_session(pid)["title"] == "Rewritten"
+    assert store.latest_session(pid)["title"] == "X"
 
 
 def test_reindex_is_idempotent(env):

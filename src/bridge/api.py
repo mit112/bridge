@@ -42,9 +42,7 @@ def create_app(store: Store, cfg: Config) -> FastAPI:
 
     @app.get("/project/{project_id}", response_class=HTMLResponse)
     def detail(request: Request, project_id: int):
-        row = store.conn.execute(
-            "SELECT * FROM projects WHERE id=?", (project_id,)
-        ).fetchone()
+        row = store.get_project(project_id)
         if row is None:
             raise HTTPException(status_code=404, detail="unknown project")
         return templates.TemplateResponse(

@@ -57,51 +57,43 @@ def _index_one(store: Store, path: Path, stats: IndexStats) -> None:
 
     result = scan(path, start_offset=start, prev=prev)
 
-    # If incremental scan from an offset produced no valid lines but had parse
-    # errors, the file was likely rewritten. Rescan from the beginning.
-    if start > 0 and result.lines_parsed == 0 and result.parse_errors > 0:
-        result = scan(path, start_offset=0, prev=None)
-
     stats.files_scanned += 1
-    # Only count lines and errors from the successful scan
     stats.lines_parsed += result.lines_parsed
     stats.parse_errors += result.parse_errors
 
     rec = result.record
     sid = rec.session_id if rec else (prior["session_id"] if prior else None)
-    store.set_scan_state(str(path), st.st_size, st.st_mtime, result.new_offset, sid)
 
-    if rec is None:
-        return  # no record to upsert
+    with store.transaction():
+        store.set_scan_state(str(path), st.st_size, st.st_mtime, result.new_offset, sid)
 
-    # If this is an incremental scan with no new cwd, use the prior project path
-    project_path = rec.project_path
-    if not project_path and prior and prior["session_id"] == rec.session_id:
-        # Fetch the existing session to get its project
-        existing = store.conn.execute(
-            "SELECT project_id FROM sessions WHERE id=?", (rec.session_id,)
-        ).fetchone()
-        if existing:
-            # Don't update project attribution, but do update the session record
-            pid = existing["project_id"]
-            store.upsert_session(rec, pid)
-            stats.sessions_upserted += 1
-            return
+        if rec is None:
+            return  # no record to upsert
 
-    if not project_path:
-        return  # no resolvable project; nothing to attribute the session to
-    pid = store.upsert_project(project_path, display_name(project_path))
-    store.upsert_session(rec, pid)
-    stats.sessions_upserted += 1
+        # If this is an incremental scan with no new cwd, use the prior project path
+        project_path = rec.project_path
+        if not project_path and prior and prior["session_id"] == rec.session_id:
+            # Fetch the existing session to get its project
+            existing = store.session_row(rec.session_id)
+            if existing:
+                # Don't update project attribution, but do update the session record
+                pid = existing["project_id"]
+                store.upsert_session(rec, pid)
+                stats.sessions_upserted += 1
+                return
+
+        if not project_path:
+            return  # no resolvable project; nothing to attribute the session to
+        pid = store.upsert_project(project_path, display_name(project_path))
+        store.upsert_session(rec, pid)
+        stats.sessions_upserted += 1
 
 
 def _rehydrate(store: Store, session_id: str | None, path: str) -> SessionRecord | None:
     """Rebuild the accumulator so an incremental scan adds onto prior totals."""
     if not session_id:
         return None
-    row = store.conn.execute(
-        "SELECT * FROM sessions WHERE id=?", (session_id,)
-    ).fetchone()
+    row = store.session_row(session_id)
     if row is None:
         return None
     return SessionRecord(

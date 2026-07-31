@@ -5,6 +5,7 @@ Migrations are additive only: append to SCHEMA, never rebuild a table.
 display, once as an epoch int so range queries stay index-friendly.
 """
 
+import contextlib
 import sqlite3
 import threading
 from datetime import datetime, timezone
@@ -112,6 +113,21 @@ class Store:
         with self._lock:
             self.conn.close()
 
+    @contextlib.contextmanager
+    def transaction(self):
+        """Group writes so an interrupt cannot advance a scan offset without
+        also persisting the session it accounts for. RLock makes the nested
+        per-method locks re-entrant.
+        """
+        with self._lock:
+            self.conn.execute("BEGIN")
+            try:
+                yield
+                self.conn.execute("COMMIT")
+            except BaseException:
+                self.conn.execute("ROLLBACK")
+                raise
+
     def _ensure_columns(self) -> None:
         with self._lock:
             for table, columns in COLUMN_MIGRATIONS.items():
@@ -133,6 +149,12 @@ class Store:
             return self.conn.execute(
                 "SELECT id FROM projects WHERE path=?", (path,)
             ).fetchone()["id"]
+
+    def get_project(self, project_id: int) -> sqlite3.Row | None:
+        with self._lock:
+            return self.conn.execute(
+                "SELECT * FROM projects WHERE id=?", (project_id,)
+            ).fetchone()
 
     def set_project_status(self, project_id: int, status: str) -> None:
         with self._lock:
@@ -179,6 +201,12 @@ class Store:
                     rec.sidechain_tokens, int(rec.interrupted), rec.transcript_path,
                 ),
             )
+
+    def session_row(self, session_id: str) -> sqlite3.Row | None:
+        with self._lock:
+            return self.conn.execute(
+                "SELECT * FROM sessions WHERE id=?", (session_id,)
+            ).fetchone()
 
     def latest_session(self, project_id: int) -> sqlite3.Row | None:
         with self._lock:

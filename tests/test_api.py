@@ -171,3 +171,48 @@ def test_concurrent_requests_do_not_error(tmp_path):
     store.close()
     assert errors == [], errors[:3]
     assert codes and all(c == 200 for c in codes), sorted(set(codes))
+
+
+def test_concurrent_mixed_routes_do_not_error(tmp_path):
+    """GET /project/{id} used store.conn directly, bypassing the lock.
+
+    Concurrency there both crashed and returned 404 for rows that exist.
+    """
+    import threading
+
+    cfg = load({"db_path": tmp_path / "mixed.db"})
+    store = Store(cfg.db_path)
+    pids = []
+    for n in range(10):
+        pid = store.upsert_project(f"/p/{n}", f"p{n}")
+        pids.append(pid)
+        store.upsert_session(
+            SessionRecord(session_id=f"s{n}", transcript_path=f"/t/{n}",
+                          project_path=f"/p/{n}", title=f"t{n}",
+                          ended_at="2026-07-30T10:00:00.000Z",
+                          tokens_in=5, tokens_out=5),
+            pid,
+        )
+    client = TestClient(create_app(store, cfg))
+    codes: list[int] = []
+    errors: list[Exception] = []
+    barrier = threading.Barrier(16)
+
+    def hit(i: int):
+        try:
+            barrier.wait()
+            for n in range(6):
+                codes.append(client.get("/").status_code)
+                codes.append(client.get(f"/project/{pids[(i + n) % len(pids)]}").status_code)
+        except Exception as e:  # noqa: BLE001
+            errors.append(e)
+
+    threads = [threading.Thread(target=hit, args=(i,)) for i in range(16)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    store.close()
+    assert errors == [], errors[:3]
+    # A 404 here would mean an interleaved cursor lost a row that exists.
+    assert codes and all(c == 200 for c in codes), sorted(set(codes))

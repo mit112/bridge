@@ -200,3 +200,24 @@ def test_additive_column_migration_is_idempotent(tmp_path, monkeypatch):
     s3 = Store(db)  # must NOT raise "duplicate column name"
     assert len(s3.sessions(pid)) == 1
     s3.close()
+
+
+def test_transaction_rolls_back_on_error(store):
+    """A failed transaction must leave neither write applied."""
+    pid = store.upsert_project("/d", "d")
+    try:
+        with store.transaction():
+            store.set_scan_state("/t/x.jsonl", 100, 1.0, 50, "sx")
+            raise RuntimeError("boom")
+    except RuntimeError:
+        pass
+    assert store.get_scan_state("/t/x.jsonl") is None
+
+
+def test_transaction_commits_both_writes(store):
+    pid = store.upsert_project("/d", "d")
+    with store.transaction():
+        store.set_scan_state("/t/y.jsonl", 100, 1.0, 50, "sy")
+        store.upsert_session(rec("sy"), pid)
+    assert store.get_scan_state("/t/y.jsonl")["parsed_offset"] == 50
+    assert len(store.sessions(pid)) == 1
