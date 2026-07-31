@@ -107,3 +107,30 @@ def test_interrupted_session_flagged(write_transcript):
               interruptedByShutdown=True, message={"role": "assistant"}),
     ])
     assert scan(p).record.interrupted is True
+
+
+def test_nested_attachment_type_does_not_drop_the_record(write_transcript):
+    """A record whose nested payload contains an attachment type must still count.
+
+    Real lines put a large `attachment` payload before the record's own `type`
+    key, so any early-bytes prefilter risked silently dropping real records.
+    """
+    p = write_transcript("s.jsonl", [
+        jline(type="user", sessionId="s11", isSidechain=False,
+              attachment={"type": "attachment", "payload": "x" * 200},
+              timestamp="2026-07-30T10:00:00.000Z", cwd="/tmp/x",
+              message={"role": "user", "content": "hi"}),
+    ])
+    r = scan(p)
+    assert r.record is not None
+    assert r.record.user_msgs == 1
+    assert r.record.project_path == "/tmp/x"
+    assert r.parse_errors == 0
+
+
+def test_aborted_mid_stream_flags_interrupted(write_transcript):
+    p = write_transcript("s.jsonl", [
+        jline(type="assistant", sessionId="s12", isSidechain=False,
+              isAbortedMidStream=True, message={"role": "assistant"}),
+    ])
+    assert scan(p).record.interrupted is True
