@@ -176,6 +176,14 @@ git_cache(project_id PK, payload_json, probed_at)
 
 Migrations are **additive only** — new columns and tables, never a table rebuild.
 
+SQLite has no `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`, so replaying a schema
+list on every open cannot add a column: the second open raises `duplicate column
+name`. Column evolution therefore goes through a `COLUMN_MIGRATIONS` map plus an
+`_ensure_columns()` step that consults `PRAGMA table_info` and issues `ALTER
+TABLE` only for columns genuinely absent. Tables keep using `CREATE TABLE IF NOT
+EXISTS`. This is what makes the additive-only doctrine executable rather than
+aspirational.
+
 ### 5. `registry`
 Discovers and classifies projects. Opt-out, not opt-in: auto-discover from transcript directory
 names and `~/dev/*` git repos, then auto-hide known noise — `-private-tmp-*`,
