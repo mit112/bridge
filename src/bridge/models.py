@@ -59,6 +59,31 @@ class Handoff:
 
 
 @dataclass
+class Launch:
+    """One spawn attempt, recorded before anything is spawned.
+
+    The row exists even when the spawn fails, which is what keeps a session
+    correlatable in the case that needs it most. `handoff_id` is None for an
+    ad-hoc prompt with no queued handoff behind it. `session_id` is None for a
+    background launch, because `claude --bg` mints its own id and does not tell
+    us until it has printed its handle. `short_id` is deliberately absent here:
+    like `Handoff.consumed_at` it is stamped by the store — `set_launch_session`
+    — and never authored by the caller.
+    """
+
+    id: str
+    project_id: int
+    mode: str
+    prompt: str
+    handoff_id: str | None = None
+    session_id: str | None = None
+    model: str | None = None
+    effort: str | None = None
+    launched_at: int = 0
+    outcome: str = "pending"
+
+
+@dataclass
 class Card:
     project_id: int
     path: str

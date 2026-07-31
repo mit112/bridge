@@ -3,7 +3,7 @@ import threading
 
 import pytest
 
-from bridge.models import Handoff, SessionRecord
+from bridge.models import Handoff, Launch, SessionRecord
 from bridge.store import Store, to_epoch
 
 
@@ -35,6 +35,21 @@ def handoff(hid="h1", **kw):
     )
     base.update(kw)
     return Handoff(**base)
+
+
+# Pre-assigned session ids, in the lowercase 8-4-4-4-12 form `claude` validates.
+SID_A = "aaaaaaaa-1111-4111-8111-111111111111"
+SID_B = "bbbbbbbb-2222-4222-8222-222222222222"
+
+
+def launch(project_id, lid="l1", **kw):
+    base = dict(
+        id=lid, project_id=project_id, mode="terminal", prompt="do the thing",
+        handoff_id="h1", session_id=SID_A, model="claude-opus-5", effort="high",
+        launched_at=2000,
+    )
+    base.update(kw)
+    return Launch(**base)
 
 
 def test_pragmas_are_set(store):
@@ -346,3 +361,65 @@ def test_upsert_project_does_not_reset_an_existing_status(store):
     store.set_project_status(pid, "archived")
     assert store.upsert_project("/d", "d") == pid
     assert store.get_project(pid)["status"] == "archived"
+
+
+# --- Phase 3: the launcher ---------------------------------------------------
+
+
+def test_a_launch_round_trips_and_is_found_by_its_session_id(store):
+    """The terminal-mode path: the id is pre-assigned, so the row is the join.
+
+    Two launches exist so `launch_by_session` has to *select* rather than return
+    the only row there is.
+    """
+    pid = store.upsert_project("/d", "d")
+    store.create_handoff(handoff("h1"), pid)
+    store.create_launch(launch(pid, "l1"))
+    store.create_launch(launch(pid, "l2", session_id=SID_B, launched_at=3000))
+
+    row = store.launch_by_session(SID_A)
+    assert row["id"] == "l1"
+    assert (row["project_id"], row["handoff_id"], row["mode"]) == (pid, "h1", "terminal")
+    assert (row["model"], row["effort"]) == ("claude-opus-5", "high")
+    assert row["prompt"] == "do the thing"
+    assert row["launched_at"] == 2000
+    assert row["outcome"] == "pending", "the row is written before the spawn"
+
+    store.set_launch_outcome("l1", "started")
+    assert store.launch_by_session(SID_A)["outcome"] == "started"
+    assert store.launch_by_session(SID_B)["outcome"] == "pending", "one row moved"
+    assert [r["id"] for r in store.launches(pid)] == ["l2", "l1"]
+
+
+def test_a_launch_needs_no_handoff_behind_it(store):
+    """An ad-hoc prompt typed into the panel has no queued handoff to consume."""
+    pid = store.upsert_project("/d", "d")
+    store.create_launch(launch(pid, "l1", handoff_id=None))
+    assert store.launch_by_session(SID_A)["handoff_id"] is None
+
+
+def test_a_launch_cannot_reference_a_handoff_that_does_not_exist(store):
+    """The FK is enforced, so `launches.handoff_id` can never dangle."""
+    pid = store.upsert_project("/d", "d")
+    with pytest.raises(sqlite3.IntegrityError):
+        store.create_launch(launch(pid, "l1", handoff_id="no-such-handoff"))
+
+
+def test_set_launch_session_fills_in_both_ids_after_a_background_spawn(store):
+    """`claude --bg` mints its own id, so the row starts with neither.
+
+    A NOT NULL `session_id` would force a placeholder here, and a placeholder in
+    a correlation key is how a launch joins to the wrong session.
+    """
+    pid = store.upsert_project("/d", "d")
+    store.create_launch(
+        launch(pid, "l1", mode="background", session_id=None, handoff_id=None)
+    )
+    row = store.launches(pid)[0]
+    assert (row["session_id"], row["short_id"]) == (None, None)
+    assert store.launch_by_session(SID_A) is None
+
+    store.set_launch_session("l1", SID_A, SID_A[:8])
+    row = store.launch_by_session(SID_A)
+    assert row["id"] == "l1"
+    assert row["short_id"] == "aaaaaaaa"
