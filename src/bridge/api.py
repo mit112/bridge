@@ -51,9 +51,13 @@ def create_app(store: Store, cfg: Config) -> FastAPI:
     # Drain before serving. Under the manual-`bridge serve` uptime model this is
     # the main way handoffs arrive, so it runs on every boot — and a spool that
     # cannot be read must never stop the panel from starting.
+    # `OSError` and not `Exception`: an unreadable or missing spool must not stop
+    # the panel, but a *programming* error in the drain must not be swallowed
+    # either. A catch-all here silently absorbed a test guard, and would just as
+    # silently leave handoffs accumulating in the spool while cards showed none.
     try:
         app.state.boot_drain = asdict(spool.drain(store, cfg.spool_dir))
-    except Exception as exc:  # noqa: BLE001
+    except OSError as exc:
         app.state.boot_drain = {"error": repr(exc)}
     templates = Jinja2Templates(directory=str(HERE / "templates"))
     templates.env.filters["ago"] = _ago

@@ -1,0 +1,101 @@
+[
+  {
+    "name": "POST skips alias resolution and upserts the raw path",
+    "file": "src/bridge/api.py",
+    "old": "        project_id = resolve_project(store, h.project_path)",
+    "new": "        project_id = store.upsert_project(\n            h.project_path, h.project_path.rsplit(\"/\", 1)[-1])",
+    "tests": [
+      "tests/test_api.py::test_post_from_an_aliased_path_attaches_to_the_canonical_project"
+    ]
+  },
+  {
+    "name": "POST 404s on an unindexed project instead of creating it",
+    "file": "src/bridge/api.py",
+    "old": "        # Resolve through the alias table, then upsert: a handoff may arrive from\n        # a project that was never indexed, or from an old ~/Documents path.\n        project_id = resolve_project(store, h.project_path)",
+    "new": "        if store.project_by_path(h.project_path) is None:\n            raise HTTPException(status_code=404, detail=\"unknown project\")\n        project_id = resolve_project(store, h.project_path)",
+    "tests": [
+      "tests/test_api.py::test_post_from_a_path_with_no_project_row_creates_one"
+    ]
+  },
+  {
+    "name": "remove the boot-time spool drain",
+    "file": "src/bridge/api.py",
+    "old": "    try:\n        app.state.boot_drain = asdict(spool.drain(store, cfg.spool_dir))\n    except Exception as exc:  # noqa: BLE001\n        app.state.boot_drain = {\"error\": repr(exc)}",
+    "new": "    app.state.boot_drain = {\"skipped\": True}",
+    "tests": [
+      "tests/test_api.py::test_boot_drain_ingests_a_spooled_handoff_before_serving"
+    ]
+  },
+  {
+    "name": "let a broken spool abort startup",
+    "file": "src/bridge/api.py",
+    "old": "    except Exception as exc:  # noqa: BLE001\n        app.state.boot_drain = {\"error\": repr(exc)}",
+    "new": "    except ValueError as exc:  # noqa: BLE001\n        app.state.boot_drain = {\"error\": repr(exc)}",
+    "tests": [
+      "tests/test_api.py::test_an_unreadable_spool_does_not_stop_the_panel_from_starting"
+    ]
+  },
+  {
+    "name": "do not journal a live POST",
+    "file": "src/bridge/api.py",
+    "old": "        journaled = True\n        try:\n            spool.journal(h, cfg.spool_dir)\n        except Exception:  # noqa: BLE001\n            journaled = False",
+    "new": "        journaled = True",
+    "tests": [
+      "tests/test_api.py::test_a_live_post_is_journaled_so_the_database_stays_disposable"
+    ]
+  },
+  {
+    "name": "journal into the live outbox instead of drained/",
+    "file": "src/bridge/spool.py",
+    "old": "    _, drained_dir, _ = _dirs(spool_dir)\n    return _atomic_write(h, drained_dir)",
+    "new": "    live, _, _ = _dirs(spool_dir)\n    return _atomic_write(h, live)",
+    "tests": [
+      "tests/test_api.py::test_a_live_post_is_journaled_so_the_database_stays_disposable"
+    ]
+  },
+  {
+    "name": "truncate the prompt on the way in",
+    "file": "src/bridge/api.py",
+    "old": "            next_prompt=body.next_prompt,",
+    "new": "            next_prompt=body.next_prompt[:1000],",
+    "tests": [
+      "tests/test_api.py::test_a_hostile_prompt_round_trips_byte_for_byte"
+    ]
+  },
+  {
+    "name": "GET returns 200/null instead of 204 when nothing is queued",
+    "file": "src/bridge/api.py",
+    "old": "        if row is None:\n            return Response(status_code=204)",
+    "new": "        if row is None:\n            return None",
+    "tests": [
+      "tests/test_api.py::test_get_returns_204_when_nothing_is_queued"
+    ]
+  },
+  {
+    "name": "PATCH does not 404 an unknown handoff id",
+    "file": "src/bridge/api.py",
+    "old": "        if store.get_handoff(handoff_id) is None:\n            raise HTTPException(status_code=404, detail=\"unknown handoff\")",
+    "new": "        if False:\n            raise HTTPException(status_code=404, detail=\"unknown handoff\")",
+    "tests": [
+      "tests/test_api.py::test_patch_sets_status_and_rejects_unknown_ids_and_statuses"
+    ]
+  },
+  {
+    "name": "server rewrites the CLI-minted id, breaking POST idempotency",
+    "file": "src/bridge/api.py",
+    "old": "            id=body.id,",
+    "new": "            id=body.id + \"-x\",",
+    "tests": [
+      "tests/test_api.py::test_posting_the_same_id_twice_yields_one_row"
+    ]
+  },
+  {
+    "name": "GUARD CHECK: drop spool_dir from a fixture and require the real-dir guard to fire",
+    "file": "tests/test_api.py",
+    "old": "    cfg = load({\"db_path\": tmp_path / \"h.db\", \"spool_dir\": tmp_path / \"spool\"})",
+    "new": "    cfg = load({\"db_path\": tmp_path / \"h.db\"})",
+    "tests": [
+      "tests/test_api.py::test_get_returns_204_when_nothing_is_queued"
+    ]
+  }
+]

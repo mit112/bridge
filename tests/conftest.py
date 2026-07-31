@@ -6,6 +6,17 @@ import pytest
 REAL_BRIDGE_DIR = Path.home() / ".bridge"
 
 
+class RealBridgeDirTouched(BaseException):
+    """Deliberately not an `Exception`.
+
+    The boot drain is wrapped in a broad `except` so a broken spool cannot stop
+    the panel from starting, and that swallowed this guard when it raised
+    `AssertionError` — the guard reported nothing while the test drained the real
+    spool. Inheriting from `BaseException` puts it out of reach of any
+    well-behaved catch-all.
+    """
+
+
 def jline(**kw) -> str:
     return json.dumps(kw) + "\n"
 
@@ -29,7 +40,7 @@ def never_touch_the_real_bridge_dir(monkeypatch):
                 if isinstance(value, (str, Path)):
                     p = Path(value)
                     if p == REAL_BRIDGE_DIR or REAL_BRIDGE_DIR in p.parents:
-                        raise AssertionError(
+                        raise RealBridgeDirTouched(
                             f"spool.{name}() was called with the real path {p}. "
                             "Pass spool_dir=tmp_path/'spool' in this test's Config."
                         )
