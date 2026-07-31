@@ -6,6 +6,7 @@ display, once as an epoch int so range queries stay index-friendly.
 """
 
 import sqlite3
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -88,122 +89,138 @@ class Store:
     def __init__(self, db_path: Path):
         db_path = Path(db_path)
         db_path.parent.mkdir(parents=True, exist_ok=True)
-        # check_same_thread=False: the FastAPI layer (Task 9) dispatches sync
-        # route handlers onto a thread pool, so this single connection is
-        # legitimately used from more than one thread. WAL + busy_timeout
-        # above already make that safe for our single-writer workload.
-        self.conn = sqlite3.connect(
-            db_path, timeout=5.0, isolation_level=None, check_same_thread=False
-        )
-        self.conn.row_factory = sqlite3.Row
-        self.conn.execute("PRAGMA journal_mode=WAL")
-        self.conn.execute("PRAGMA foreign_keys=ON")
-        self.conn.execute("PRAGMA busy_timeout=5000")
-        for stmt in SCHEMA:
-            self.conn.execute(stmt)
-        self._ensure_columns()
+        # `check_same_thread=False` is required because FastAPI dispatches sync
+        # routes to a worker threadpool, but it only removes Python's guard rail —
+        # it adds no synchronization, and sqlite3's per-connection statement cache
+        # is not thread-safe. WAL and busy_timeout govern cross-CONNECTION
+        # contention only. This lock is what actually makes the shared connection
+        # safe, and it matches the sole-writer architecture.
+        self._lock = threading.RLock()
+        with self._lock:
+            self.conn = sqlite3.connect(
+                db_path, timeout=5.0, isolation_level=None, check_same_thread=False
+            )
+            self.conn.row_factory = sqlite3.Row
+            self.conn.execute("PRAGMA journal_mode=WAL")
+            self.conn.execute("PRAGMA foreign_keys=ON")
+            self.conn.execute("PRAGMA busy_timeout=5000")
+            for stmt in SCHEMA:
+                self.conn.execute(stmt)
+            self._ensure_columns()
 
     def close(self) -> None:
-        self.conn.close()
+        with self._lock:
+            self.conn.close()
 
     def _ensure_columns(self) -> None:
-        for table, columns in COLUMN_MIGRATIONS.items():
-            existing = {
-                row["name"] for row in self.conn.execute(f"PRAGMA table_info({table})")
-            }
-            for name, decl in columns.items():
-                if name not in existing:
-                    self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
+        with self._lock:
+            for table, columns in COLUMN_MIGRATIONS.items():
+                existing = {
+                    row["name"]
+                    for row in self.conn.execute(f"PRAGMA table_info({table})")
+                }
+                for name, decl in columns.items():
+                    if name not in existing:
+                        self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
 
     def upsert_project(self, path: str, name: str) -> int:
-        self.conn.execute(
-            "INSERT INTO projects(path, name, created_at) VALUES(?,?,?) "
-            "ON CONFLICT(path) DO NOTHING",
-            (path, name, now_epoch()),
-        )
-        return self.conn.execute(
-            "SELECT id FROM projects WHERE path=?", (path,)
-        ).fetchone()["id"]
+        with self._lock:
+            self.conn.execute(
+                "INSERT INTO projects(path, name, created_at) VALUES(?,?,?) "
+                "ON CONFLICT(path) DO NOTHING",
+                (path, name, now_epoch()),
+            )
+            return self.conn.execute(
+                "SELECT id FROM projects WHERE path=?", (path,)
+            ).fetchone()["id"]
 
     def set_project_status(self, project_id: int, status: str) -> None:
-        self.conn.execute(
-            "UPDATE projects SET status=? WHERE id=?", (status, project_id)
-        )
+        with self._lock:
+            self.conn.execute(
+                "UPDATE projects SET status=? WHERE id=?", (status, project_id)
+            )
 
     def projects(self, include_hidden: bool = False) -> list[sqlite3.Row]:
-        sql = "SELECT * FROM projects"
-        if not include_hidden:
-            sql += " WHERE status='active'"
-        return list(self.conn.execute(sql + " ORDER BY name"))
+        with self._lock:
+            sql = "SELECT * FROM projects"
+            if not include_hidden:
+                sql += " WHERE status='active'"
+            return list(self.conn.execute(sql + " ORDER BY name"))
 
     def upsert_session(self, rec: SessionRecord, project_id: int) -> None:
-        self.conn.execute(
-            """
-            INSERT INTO sessions (
-                id, project_id, title, started_at, ended_at, ended_epoch, model,
-                effort, git_branch, user_msgs, assistant_msgs, last_prompt,
-                tokens_in, tokens_out, tokens_cache_create, tokens_cache_read,
-                sidechain_tokens, interrupted, transcript_path
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-            ON CONFLICT(id) DO UPDATE SET
-                title=excluded.title, started_at=excluded.started_at,
-                ended_at=excluded.ended_at, ended_epoch=excluded.ended_epoch,
-                model=excluded.model, effort=excluded.effort,
-                git_branch=excluded.git_branch, user_msgs=excluded.user_msgs,
-                assistant_msgs=excluded.assistant_msgs,
-                last_prompt=excluded.last_prompt, tokens_in=excluded.tokens_in,
-                tokens_out=excluded.tokens_out,
-                tokens_cache_create=excluded.tokens_cache_create,
-                tokens_cache_read=excluded.tokens_cache_read,
-                sidechain_tokens=excluded.sidechain_tokens,
-                interrupted=excluded.interrupted,
-                transcript_path=excluded.transcript_path
-            """,
-            (
-                rec.session_id, project_id, rec.title, rec.started_at, rec.ended_at,
-                to_epoch(rec.ended_at), rec.model, rec.effort, rec.git_branch,
-                rec.user_msgs, rec.assistant_msgs, rec.last_prompt, rec.tokens_in,
-                rec.tokens_out, rec.tokens_cache_create, rec.tokens_cache_read,
-                rec.sidechain_tokens, int(rec.interrupted), rec.transcript_path,
-            ),
-        )
+        with self._lock:
+            self.conn.execute(
+                """
+                INSERT INTO sessions (
+                    id, project_id, title, started_at, ended_at, ended_epoch, model,
+                    effort, git_branch, user_msgs, assistant_msgs, last_prompt,
+                    tokens_in, tokens_out, tokens_cache_create, tokens_cache_read,
+                    sidechain_tokens, interrupted, transcript_path
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(id) DO UPDATE SET
+                    title=excluded.title, started_at=excluded.started_at,
+                    ended_at=excluded.ended_at, ended_epoch=excluded.ended_epoch,
+                    model=excluded.model, effort=excluded.effort,
+                    git_branch=excluded.git_branch, user_msgs=excluded.user_msgs,
+                    assistant_msgs=excluded.assistant_msgs,
+                    last_prompt=excluded.last_prompt, tokens_in=excluded.tokens_in,
+                    tokens_out=excluded.tokens_out,
+                    tokens_cache_create=excluded.tokens_cache_create,
+                    tokens_cache_read=excluded.tokens_cache_read,
+                    sidechain_tokens=excluded.sidechain_tokens,
+                    interrupted=excluded.interrupted,
+                    transcript_path=excluded.transcript_path
+                """,
+                (
+                    rec.session_id, project_id, rec.title, rec.started_at, rec.ended_at,
+                    to_epoch(rec.ended_at), rec.model, rec.effort, rec.git_branch,
+                    rec.user_msgs, rec.assistant_msgs, rec.last_prompt, rec.tokens_in,
+                    rec.tokens_out, rec.tokens_cache_create, rec.tokens_cache_read,
+                    rec.sidechain_tokens, int(rec.interrupted), rec.transcript_path,
+                ),
+            )
 
     def latest_session(self, project_id: int) -> sqlite3.Row | None:
-        return self.conn.execute(
-            "SELECT * FROM sessions WHERE project_id=? "
-            "ORDER BY ended_epoch DESC NULLS LAST LIMIT 1",
-            (project_id,),
-        ).fetchone()
+        with self._lock:
+            return self.conn.execute(
+                "SELECT * FROM sessions WHERE project_id=? "
+                "ORDER BY ended_epoch DESC NULLS LAST LIMIT 1",
+                (project_id,),
+            ).fetchone()
 
     def sessions(self, project_id: int, limit: int = 50) -> list[sqlite3.Row]:
-        return list(
-            self.conn.execute(
-                "SELECT * FROM sessions WHERE project_id=? "
-                "ORDER BY ended_epoch DESC NULLS LAST LIMIT ?",
-                (project_id, limit),
+        with self._lock:
+            return list(
+                self.conn.execute(
+                    "SELECT * FROM sessions WHERE project_id=? "
+                    "ORDER BY ended_epoch DESC NULLS LAST LIMIT ?",
+                    (project_id, limit),
+                )
             )
-        )
 
     def get_scan_state(self, path: str) -> sqlite3.Row | None:
-        return self.conn.execute(
-            "SELECT * FROM scan_state WHERE transcript_path=?", (path,)
-        ).fetchone()
+        with self._lock:
+            return self.conn.execute(
+                "SELECT * FROM scan_state WHERE transcript_path=?", (path,)
+            ).fetchone()
 
     def set_scan_state(
         self, path: str, size: int, mtime: float, offset: int, session_id: str | None
     ) -> None:
-        self.conn.execute(
-            "INSERT INTO scan_state(transcript_path, size, mtime, parsed_offset, session_id) "
-            "VALUES(?,?,?,?,?) ON CONFLICT(transcript_path) DO UPDATE SET "
-            "size=excluded.size, mtime=excluded.mtime, "
-            "parsed_offset=excluded.parsed_offset, session_id=excluded.session_id",
-            (path, size, mtime, offset, session_id),
-        )
+        with self._lock:
+            self.conn.execute(
+                "INSERT INTO scan_state(transcript_path, size, mtime, parsed_offset, session_id) "
+                "VALUES(?,?,?,?,?) ON CONFLICT(transcript_path) DO UPDATE SET "
+                "size=excluded.size, mtime=excluded.mtime, "
+                "parsed_offset=excluded.parsed_offset, session_id=excluded.session_id",
+                (path, size, mtime, offset, session_id),
+            )
 
     def token_totals(self, project_id: int, since_epoch: int) -> int:
-        row = self.conn.execute(
-            "SELECT COALESCE(SUM(tokens_in + tokens_out),0) AS t FROM sessions "
-            "WHERE project_id=? AND ended_epoch >= ?",
-            (project_id, since_epoch),
-        ).fetchone()
-        return row["t"]
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT COALESCE(SUM(tokens_in + tokens_out),0) AS t FROM sessions "
+                "WHERE project_id=? AND ended_epoch >= ?",
+                (project_id, since_epoch),
+            ).fetchone()
+            return row["t"]

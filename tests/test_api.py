@@ -129,3 +129,45 @@ def test_tokens_shown_as_absolute_not_percentage(client):
     text = c.get("/").text
     assert "% of" not in text  # no fabricated denominator
     assert "today" in text.lower()
+
+
+def test_concurrent_requests_do_not_error(tmp_path):
+    """FastAPI dispatches sync routes to a threadpool sharing one connection.
+
+    Without a lock this fails almost every request with
+    sqlite3.InterfaceError / 'NoneType' is not subscriptable.
+    """
+    import threading
+
+    cfg = load({"db_path": tmp_path / "conc.db"})
+    store = Store(cfg.db_path)
+    for n in range(12):
+        pid = store.upsert_project(f"/p/{n}", f"p{n}")
+        store.upsert_session(
+            SessionRecord(session_id=f"s{n}", transcript_path=f"/t/{n}",
+                          project_path=f"/p/{n}", title=f"t{n}",
+                          ended_at="2026-07-30T10:00:00.000Z",
+                          tokens_in=5, tokens_out=5),
+            pid,
+        )
+    client = TestClient(create_app(store, cfg))
+    codes: list[int] = []
+    errors: list[Exception] = []
+    barrier = threading.Barrier(16)
+
+    def hit():
+        try:
+            barrier.wait()
+            for _ in range(6):
+                codes.append(client.get("/").status_code)
+        except Exception as e:   # noqa: BLE001
+            errors.append(e)
+
+    threads = [threading.Thread(target=hit) for _ in range(16)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    store.close()
+    assert errors == [], errors[:3]
+    assert codes and all(c == 200 for c in codes), sorted(set(codes))
