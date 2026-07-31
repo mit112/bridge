@@ -174,9 +174,15 @@ def test_concurrent_requests_do_not_error(tmp_path):
 
 
 def test_concurrent_mixed_routes_do_not_error(tmp_path):
-    """GET /project/{id} used store.conn directly, bypassing the lock.
+    """Smoke test, NOT a gate: measured detection is 10/20.
 
-    Concurrency there both crashed and returned 404 for rows that exist.
+    GET /project/{id} once used store.conn directly, bypassing the lock, which
+    both crashed and returned 404 for rows that exist. Reintroducing that bug
+    fails this test only about half the time — the interleaving is timing
+    dependent and cannot be forced from Python threads. It never fails on
+    correct code (0/5), so it is kept as a cheap smoke check; the deterministic
+    guard for this bug class is
+    test_no_module_outside_store_touches_the_raw_connection.
     """
     import threading
 
@@ -216,3 +222,25 @@ def test_concurrent_mixed_routes_do_not_error(tmp_path):
     assert errors == [], errors[:3]
     # A 404 here would mean an interleaved cursor lost a row that exists.
     assert codes and all(c == 200 for c in codes), sorted(set(codes))
+
+
+def test_no_module_outside_store_touches_the_raw_connection():
+    """The lock lives inside Store's methods, so any `.conn` use elsewhere
+    bypasses it. The concurrency tests below catch that race only about half
+    the time; this catches it every time, and it is what actually failed when
+    the first fix left three call sites in api.py and indexer.py unconverted.
+    """
+    from pathlib import Path
+
+    src = Path(__file__).resolve().parent.parent / "src" / "bridge"
+    offenders = {
+        f.name: [
+            f"{n}: {line.strip()}"
+            for n, line in enumerate(f.read_text().splitlines(), 1)
+            if ".conn" in line
+        ]
+        for f in sorted(src.glob("*.py"))
+        if f.name != "store.py"
+    }
+    offenders = {k: v for k, v in offenders.items() if v}
+    assert offenders == {}, f"raw connection access outside store.py: {offenders}"
