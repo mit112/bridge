@@ -44,3 +44,25 @@ def test_transcript_files_skips_noise_dirs(tmp_path):
 
 def test_transcript_files_missing_dir_returns_empty(tmp_path):
     assert transcript_files(tmp_path / "nope") == []
+
+
+def test_container_directories_are_hidden():
+    """$HOME and project-parent directories are not themselves projects."""
+    for name in ["-Users-mitsheth", "-Users-mitsheth-dev", "-Users-mitsheth-Documents"]:
+        assert is_noise(name) is True, name
+
+
+def test_container_match_is_exact_not_prefix():
+    """Prefix matching on "-Users-mitsheth" would hide every real project.
+
+    Also guards the reverse error: an ancestor-based rule would hide projectY
+    because it contains boardwatch.
+    """
+    for name in [
+        "-Users-mitsheth-dev-projectY",
+        "-Users-mitsheth-dev-projectY-boardwatch",
+        "-Users-mitsheth-dev-Job-apps",
+        "-Users-mitsheth-Documents-Vandit---Zeel",
+        "-Users-mitsheth-Claude-Projects-regal",
+    ]:
+        assert is_noise(name) is False, name

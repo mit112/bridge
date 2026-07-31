@@ -8,6 +8,16 @@ transcript. Nothing here decodes a directory name into a path.
 
 from pathlib import Path
 
+# Container directories that hold projects but are not projects themselves.
+# Matched EXACTLY, never by prefix: "-Users-mitsheth" is a prefix of every
+# other entry, and an ancestor-based rule would wrongly hide real parents
+# like -Users-mitsheth-dev-projectY (which contains boardwatch).
+CONTAINER_DIRS = frozenset({
+    "-Users-mitsheth",
+    "-Users-mitsheth-dev",
+    "-Users-mitsheth-Documents",
+})
+
 NOISE_PREFIXES = (
     "-private-tmp-",
     "-Users-mitsheth--claude",
@@ -17,7 +27,7 @@ NOISE_PREFIXES = (
 
 
 def is_noise(dir_name: str) -> bool:
-    return dir_name.startswith(NOISE_PREFIXES)
+    return dir_name in CONTAINER_DIRS or dir_name.startswith(NOISE_PREFIXES)
 
 
 def display_name(project_path: str) -> str:
