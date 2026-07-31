@@ -139,3 +139,41 @@ def test_aborted_mid_stream_flags_interrupted(write_transcript):
               isAbortedMidStream=True, message={"role": "assistant"}),
     ])
     assert scan(p).record.interrupted is True
+
+
+def test_rescan_with_no_changes_parses_nothing(write_transcript, normal_session):
+    sid, lines = normal_session
+    p = write_transcript("s.jsonl", lines)
+    first = scan(p)
+    again = scan(p, start_offset=first.new_offset, prev=first.record)
+    assert again.lines_parsed == 0
+    assert again.new_offset == first.new_offset
+    assert again.record.title == "Do the thing"
+
+
+def test_rescan_parses_only_appended_lines(write_transcript, normal_session):
+    sid, lines = normal_session
+    p = write_transcript("s.jsonl", lines)
+    first = scan(p)
+    with p.open("a") as f:
+        f.write(jline(type="ai-title", sessionId=sid, aiTitle="Renamed"))
+        f.write(jline(type="user", sessionId=sid, isSidechain=False,
+                      message={"role": "user", "content": "more"}))
+    second = scan(p, start_offset=first.new_offset, prev=first.record)
+    assert second.lines_parsed == 2          # not len(lines) + 2
+    assert second.record.title == "Renamed"  # accumulated onto prev
+    assert second.record.user_msgs == 2
+
+
+def test_incremental_totals_match_full_scan(write_transcript, normal_session):
+    sid, lines = normal_session
+    p = write_transcript("s.jsonl", lines[:2])
+    partial = scan(p)
+    with p.open("a") as f:
+        f.write("".join(lines[2:]))
+    incremental = scan(p, start_offset=partial.new_offset, prev=partial.record)
+    full = scan(p)
+    assert incremental.record.tokens_in == full.record.tokens_in
+    assert incremental.record.tokens_out == full.record.tokens_out
+    assert incremental.record.assistant_msgs == full.record.assistant_msgs
+    assert incremental.record.title == full.record.title
