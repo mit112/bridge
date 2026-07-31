@@ -35,10 +35,25 @@ def test_card_carries_session_and_git(store, tmp_path):
 
 
 def test_not_a_repo_is_never_stale(store, tmp_path):
-    """~43% of real projects are not repos; they must not show the warning."""
+    """~43% of real project paths are not repos and must never show the warning.
+
+    The fixture is deliberately dirty AND ancient, so `_is_stale` returning False
+    can ONLY be due to the status check. With defaults (dirty_count=0,
+    oldest_uncommitted_at=None) this test passes even without that check.
+    """
     add(store, "/p/two", "two", "s2", "2026-07-30T10:00:00.000Z")
     cfg = load({"db_path": tmp_path / "c.db", "stale_hours": 1})
-    cards = build_cards(store, cfg, probe_fn=lambda p: GitState(status="not_a_repo"))
+    not_repo = GitState(status="not_a_repo", dirty_count=47, oldest_uncommitted_at=1)
+    cards = build_cards(store, cfg, probe_fn=lambda p: not_repo)
+    assert cards[0].is_stale is False
+
+
+def test_unavailable_git_is_never_stale(store, tmp_path):
+    """Same reasoning for a failed probe: no data means no warning."""
+    add(store, "/p/three", "three", "s3", "2026-07-30T10:00:00.000Z")
+    cfg = load({"db_path": tmp_path / "c.db", "stale_hours": 1})
+    unavail = GitState(status="unavailable", dirty_count=47, oldest_uncommitted_at=1)
+    cards = build_cards(store, cfg, probe_fn=lambda p: unavail)
     assert cards[0].is_stale is False
 
 
