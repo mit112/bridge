@@ -20,18 +20,22 @@ from bridge.store import Store
 def run_db_command(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="bridge")
     sub = parser.add_subparsers(dest="cmd")
-    for name in ("index", "serve"):
+    for name in ("index", "serve", "backfill"):
         p = sub.add_parser(name)
         p.add_argument("--projects-dir")
         p.add_argument("--db")
         p.add_argument("--spool-dir")
+        if name == "backfill":
+            # --dry-run is the default; writing must be asked for explicitly.
+            p.add_argument("--write", action="store_true")
+            p.add_argument("--dry-run", action="store_true")
 
     try:
         args = parser.parse_args(argv)
     except SystemExit as e:
         return e.code if isinstance(e.code, int) else 2
 
-    if args.cmd not in ("index", "serve"):
+    if args.cmd not in ("index", "serve", "backfill"):
         parser.print_usage(sys.stderr)
         return 2
 
@@ -56,6 +60,14 @@ def run_db_command(argv: list[str] | None = None) -> int:
         # table, so a routine index never resurrects a consumed handoff.
         stats["handoffs_rebuilt"] = spool.rebuild_if_empty(store, cfg.spool_dir).drained
         print(json.dumps(stats, indent=2))
+        store.close()
+        return 0
+
+    if args.cmd == "backfill":
+        from bridge import backfill
+
+        stats = backfill.run(store, cfg, write=args.write and not args.dry_run)
+        print(json.dumps(asdict(stats), indent=2))
         store.close()
         return 0
 

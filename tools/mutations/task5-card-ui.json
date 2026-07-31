@@ -1,0 +1,56 @@
+[
+  {
+    "name": "drop the handoff term from the card sort key",
+    "file": "src/bridge/cards.py",
+    "old": "    if card.handoff:\n        rank = RANK_HANDOFF\n    elif card.is_stale:",
+    "new": "    if card.is_stale:",
+    "tests": [
+      "tests/test_cards.py::test_a_queued_handoff_sorts_above_a_dirty_and_stale_project"
+    ]
+  },
+  {
+    "name": "mark the prompt safe in the template (render it as live markup)",
+    "file": "src/bridge/templates/_card.html",
+    "old": "{{ card.handoff.next_prompt }}</pre>",
+    "new": "{{ card.handoff.next_prompt | safe }}</pre>",
+    "tests": [
+      "tests/test_api.py::test_a_queued_prompt_is_html_escaped_on_the_card"
+    ]
+  },
+  {
+    "name": "render the handoff block even with no handoff",
+    "file": "src/bridge/templates/_card.html",
+    "old": "  {% if card.handoff %}\n    {% set hid = \"handoff-\" ~ card.handoff.id %}",
+    "new": "  {% if True %}\n    {% set hid = \"handoff-\" ~ card.handoff.id %}",
+    "tests": [
+      "tests/test_api.py::test_a_card_with_no_handoff_shows_no_empty_affordance"
+    ]
+  },
+  {
+    "name": "weaken the queued foreground colour below AA",
+    "file": "src/bridge/static/app.css",
+    "old": "  --queued-fg: #0a5236;",
+    "new": "  --queued-fg: #7cc3a4;",
+    "tests": [
+      "tests/test_contrast.py"
+    ]
+  },
+  {
+    "name": "remove the live region from the copy confirmation",
+    "file": "src/bridge/templates/_card.html",
+    "old": "        <span class=\"handoff__status\" role=\"status\" aria-live=\"polite\"\n              data-copy-status=\"{{ hid }}\"></span>",
+    "new": "        <span class=\"handoff__status\" data-copy-status=\"{{ hid }}\"></span>",
+    "tests": [
+      "tests/test_api.py::test_the_card_shows_the_handoff_and_a_labelled_copy_affordance"
+    ]
+  },
+  {
+    "name": "stop passing handoff history to the project page",
+    "file": "src/bridge/api.py",
+    "old": "                \"handoffs\": store.handoffs(project_id),",
+    "new": "                \"handoffs\": [],",
+    "tests": [
+      "tests/test_api.py::test_the_project_page_lists_past_handoffs_with_their_status"
+    ]
+  }
+]

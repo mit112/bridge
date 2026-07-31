@@ -208,11 +208,14 @@ def build_parser() -> argparse.ArgumentParser:
     # Accepted here so `bridge index` and `bridge serve` work, but handled by
     # bridge.__main__ and imported lazily: those open the database, and this
     # module must not.
-    for name in ("index", "serve"):
+    for name in ("index", "serve", "backfill"):
         p = sub.add_parser(name)
         p.add_argument("--projects-dir")
         p.add_argument("--db")
         p.add_argument("--spool-dir")
+        if name == "backfill":
+            p.add_argument("--write", action="store_true")
+            p.add_argument("--dry-run", action="store_true")
     return parser
 
 
@@ -231,7 +234,7 @@ def main(argv: list[str] | None = None) -> int:
     except SystemExit as exc:
         return exc.code if isinstance(exc.code, int) else 2
 
-    if args.cmd in ("index", "serve"):
+    if args.cmd in ("index", "serve", "backfill"):
         # Lazy: importing this pulls in sqlite3 and the store, and the handoff
         # path must stay free of both.
         from bridge.__main__ import run_db_command
