@@ -126,6 +126,24 @@ def create_app(store: Store, cfg: Config) -> FastAPI:
         store.create_handoff(h, project_id)
         return {"id": h.id, "project_id": project_id, "journaled": journaled}
 
+    @app.get("/api/handoff")
+    def get_handoff_by_path(project_path: str):
+        """Lookup by path, for `bridge next`, which knows a cwd and not an id.
+
+        Declared as a separate collection route rather than a `/{project_id}`
+        variant, because a non-numeric segment there would 422 instead of
+        resolving. Unlike POST this never upserts: a read must not bring a
+        project row into existence.
+        """
+        canonical = store.alias_map().get(project_path, project_path)
+        project = store.project_by_path(canonical)
+        if project is None:
+            return Response(status_code=204)
+        row = store.queued_handoff(project["id"])
+        if row is None:
+            return Response(status_code=204)
+        return dict(row)
+
     @app.get("/api/handoff/{project_id}")
     def get_handoff(project_id: int):
         row = store.queued_handoff(project_id)

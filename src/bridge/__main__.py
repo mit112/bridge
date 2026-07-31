@@ -1,4 +1,9 @@
-"""Entry point: `python -m bridge index` and `python -m bridge serve`."""
+"""Entry point: `python -m bridge <cmd>`.
+
+`main` delegates to the CLI so `python -m bridge` and the `bridge` console script
+accept the same commands. `run_db_command` holds the two that open the database;
+the CLI imports it lazily so its own handoff path stays database-free.
+"""
 
 import argparse
 import json
@@ -6,18 +11,20 @@ import sys
 from dataclasses import asdict
 from pathlib import Path
 
+from bridge import spool
 from bridge.config import load
 from bridge.indexer import reindex
 from bridge.store import Store
 
 
-def main(argv: list[str] | None = None) -> int:
+def run_db_command(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="bridge")
     sub = parser.add_subparsers(dest="cmd")
     for name in ("index", "serve"):
         p = sub.add_parser(name)
         p.add_argument("--projects-dir")
         p.add_argument("--db")
+        p.add_argument("--spool-dir")
 
     try:
         args = parser.parse_args(argv)
@@ -33,6 +40,8 @@ def main(argv: list[str] | None = None) -> int:
         overrides["claude_projects_dir"] = Path(args.projects_dir)
     if args.db:
         overrides["db_path"] = Path(args.db)
+    if args.spool_dir:
+        overrides["spool_dir"] = Path(args.spool_dir)
     cfg = load(overrides)
     store = Store(cfg.db_path)
 
@@ -41,8 +50,12 @@ def main(argv: list[str] | None = None) -> int:
             if done % 250 == 0 or done == total:
                 print(f"  {done}/{total} files", file=sys.stderr)
 
-        stats = reindex(store, cfg, progress=progress)
-        print(json.dumps(asdict(stats), indent=2))
+        stats = asdict(reindex(store, cfg, progress=progress))
+        # After database loss the retained journal is the only copy of any
+        # handoff, so indexing is where recovery happens. Guarded on an empty
+        # table, so a routine index never resurrects a consumed handoff.
+        stats["handoffs_rebuilt"] = spool.rebuild_if_empty(store, cfg.spool_dir).drained
+        print(json.dumps(stats, indent=2))
         store.close()
         return 0
 
@@ -52,6 +65,12 @@ def main(argv: list[str] | None = None) -> int:
 
     uvicorn.run(create_app(store, cfg), host="127.0.0.1", port=cfg.port)
     return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    from bridge.cli import main as cli_main
+
+    return cli_main(argv)
 
 
 if __name__ == "__main__":

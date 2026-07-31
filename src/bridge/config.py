@@ -1,5 +1,6 @@
 """Configuration for Bridge. Overrides are for tests; there is no config file yet."""
 
+import os
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -53,7 +54,10 @@ def load(overrides: dict | None = None) -> Config:
         stale_hours=12,
         models=list(DEFAULT_MODELS),
         efforts=list(DEFAULT_EFFORTS),
-        port=8787,
+        # Env-overridable so the CLI's exit-zero-when-the-panel-is-down property
+        # can be tested in a real subprocess against a genuinely closed port,
+        # rather than against a mocked transport.
+        port=int(os.environ.get("BRIDGE_PORT") or 8787),
         aliases={f"{home}/{a}": f"{home}/{c}" for a, c in DEFAULT_ALIASES.items()},
         archived_paths=tuple(f"{home}/{p}" for p in DEFAULT_ARCHIVED),
     )
