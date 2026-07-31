@@ -1,23 +1,60 @@
-"""FastAPI application. Read-only in Phase 1."""
+"""FastAPI application. Read-only in Phase 1; Phase 2 adds handoff capture.
+
+This process stays the sole writer. The `bridge` CLI speaks HTTP to it and never
+opens the database.
+"""
 
 from dataclasses import asdict
 from pathlib import Path
+from typing import Literal
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel
 
+from bridge import spool
 from bridge.cards import build_cards
 from bridge.config import Config
 from bridge.indexer import reindex
-from bridge.store import Store
+from bridge.models import Handoff
+from bridge.registry import resolve_project
+from bridge.store import Store, now_epoch
 
 HERE = Path(__file__).parent
+
+HandoffStatus = Literal["queued", "consumed", "dismissed", "superseded"]
+
+
+class HandoffIn(BaseModel):
+    """The CLI mints `id`, which is what makes a re-drained spool file collide
+    on the primary key instead of inserting a duplicate."""
+
+    id: str
+    project_path: str
+    next_prompt: str
+    session_id: str | None = None
+    summary: str | None = None
+    suggested_model: str | None = None
+    suggested_effort: str | None = None
+    created_at: int | None = None
+
+
+class StatusIn(BaseModel):
+    status: HandoffStatus
 
 
 def create_app(store: Store, cfg: Config) -> FastAPI:
     app = FastAPI(title="Bridge")
+
+    # Drain before serving. Under the manual-`bridge serve` uptime model this is
+    # the main way handoffs arrive, so it runs on every boot — and a spool that
+    # cannot be read must never stop the panel from starting.
+    try:
+        app.state.boot_drain = asdict(spool.drain(store, cfg.spool_dir))
+    except Exception as exc:  # noqa: BLE001
+        app.state.boot_drain = {"error": repr(exc)}
     templates = Jinja2Templates(directory=str(HERE / "templates"))
     templates.env.filters["ago"] = _ago
     templates.env.filters["ago_epoch"] = _ago_epoch
@@ -58,6 +95,46 @@ def create_app(store: Store, cfg: Config) -> FastAPI:
     @app.post("/api/refresh")
     def refresh():
         return asdict(reindex(store, cfg))
+
+    @app.post("/api/handoff", status_code=201)
+    def post_handoff(body: HandoffIn):
+        h = Handoff(
+            id=body.id,
+            project_path=body.project_path,
+            next_prompt=body.next_prompt,
+            source_session_id=body.session_id,
+            summary=body.summary,
+            suggested_model=body.suggested_model,
+            suggested_effort=body.suggested_effort,
+            created_at=body.created_at or now_epoch(),
+        )
+        # Journal before inserting, so a handoff is recoverable from the moment
+        # it is acknowledged. A journal failure must not cost the user the
+        # prompt, so it is reported rather than raised.
+        journaled = True
+        try:
+            spool.journal(h, cfg.spool_dir)
+        except Exception:  # noqa: BLE001
+            journaled = False
+        # Resolve through the alias table, then upsert: a handoff may arrive from
+        # a project that was never indexed, or from an old ~/Documents path.
+        project_id = resolve_project(store, h.project_path)
+        store.create_handoff(h, project_id)
+        return {"id": h.id, "project_id": project_id, "journaled": journaled}
+
+    @app.get("/api/handoff/{project_id}")
+    def get_handoff(project_id: int):
+        row = store.queued_handoff(project_id)
+        if row is None:
+            return Response(status_code=204)
+        return dict(row)
+
+    @app.patch("/api/handoff/{handoff_id}")
+    def patch_handoff(handoff_id: str, body: StatusIn):
+        if store.get_handoff(handoff_id) is None:
+            raise HTTPException(status_code=404, detail="unknown handoff")
+        store.set_handoff_status(handoff_id, body.status)
+        return dict(store.get_handoff(handoff_id))
 
     return app
 

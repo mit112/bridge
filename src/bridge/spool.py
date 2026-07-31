@@ -43,13 +43,32 @@ def _dirs(spool_dir: Path) -> tuple[Path, Path, Path]:
 
 
 def write(h: Handoff, spool_dir: Path) -> Path:
+    """Queue a handoff for a server that is not answering. The outbox path."""
+    live, _, _ = _dirs(spool_dir)
+    return _atomic_write(h, live)
+
+
+def journal(h: Handoff, spool_dir: Path) -> Path:
+    """Record a handoff the server accepted directly, without it ever spooling.
+
+    A live POST never passes through the outbox, so without this the journal
+    would only contain handoffs captured while the panel was *down* — and
+    `rm ~/.bridge/bridge.db` would lose every one captured while it was up.
+    Writing straight into `drained/` keeps the journal complete: it means
+    "already in the database", which is exactly true here.
+    """
+    _, drained_dir, _ = _dirs(spool_dir)
+    return _atomic_write(h, drained_dir)
+
+
+def _atomic_write(h: Handoff, directory: Path) -> Path:
     """Serialize one handoff durably enough that a reader never sees a partial file.
 
     The temp file is created in the *same* directory so `os.replace` is an
     atomic rename rather than a cross-filesystem copy, and its name is
     dot-prefixed so `pending()` cannot pick it up mid-write.
     """
-    live, _, _ = _dirs(spool_dir)
+    live = directory
     live.mkdir(parents=True, exist_ok=True)
     payload = json.dumps(dataclasses.asdict(h), indent=2, ensure_ascii=False)
 
