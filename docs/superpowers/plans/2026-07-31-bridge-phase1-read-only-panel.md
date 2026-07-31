@@ -1594,18 +1594,17 @@ git commit -m "Add incremental indexer orchestration"
 
 ---
 
-### Task 8: Card assembly and read API
+### Task 8: Card assembly
 
 **Files:**
-- Create: `src/bridge/cards.py`, `src/bridge/api.py`
-- Test: `tests/test_cards.py`, `tests/test_api.py`
+- Create: `src/bridge/cards.py`
+- Test: `tests/test_cards.py`
 
 **Interfaces:**
 - Consumes: `store.Store`, `gitprobe.probe`, `models.Card`, `models.GitState`, `config.Config`.
 - Produces:
   - `bridge.cards.build_cards(store: Store, cfg: Config, probe_fn=gitprobe.probe) -> list[Card]`
   - `bridge.cards.sort_key(card: Card) -> tuple` — actionability ordering.
-  - `bridge.api.create_app(store: Store, cfg: Config) -> fastapi.FastAPI`
 
 Sort order (spec: "sorted by actionability, not alphabetically"). Phase 1 has no handoffs or live sessions yet, so the implemented order is: **stale-and-dirty → recently active → everything else**, each tie-broken by most recent session. Phase 2 inserts queued handoffs above stale, Phase 4 inserts running sessions above that. `sort_key` returns a tuple whose first element is a rank int, so later phases prepend ranks without restructuring.
 
@@ -1726,7 +1725,7 @@ returning a rank-first tuple is the contract that makes that a local change.
 from bridge import gitprobe
 from bridge.config import Config
 from bridge.models import Card, GitState, SessionRecord
-from bridge.store import Store, now_epoch
+from bridge.store import Store, now_epoch, to_epoch
 
 RANK_STALE = 0
 RANK_RECENT = 1
@@ -1789,28 +1788,65 @@ def _is_stale(git: GitState, stale_hours: int, now: int) -> bool:
 
 
 def sort_key(card: Card) -> tuple:
+    """Rank first, then most-recent-first, then name."""
     if card.is_stale:
         rank = RANK_STALE
     elif card.session is not None:
         rank = RANK_RECENT
     else:
         rank = RANK_OTHER
-    ended = (card.session.ended_at or "") if card.session else ""
-    # negate recency by inverting the string comparison via a reversed sort field
-    return (rank, _invert(ended), card.name.lower())
-
-
-def _invert(s: str) -> str:
-    """Sort ISO timestamps descending inside an ascending sort."""
-    return "".join(chr(0x10FFFF - ord(c)) for c in s)
+    ended = to_epoch(card.session.ended_at) if card.session else None
+    return (rank, -(ended or 0), card.name.lower())
 ```
+
+The `to_epoch` import comes from `bridge.store`; update the import line at the
+top of the file to `from bridge.store import Store, now_epoch, to_epoch`.
 
 - [ ] **Step 4: Run card tests to verify they pass**
 
 Run: `uv run pytest tests/test_cards.py -v`
 Expected: 7 passed
 
-- [ ] **Step 5: Write the failing API tests**
+- [ ] **Step 5: Run the whole suite**
+
+Run: `uv run pytest`
+Expected: all green. Nothing red is committed.
+
+- [ ] **Step 6: Commit**
+
+```bash
+cd ~/dev/bridge
+git add src/bridge/cards.py tests/test_cards.py
+git commit -m "Add card assembly with actionability ordering"
+```
+
+---
+
+### Task 9: Read API and dashboard UI
+
+**Files:**
+- Create: `src/bridge/api.py`
+- Create: `src/bridge/templates/base.html`, `src/bridge/templates/dashboard.html`, `src/bridge/templates/_card.html`, `src/bridge/templates/project.html`
+- Create: `src/bridge/static/app.css`
+- Test: `tests/test_api.py`
+
+**Interfaces:**
+- Consumes: `cards.build_cards`, `store.Store`, `config.Config`, `indexer.reindex`, `models.Card`.
+- Produces: `bridge.api.create_app(store: Store, cfg: Config) -> fastapi.FastAPI`, plus Jinja filters `ago` (ISO string → `4m`/`3h`/`2d`), `ago_epoch` (epoch int → same), `kilo` (int → `5`/`12k`/`1.3M`).
+
+API and templates ship together in one task because neither is testable without the other.
+
+**REQUIRED:** invoke the `design-guardrails` skill before writing the CSS, per the standing repository rule for interface work.
+
+Presentation rules from the spec, restated because they are testable requirements, not taste:
+- Color carries meaning only: one accent for running (unused in Phase 1), one warning for stale. Nothing else colored.
+- One number per concern, unit implied: `47 dirty`, not `Uncommitted changes: 47 files`.
+- Status never by color alone — the `⚠` glyph and its `title` text carry it too.
+- Token burn as absolute counts, never a percentage of a limit.
+- Single column; two columns at ≥1400px.
+- `not_a_repo` renders a neutral note, never a warning.
+
+- [ ] **Step 1: Write the failing API tests**
 
 `tests/test_api.py`:
 ```python
@@ -1885,12 +1921,12 @@ def test_refresh_returns_stats(client):
     assert "files_seen" in r.json()
 ```
 
-- [ ] **Step 6: Run API tests to verify they fail**
+- [ ] **Step 2: Run API tests to verify they fail**
 
 Run: `uv run pytest tests/test_api.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'bridge.api'`
 
-- [ ] **Step 7: Write the API implementation**
+- [ ] **Step 3: Write the API implementation**
 
 `src/bridge/api.py`:
 ```python
@@ -1916,6 +1952,7 @@ def create_app(store: Store, cfg: Config) -> FastAPI:
     app = FastAPI(title="Bridge")
     templates = Jinja2Templates(directory=str(HERE / "templates"))
     templates.env.filters["ago"] = _ago
+    templates.env.filters["ago_epoch"] = _ago_epoch
     templates.env.filters["kilo"] = _kilo
     app.mount("/static", StaticFiles(directory=str(HERE / "static")), name="static")
 
@@ -1974,6 +2011,20 @@ def _ago(iso: str | None) -> str:
     return f"{secs // 86400}d"
 
 
+def _ago_epoch(epoch: int | None) -> str:
+    """Same shape as `ago`, for the epoch ints GitState carries."""
+    from bridge.store import now_epoch
+
+    if not epoch:
+        return ""
+    secs = max(0, now_epoch() - int(epoch))
+    if secs < 3600:
+        return f"{secs // 60}m"
+    if secs < 86400:
+        return f"{secs // 3600}h"
+    return f"{secs // 86400}d"
+
+
 def _kilo(n: int | None) -> str:
     """Token counts as absolute magnitudes; never a percentage of a limit."""
     n = n or 0
@@ -1984,38 +2035,7 @@ def _kilo(n: int | None) -> str:
     return f"{n / 1_000_000:.1f}M"
 ```
 
-- [ ] **Step 8: Commit (templates land in Task 9; API tests stay red until then)**
-
-```bash
-cd ~/dev/bridge
-git add src/bridge/cards.py src/bridge/api.py tests/test_cards.py tests/test_api.py
-git commit -m "Add card assembly and read-only API routes"
-```
-
----
-
-### Task 9: Dashboard UI
-
-**Files:**
-- Create: `src/bridge/templates/base.html`, `src/bridge/templates/dashboard.html`, `src/bridge/templates/_card.html`, `src/bridge/templates/project.html`
-- Create: `src/bridge/static/app.css`
-- Test: `tests/test_api.py` (from Task 8 — turns green here), plus new UI assertions
-
-**Interfaces:**
-- Consumes: `Card`, `GitState`, `SessionRecord`, and the `ago` / `kilo` Jinja filters from Task 8.
-- Produces: rendered HTML. No new Python API.
-
-**REQUIRED:** invoke the `design-guardrails` skill before writing the CSS, per the standing repository rule for interface work.
-
-Presentation rules from the spec, restated because they are testable requirements, not taste:
-- Color carries meaning only: one accent for running (unused in Phase 1), one warning for stale. Nothing else colored.
-- One number per concern, unit implied: `47 dirty`, not `Uncommitted changes: 47 files`.
-- Status never by color alone — the `⚠` glyph and its `title` text carry it too.
-- Token burn as absolute counts, never a percentage of a limit.
-- Single column; two columns at ≥1400px.
-- `not_a_repo` renders a neutral note, never a warning.
-
-- [ ] **Step 1: Add the UI assertions to `tests/test_api.py`**
+- [ ] **Step 4: Add the UI assertions to `tests/test_api.py`**
 
 ```python
 def test_stale_project_shows_warning_glyph_and_text(tmp_path):
@@ -2080,16 +2100,16 @@ def test_tokens_shown_as_absolute_not_percentage(client):
     assert "today" in text.lower()
 ```
 
-- [ ] **Step 2: Run to verify they fail**
+- [ ] **Step 5: Run to verify they fail**
 
 Run: `uv run pytest tests/test_api.py -v`
 Expected: FAIL — templates directory does not exist yet.
 
-- [ ] **Step 3: Invoke design-guardrails**
+- [ ] **Step 6: Invoke design-guardrails**
 
 Invoke the `design-guardrails` skill for a dense read-only status dashboard, then apply its rule cards to the CSS in Step 5.
 
-- [ ] **Step 4: Write the templates**
+- [ ] **Step 7: Write the templates**
 
 `src/bridge/templates/base.html`:
 ```html
@@ -2157,9 +2177,9 @@ Invoke the `design-guardrails` skill for a dense read-only status dashboard, the
     {% if card.git.status == "ok" %}
       <span>{{ card.git.branch }}</span>
       {% if card.git.dirty_count %}<span> · {{ card.git.dirty_count }} dirty</span>{% endif %}
-      {% if card.ahead is not none and card.git.ahead %}<span> · {{ card.git.ahead }} ahead</span>{% endif %}
+      {% if card.git.ahead %}<span> · {{ card.git.ahead }} ahead</span>{% endif %}
       {% if card.is_stale %}
-        <span class="risk" title="Uncommitted work is older than the staleness threshold">⚠ uncommitted for {{ card.git.oldest_uncommitted_at | ago }}</span>
+        <span class="risk" title="Uncommitted work is older than the staleness threshold">⚠ uncommitted for {{ card.git.oldest_uncommitted_at | ago_epoch }}</span>
       {% endif %}
     {% elif card.git.status == "not_a_repo" %}
       <span class="card__note">not a git repo</span>
@@ -2174,8 +2194,6 @@ Invoke the `design-guardrails` skill for a dense read-only status dashboard, the
   </p>
 </article>
 ```
-
-Note: `card.git.oldest_uncommitted_at` is an epoch int, and the `ago` filter takes an ISO string. Fix this in Step 5 by adding an `ago_epoch` filter rather than reusing `ago`.
 
 `src/bridge/templates/project.html`:
 ```html
@@ -2204,32 +2222,7 @@ Note: `card.git.oldest_uncommitted_at` is an epoch int, and the `ago` filter tak
 {% endblock %}
 ```
 
-- [ ] **Step 5: Add the `ago_epoch` filter and the stylesheet**
-
-In `src/bridge/api.py`, register alongside the existing filters:
-```python
-    templates.env.filters["ago_epoch"] = _ago_epoch
-```
-and add:
-```python
-def _ago_epoch(epoch: int | None) -> str:
-    from bridge.store import now_epoch
-
-    if not epoch:
-        return ""
-    secs = max(0, now_epoch() - int(epoch))
-    if secs < 3600:
-        return f"{secs // 60}m"
-    if secs < 86400:
-        return f"{secs // 3600}h"
-    return f"{secs // 86400}d"
-```
-Then change `_card.html` to use `card.git.oldest_uncommitted_at | ago_epoch`.
-
-Also remove the stray `card.ahead is not none` guard in `_card.html` (there is no `Card.ahead`; the field is `card.git.ahead`) so the condition reads:
-```html
-      {% if card.git.ahead %}<span> · {{ card.git.ahead }} ahead</span>{% endif %}
-```
+- [ ] **Step 8: Write the stylesheet**
 
 `src/bridge/static/app.css`:
 ```css
@@ -2299,17 +2292,17 @@ main { padding: 1.5rem; }
 .sessions td { font-variant-numeric: tabular-nums; }
 ```
 
-- [ ] **Step 6: Run the API tests to verify they pass**
+- [ ] **Step 9: Run the API tests to verify they pass**
 
 Run: `uv run pytest tests/test_api.py -v`
 Expected: 9 passed
 
-- [ ] **Step 7: Run the whole suite**
+- [ ] **Step 10: Run the whole suite**
 
 Run: `uv run pytest`
 Expected: all passing (~60 tests)
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 11: Commit**
 
 ```bash
 cd ~/dev/bridge
@@ -2511,7 +2504,7 @@ git commit -m "Add CLI entry point for indexing and serving"
 
 Deliberately deferred, with the phase that covers them: `agents` probe, SSE, sparklines, and the diagnostics view (Phase 4); handoffs, spool, `bridge` CLI (Phase 2); launcher (Phase 3). `Card.spark` exists as an empty default so Phase 4 fills it without a schema change.
 
-**2. Placeholder scan.** No TBDs. Every code step has runnable code. Two steps deliberately name a defect to fix rather than shipping it silently — Task 9 Step 5 corrects the `ago` / `ago_epoch` type mismatch and the nonexistent `card.ahead` reference introduced in Step 4. Both are called out at the point of introduction with the fix given.
+**2. Placeholder scan.** No TBDs. Every code step has runnable code, correct as written — no step mandates writing a known defect for a later step to repair, and no step commits a red test.
 
 **3. Type consistency.** Checked across tasks: `SessionRecord` field names identical in `models.py`, `transcripts._apply`, `store.upsert_session`, `indexer._rehydrate`, and `cards._session`. `GitState.status` uses exactly `ok` / `not_a_repo` / `unavailable` in `gitprobe`, `cards._is_stale`, and `_card.html`. `ScanResult.lines_parsed` is produced in Task 2 and asserted in Tasks 3 and 7. `Store.set_scan_state` takes `session_id: str | None`, matching the `None` that `indexer` can pass.
 
