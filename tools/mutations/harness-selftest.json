@@ -1,0 +1,16 @@
+[
+  {
+    "name": "SELFTEST/must-be-CAUGHT: busy_timeout 5000 -> 5001 (byte-size identical, so it also proves stale .pyc is not being served)",
+    "file": "src/bridge/store.py",
+    "old": "PRAGMA busy_timeout=5000",
+    "new": "PRAGMA busy_timeout=5001",
+    "tests": ["tests/test_store.py::test_pragmas_are_set"]
+  },
+  {
+    "name": "SELFTEST/must-be-SURVIVED: reword a comment nothing asserts on (same length)",
+    "file": "src/bridge/store.py",
+    "old": "The server process is the sole writer.",
+    "new": "The server process is the sole WRITER.",
+    "tests": ["tests/test_store.py::test_pragmas_are_set"]
+  }
+]

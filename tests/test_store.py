@@ -3,7 +3,7 @@ import threading
 
 import pytest
 
-from bridge.models import SessionRecord
+from bridge.models import Handoff, SessionRecord
 from bridge.store import Store, to_epoch
 
 
@@ -24,6 +24,17 @@ def rec(sid="s1", **kw):
     )
     base.update(kw)
     return SessionRecord(**base)
+
+
+def handoff(hid="h1", **kw):
+    base = dict(
+        id=hid, project_path="/Users/mitsheth/dev/demo",
+        next_prompt="pick up where this left off", summary="did some work",
+        source_session_id="sess-1", suggested_model="claude-opus-5",
+        suggested_effort="high", created_at=1000,
+    )
+    base.update(kw)
+    return Handoff(**base)
 
 
 def test_pragmas_are_set(store):
@@ -239,6 +250,92 @@ def test_reseeding_an_alias_replaces_its_target(store):
     store.set_alias("/old/a", "/new/a")
     store.set_alias("/old/a", "/newer/a")
     assert store.alias_map() == {"/old/a": "/newer/a"}
+
+
+def test_second_handoff_supersedes_the_first_and_both_survive(store):
+    """A card shows exactly one next step, but nothing is thrown away."""
+    pid = store.upsert_project("/d", "d")
+    store.create_handoff(handoff("h1", created_at=100), pid)
+    store.create_handoff(handoff("h2", created_at=200), pid)
+
+    assert store.queued_handoff(pid)["id"] == "h2"
+    assert store.get_handoff("h1")["status"] == "superseded"
+    assert {r["id"] for r in store.handoffs(pid)} == {"h1", "h2"}
+    queued = [r["id"] for r in store.handoffs(pid) if r["status"] == "queued"]
+    assert queued == ["h2"], "exactly one handoff may be queued per project"
+
+
+def test_supersede_and_insert_are_atomic(store):
+    """If the insert fails, the previous handoff must still be queued.
+
+    Superseding outside the transaction would leave the project with its old
+    prompt retired and no new one queued — worse than either outcome alone. A
+    NOT NULL violation on next_prompt stands in for any insert failure.
+    """
+    pid = store.upsert_project("/d", "d")
+    store.create_handoff(handoff("h1"), pid)
+
+    with pytest.raises(sqlite3.IntegrityError):
+        store.create_handoff(handoff("h2", next_prompt=None), pid)
+
+    still_queued = store.queued_handoff(pid)
+    assert still_queued is not None, (
+        "rollback left the project with nothing queued: the supersede committed "
+        "without the insert"
+    )
+    assert still_queued["id"] == "h1"
+    assert store.get_handoff("h1")["status"] == "queued"
+    assert store.get_handoff("h2") is None
+
+
+def test_reinserting_the_queued_handoff_does_not_supersede_itself(store):
+    """The re-drain case. Without the `id<>?` guard, ingesting the same spool
+    file twice supersedes the row it is re-inserting and the project ends up
+    with nothing queued — silently losing the prompt it was protecting."""
+    pid = store.upsert_project("/d", "d")
+    store.create_handoff(handoff("h1"), pid)
+    store.create_handoff(handoff("h1"), pid)
+
+    assert store.queued_handoff(pid) is not None
+    assert store.queued_handoff(pid)["id"] == "h1"
+    assert len(store.handoffs(pid)) == 1
+
+
+def test_reinserting_a_consumed_handoff_does_not_resurrect_it(store):
+    pid = store.upsert_project("/d", "d")
+    store.create_handoff(handoff("h1"), pid)
+    store.set_handoff_status("h1", "consumed")
+    store.create_handoff(handoff("h1"), pid)
+    assert store.get_handoff("h1")["status"] == "consumed"
+    assert store.queued_handoff(pid) is None
+
+
+def test_handoffs_are_scoped_to_their_project(store):
+    a = store.upsert_project("/a", "a")
+    b = store.upsert_project("/b", "b")
+    store.create_handoff(handoff("ha", project_path="/a"), a)
+    store.create_handoff(handoff("hb", project_path="/b"), b)
+    # Queueing for one project must not supersede another's.
+    assert store.queued_handoff(a)["id"] == "ha"
+    assert store.queued_handoff(b)["id"] == "hb"
+
+
+def test_consumed_at_is_stamped_only_by_the_consumed_transition(store):
+    pid = store.upsert_project("/d", "d")
+    store.create_handoff(handoff("h1"), pid)
+    store.set_handoff_status("h1", "dismissed")
+    assert store.get_handoff("h1")["consumed_at"] is None
+    store.set_handoff_status("h1", "consumed")
+    stamped = store.get_handoff("h1")["consumed_at"]
+    assert stamped is not None
+    store.set_handoff_status("h1", "queued")  # must not clear the stamp
+    assert store.get_handoff("h1")["consumed_at"] == stamped
+
+
+def test_a_handoff_requires_a_real_project(store):
+    """The FK is enforced, so a handoff can never dangle off a missing project."""
+    with pytest.raises(sqlite3.IntegrityError):
+        store.create_handoff(handoff("h1"), 424242)
 
 
 def test_upsert_project_does_not_reset_an_existing_status(store):

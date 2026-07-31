@@ -30,3 +30,26 @@ only and has no authentication.
 
 Phases 2–4 (handoff capture, session launching, live updates) are planned in
 `docs/superpowers/plans/`.
+
+## The handoff loop
+
+End a session by running `/handoff`. It composes a summary and a next-session prompt and
+records them against the current project; `bridge next` prints the prompt back, so
+`claude "$(bridge next)"` opens the next session on it.
+
+Install the slash command once (Bridge never writes outside `~/.bridge`, so this is
+deliberately manual):
+
+```bash
+cp ~/dev/bridge/commands/handoff.md ~/.claude/commands/handoff.md
+```
+
+The panel is started by hand with `bridge serve`, so it is usually down. That is fine:
+`bridge handoff` exits zero regardless, writes the prompt to `~/.bridge/spool/`, and the
+server ingests it on the next boot. Drained spool files are retained in
+`~/.bridge/spool/drained/` as an append-only journal, which is what keeps
+`rm ~/.bridge/bridge.db && bridge index` a safe operation now that Bridge stores authored
+data.
+
+`bridge backfill` imports stray `HANDOFF.md` / `NEXT-SESSION.md` files. It is `--dry-run`
+unless you pass `--write`.

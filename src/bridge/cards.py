@@ -10,6 +10,7 @@ from bridge.config import Config
 from bridge.models import Card, GitState, SessionRecord
 from bridge.store import Store, now_epoch, to_epoch
 
+RANK_HANDOFF = -1
 RANK_STALE = 0
 RANK_RECENT = 1
 RANK_OTHER = 2
@@ -43,6 +44,7 @@ def build_cards(store: Store, cfg: Config, probe_fn=None) -> list[Card]:
                 tokens_today=store.token_totals(row["id"], now - ONE_DAY),
                 tokens_5h=store.token_totals(row["id"], now - FIVE_HOURS),
                 is_stale=_is_stale(git, cfg.stale_hours, now),
+                handoff=_handoff(store, row["id"]),
             )
         )
 
@@ -68,6 +70,11 @@ def _session(store: Store, project_id: int) -> SessionRecord | None:
     )
 
 
+def _handoff(store: Store, project_id: int) -> dict | None:
+    row = store.queued_handoff(project_id)
+    return dict(row) if row is not None else None
+
+
 def _is_stale(git: GitState, stale_hours: int, now: int) -> bool:
     """Only a real repo with real uncommitted work can be stale."""
     if git.status != "ok" or git.dirty_count == 0 or git.oldest_uncommitted_at is None:
@@ -76,8 +83,14 @@ def _is_stale(git: GitState, stale_hours: int, now: int) -> bool:
 
 
 def sort_key(card: Card) -> tuple:
-    """Rank first, then most-recent-first, then name."""
-    if card.is_stale:
+    """Rank first, then most-recent-first, then name.
+
+    A queued handoff outranks dirty-and-stale: a card that already knows its next
+    step is more actionable than one that only knows something is wrong.
+    """
+    if card.handoff:
+        rank = RANK_HANDOFF
+    elif card.is_stale:
         rank = RANK_STALE
     elif card.session is not None:
         rank = RANK_RECENT

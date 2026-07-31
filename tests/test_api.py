@@ -1,15 +1,20 @@
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
 
+from bridge import spool
 from bridge.api import create_app
 from bridge.config import load
-from bridge.models import SessionRecord
+from bridge.models import Handoff, SessionRecord
 from bridge.store import Store
+
+DEMO = "/Users/mitsheth/dev/demo"
 
 
 @pytest.fixture
 def client(tmp_path):
-    cfg = load({"db_path": tmp_path / "a.db"})
+    cfg = load({"db_path": tmp_path / "a.db", "spool_dir": tmp_path / "spool"})
     store = Store(cfg.db_path)
     pid = store.upsert_project("/Users/mitsheth/dev/demo", "demo")
     store.upsert_session(
@@ -42,7 +47,7 @@ def test_dashboard_renders_project_and_title(client):
 
 
 def test_dashboard_renders_with_zero_projects(tmp_path):
-    cfg = load({"db_path": tmp_path / "empty.db"})
+    cfg = load({"db_path": tmp_path / "empty.db", "spool_dir": tmp_path / "spool"})
     store = Store(cfg.db_path)
     c = TestClient(create_app(store, cfg))
     r = c.get("/")
@@ -75,7 +80,7 @@ def test_stale_project_shows_warning_glyph_and_text(tmp_path):
 
     import bridge.cards as cards_mod
 
-    cfg = load({"db_path": tmp_path / "s.db", "stale_hours": 1})
+    cfg = load({"db_path": tmp_path / "s.db", "spool_dir": tmp_path / "spool", "stale_hours": 1})
     store = Store(cfg.db_path)
     pid = store.upsert_project("/Users/mitsheth/dev/stalerepo", "stalerepo")
     store.upsert_session(
@@ -104,7 +109,7 @@ def test_not_a_repo_shows_neutral_note_not_warning(tmp_path):
 
     import bridge.cards as cards_mod
 
-    cfg = load({"db_path": tmp_path / "n.db"})
+    cfg = load({"db_path": tmp_path / "n.db", "spool_dir": tmp_path / "spool"})
     store = Store(cfg.db_path)
     pid = store.upsert_project("/Users/mitsheth/dev/plain", "plain")
     store.upsert_session(
@@ -139,7 +144,7 @@ def test_concurrent_requests_do_not_error(tmp_path):
     """
     import threading
 
-    cfg = load({"db_path": tmp_path / "conc.db"})
+    cfg = load({"db_path": tmp_path / "conc.db", "spool_dir": tmp_path / "spool"})
     store = Store(cfg.db_path)
     for n in range(12):
         pid = store.upsert_project(f"/p/{n}", f"p{n}")
@@ -186,7 +191,7 @@ def test_concurrent_mixed_routes_do_not_error(tmp_path):
     """
     import threading
 
-    cfg = load({"db_path": tmp_path / "mixed.db"})
+    cfg = load({"db_path": tmp_path / "mixed.db", "spool_dir": tmp_path / "spool"})
     store = Store(cfg.db_path)
     pids = []
     for n in range(10):
@@ -244,3 +249,219 @@ def test_no_module_outside_store_touches_the_raw_connection():
     }
     offenders = {k: v for k, v in offenders.items() if v}
     assert offenders == {}, f"raw connection access outside store.py: {offenders}"
+
+
+# --- Phase 2: handoff routes -------------------------------------------------
+
+
+HOSTILE_PROMPT = (
+    'quotes " and \' and backticks `whoami`\n'
+    "shell substitution $(echo pwned) and ${HOME}\n"
+    "a windows path C:\\Users\\x and a tab\there\n"
+    "unicode: émoji 🌉 and markup <script>alert(1)</script>\n"
+)
+
+
+@pytest.fixture
+def handoff_app(tmp_path):
+    cfg = load({"db_path": tmp_path / "h.db", "spool_dir": tmp_path / "spool"})
+    store = Store(cfg.db_path)
+    yield TestClient(create_app(store, cfg)), store, cfg
+    store.close()
+
+
+def body(hid="h1", path=DEMO, prompt="carry on from here", **kw):
+    b = dict(
+        id=hid, project_path=path, next_prompt=prompt, session_id="sess-1",
+        summary="a summary", suggested_model="claude-opus-5",
+        suggested_effort="high",
+    )
+    b.update(kw)
+    return b
+
+
+def test_post_from_an_aliased_path_attaches_to_the_canonical_project(handoff_app):
+    """A handoff from an old ~/Documents cwd must not re-split merged history."""
+    c, store, _ = handoff_app
+    store.set_alias("/Users/mitsheth/Documents/projectX", "/Users/mitsheth/dev/projectX")
+
+    r = c.post("/api/handoff", json=body(path="/Users/mitsheth/Documents/projectX"))
+
+    assert r.status_code == 201
+    assert store.project_by_path("/Users/mitsheth/Documents/projectX") is None
+    canonical = store.project_by_path("/Users/mitsheth/dev/projectX")
+    assert canonical is not None
+    assert r.json()["project_id"] == canonical["id"]
+    assert c.get(f"/api/handoff/{canonical['id']}").json()["id"] == "h1"
+
+
+def test_post_from_a_path_with_no_project_row_creates_one(handoff_app):
+    """Capturing a handoff must never 404 because the project is unindexed."""
+    c, store, _ = handoff_app
+    r = c.post("/api/handoff", json=body(path="/Users/mitsheth/dev/brand-new"))
+    assert r.status_code == 201
+    row = store.project_by_path("/Users/mitsheth/dev/brand-new")
+    assert row is not None
+    assert row["name"] == "brand-new"
+
+
+def test_posting_the_same_id_twice_yields_one_row(handoff_app):
+    """A spool drain and a live POST of the same handoff cannot both insert."""
+    c, store, _ = handoff_app
+    first = c.post("/api/handoff", json=body("dup"))
+    second = c.post("/api/handoff", json=body("dup", prompt="a different prompt"))
+
+    assert first.status_code == 201
+    assert second.status_code == 201
+    pid = first.json()["project_id"]
+    assert len(store.handoffs(pid)) == 1
+    assert store.queued_handoff(pid)["next_prompt"] == "carry on from here"
+
+
+def test_a_hostile_prompt_round_trips_byte_for_byte(handoff_app):
+    """Prompts contain quotes, backticks, newlines and `$(...)`, and are large."""
+    c, _, _ = handoff_app
+    prompt = HOSTILE_PROMPT + "padding " * 5000
+    assert len(prompt) > 40_000
+
+    pid = c.post("/api/handoff", json=body(prompt=prompt)).json()["project_id"]
+    got = c.get(f"/api/handoff/{pid}").json()["next_prompt"]
+
+    assert got == prompt
+    assert len(got) == len(prompt)
+
+
+def test_boot_drain_ingests_a_spooled_handoff_before_serving(tmp_path):
+    cfg = load({"db_path": tmp_path / "b.db", "spool_dir": tmp_path / "spool"})
+    spool.write(
+        Handoff(id="spooled", project_path=DEMO, next_prompt="from the spool",
+                created_at=5),
+        cfg.spool_dir,
+    )
+    store = Store(cfg.db_path)
+
+    c = TestClient(create_app(store, cfg))
+
+    pid = store.project_by_path(DEMO)["id"]
+    assert c.get(f"/api/handoff/{pid}").json()["id"] == "spooled"
+    assert spool.pending_count(cfg.spool_dir) == 0
+    store.close()
+
+
+def test_an_unreadable_spool_does_not_stop_the_panel_from_starting(tmp_path, monkeypatch):
+    """A session must never lose the panel because the spool is broken."""
+    cfg = load({"db_path": tmp_path / "u.db", "spool_dir": tmp_path / "spool"})
+    store = Store(cfg.db_path)
+
+    def unreadable(*args, **kwargs):
+        raise OSError("permission denied")
+
+    monkeypatch.setattr(spool, "drain", unreadable)
+    app = create_app(store, cfg)
+
+    assert TestClient(app).get("/").status_code == 200
+    assert "error" in app.state.boot_drain
+    store.close()
+
+
+def test_get_returns_204_when_nothing_is_queued(handoff_app):
+    c, store, _ = handoff_app
+    pid = store.upsert_project(DEMO, "demo")
+    r = c.get(f"/api/handoff/{pid}")
+    assert r.status_code == 204
+    assert r.content == b""
+
+
+def test_patch_sets_status_and_rejects_unknown_ids_and_statuses(handoff_app):
+    c, _, _ = handoff_app
+    pid = c.post("/api/handoff", json=body("h1")).json()["project_id"]
+
+    r = c.patch("/api/handoff/h1", json={"status": "consumed"})
+    assert r.status_code == 200
+    assert r.json()["status"] == "consumed"
+    assert c.get(f"/api/handoff/{pid}").status_code == 204
+
+    assert c.patch("/api/handoff/nope", json={"status": "consumed"}).status_code == 404
+    assert c.patch("/api/handoff/h1", json={"status": "banana"}).status_code == 422
+
+
+def test_a_live_post_is_journaled_so_the_database_stays_disposable(tmp_path):
+    """A live POST never passes through the outbox.
+
+    If the server did not journal it, the journal would only ever hold handoffs
+    captured while the panel was *down*, and `rm ~/.bridge/bridge.db` would lose
+    every one captured while it was up. That is the invariant this phase is
+    supposed to preserve, so it is asserted end to end.
+    """
+    cfg = load({"db_path": tmp_path / "j.db", "spool_dir": tmp_path / "spool"})
+    store = Store(cfg.db_path)
+    c = TestClient(create_app(store, cfg))
+
+    r = c.post("/api/handoff", json=body("live", prompt="captured while up"))
+    assert r.json()["journaled"] is True
+    assert (cfg.spool_dir / "drained" / "live.json").exists()
+    # It goes straight to the journal, not the outbox: nothing is left pending.
+    assert spool.pending_count(cfg.spool_dir) == 0
+    store.close()
+
+    cfg.db_path.unlink()
+    for suffix in ("-wal", "-shm"):
+        Path(str(cfg.db_path) + suffix).unlink(missing_ok=True)
+
+    store2 = Store(cfg.db_path)
+    assert store2.handoff_count() == 0
+    assert spool.rebuild_if_empty(store2, cfg.spool_dir).drained == 1
+    pid = store2.project_by_path(DEMO)["id"]
+    assert store2.queued_handoff(pid)["next_prompt"] == "captured while up"
+    store2.close()
+
+
+def test_a_queued_prompt_is_html_escaped_on_the_card(handoff_app):
+    """A prompt is arbitrary text and routinely contains markup."""
+    c, _, _ = handoff_app
+    prompt = "before <script>alert('xss')</script> after"
+    c.post("/api/handoff", json=body("h1", prompt=prompt))
+
+    html = c.get("/").text
+
+    assert "<script>alert(" not in html, "the prompt was rendered as live markup"
+    assert "&lt;script&gt;alert(" in html
+    assert "Copy prompt" in html
+
+
+def test_the_card_shows_the_handoff_and_a_labelled_copy_affordance(handoff_app):
+    c, _, _ = handoff_app
+    c.post("/api/handoff", json=body("h1", prompt="carry on from here"))
+
+    html = c.get("/").text
+
+    assert "Next step queued" in html
+    assert "a summary" in html
+    # The button says what it does, and the confirmation is a live region so it
+    # is announced without moving focus.
+    assert ">Copy prompt<" in html
+    assert 'role="status"' in html
+    assert 'aria-live="polite"' in html
+    assert 'data-copy-target="handoff-h1"' in html
+    assert 'id="handoff-h1"' in html
+
+
+def test_a_card_with_no_handoff_shows_no_empty_affordance(client):
+    """No orphan Copy button, no empty block, on the majority of cards."""
+    c, _, _ = client
+    html = c.get("/").text
+    assert "Next step queued" not in html
+    assert "Copy prompt" not in html
+    assert "data-copy-target" not in html
+
+
+def test_the_project_page_lists_past_handoffs_with_their_status(handoff_app):
+    c, store, _ = handoff_app
+    pid = c.post("/api/handoff", json=body("old", prompt="first")).json()["project_id"]
+    c.post("/api/handoff", json=body("new", prompt="second"))
+
+    html = c.get(f"/project/{pid}").text
+
+    assert "Handoffs, most recent first" in html
+    assert "superseded" in html
+    assert "queued" in html

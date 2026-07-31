@@ -11,7 +11,7 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
-from bridge.models import SessionRecord
+from bridge.models import Handoff, SessionRecord
 
 SCHEMA = [
     """
@@ -63,6 +63,22 @@ SCHEMA = [
         canonical_path TEXT NOT NULL
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS handoffs (
+        id TEXT PRIMARY KEY,
+        project_id INTEGER NOT NULL REFERENCES projects(id),
+        source_session_id TEXT,
+        summary TEXT,
+        next_prompt TEXT NOT NULL,
+        suggested_model TEXT,
+        suggested_effort TEXT,
+        status TEXT NOT NULL DEFAULT 'queued',
+        created_at INTEGER NOT NULL,
+        consumed_at INTEGER
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_handoffs_project "
+    "ON handoffs(project_id, status, created_at)",
     """
     CREATE TABLE IF NOT EXISTS git_cache (
         project_id INTEGER PRIMARY KEY REFERENCES projects(id),
@@ -258,6 +274,80 @@ class Store:
                     (project_id, limit),
                 )
             )
+
+    # --- handoffs: the only authored data here, so the only data that a
+    # --- dropped database genuinely loses. See spool.py for the journal.
+
+    def create_handoff(self, h: Handoff, project_id: int) -> str:
+        """Queue a handoff, superseding any already queued for the project.
+
+        Both statements run in one transaction: a crash between them would
+        otherwise leave the project with its old handoff superseded and no new
+        one queued, which is strictly worse than either outcome alone.
+
+        `id<>?` is what makes re-ingesting a spool file harmless. Without it a
+        re-drain of the currently queued handoff would supersede *itself* and
+        leave nothing queued. `ON CONFLICT DO NOTHING` then makes the insert
+        idempotent, so a live POST and a spool drain of the same id cannot both
+        insert, and a re-drain cannot resurrect one already consumed.
+        """
+        with self.transaction():
+            self.conn.execute(
+                "UPDATE handoffs SET status='superseded' "
+                "WHERE project_id=? AND status='queued' AND id<>?",
+                (project_id, h.id),
+            )
+            self.conn.execute(
+                "INSERT INTO handoffs(id, project_id, source_session_id, summary, "
+                "next_prompt, suggested_model, suggested_effort, status, created_at) "
+                "VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING",
+                (
+                    h.id, project_id, h.source_session_id, h.summary, h.next_prompt,
+                    h.suggested_model, h.suggested_effort, h.status or "queued",
+                    h.created_at or now_epoch(),
+                ),
+            )
+        return h.id
+
+    def queued_handoff(self, project_id: int) -> sqlite3.Row | None:
+        with self._lock:
+            return self.conn.execute(
+                "SELECT * FROM handoffs WHERE project_id=? AND status='queued' "
+                "ORDER BY created_at DESC LIMIT 1",
+                (project_id,),
+            ).fetchone()
+
+    def handoffs(self, project_id: int, limit: int = 50) -> list[sqlite3.Row]:
+        with self._lock:
+            return list(
+                self.conn.execute(
+                    "SELECT * FROM handoffs WHERE project_id=? "
+                    "ORDER BY created_at DESC LIMIT ?",
+                    (project_id, limit),
+                )
+            )
+
+    def get_handoff(self, handoff_id: str) -> sqlite3.Row | None:
+        with self._lock:
+            return self.conn.execute(
+                "SELECT * FROM handoffs WHERE id=?", (handoff_id,)
+            ).fetchone()
+
+    def set_handoff_status(self, handoff_id: str, status: str) -> None:
+        """`consumed_at` is stamped only on the transition that earns it."""
+        with self._lock:
+            self.conn.execute(
+                "UPDATE handoffs SET status=?, "
+                "consumed_at=CASE WHEN ?='consumed' THEN ? ELSE consumed_at END "
+                "WHERE id=?",
+                (status, status, now_epoch(), handoff_id),
+            )
+
+    def handoff_count(self) -> int:
+        with self._lock:
+            return self.conn.execute(
+                "SELECT COUNT(*) AS n FROM handoffs"
+            ).fetchone()["n"]
 
     def get_scan_state(self, path: str) -> sqlite3.Row | None:
         with self._lock:

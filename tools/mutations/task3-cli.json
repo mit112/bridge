@@ -1,0 +1,66 @@
+[
+  {
+    "name": "let a connection error propagate instead of spooling (non-zero exit)",
+    "file": "src/bridge/cli.py",
+    "old": "    except Exception as exc:  # noqa: BLE001 - refused, timed out, DNS, anything\n        reason = f\"{type(exc).__name__}: {exc}\"",
+    "new": "    except urllib.error.HTTPError as exc:\n        reason = f\"{type(exc).__name__}: {exc}\"",
+    "tests": [
+      "tests/test_cli.py::test_handoff_exits_zero_and_spools_against_a_genuinely_closed_port"
+    ]
+  },
+  {
+    "name": "return success on a non-2xx instead of spooling",
+    "file": "src/bridge/cli.py",
+    "old": "        # Any non-2xx spools too. A 4xx means this CLI and that server disagree,\n        # which is not the session's problem and must not cost it the prompt.\n        reason = f\"server returned {status}\"",
+    "new": "        return 0",
+    "tests": [
+      "tests/test_cli.py::test_a_500_from_the_server_also_spools_and_exits_zero",
+      "tests/test_cli.py::test_a_4xx_from_the_server_also_spools_and_exits_zero"
+    ]
+  },
+  {
+    "name": "always spool, even on a 2xx",
+    "file": "src/bridge/cli.py",
+    "old": "        if 200 <= status < 300:",
+    "new": "        if False:",
+    "tests": [
+      "tests/test_cli.py::test_a_2xx_does_not_spool"
+    ]
+  },
+  {
+    "name": "bridge next exits zero when nothing is queued",
+    "file": "src/bridge/cli.py",
+    "old": "        print(f\"bridge next: nothing queued for {project}\", file=sys.stderr)\n        return 1",
+    "new": "        print(f\"bridge next: nothing queued for {project}\", file=sys.stderr)\n        return 0",
+    "tests": [
+      "tests/test_cli.py::test_next_with_nothing_queued_exits_nonzero_and_prints_nothing"
+    ]
+  },
+  {
+    "name": "add a banner line to bridge next output",
+    "file": "src/bridge/cli.py",
+    "old": "    sys.stdout.write(body[\"next_prompt\"])",
+    "new": "    sys.stdout.write(\"Fetched from Bridge\\n\" + body[\"next_prompt\"])",
+    "tests": [
+      "tests/test_cli.py::test_next_prints_exactly_the_prompt_and_nothing_else"
+    ]
+  },
+  {
+    "name": "CLI imports the store module",
+    "file": "src/bridge/cli.py",
+    "old": "from bridge.models import Handoff",
+    "new": "from bridge.models import Handoff\nfrom bridge.store import Store",
+    "tests": [
+      "tests/test_cli.py::test_the_cli_never_loads_a_database_module"
+    ]
+  },
+  {
+    "name": "drop the empty-prompt usage check",
+    "file": "src/bridge/cli.py",
+    "old": "    if not prompt.strip():",
+    "new": "    if False:",
+    "tests": [
+      "tests/test_cli.py::test_an_empty_prompt_is_a_usage_error_not_a_silent_success"
+    ]
+  }
+]

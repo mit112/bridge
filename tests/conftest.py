@@ -3,9 +3,54 @@ from pathlib import Path
 
 import pytest
 
+REAL_BRIDGE_DIR = Path.home() / ".bridge"
+
+
+class RealBridgeDirTouched(BaseException):
+    """Deliberately not an `Exception`.
+
+    The boot drain is wrapped in a broad `except` so a broken spool cannot stop
+    the panel from starting, and that swallowed this guard when it raised
+    `AssertionError` — the guard reported nothing while the test drained the real
+    spool. Inheriting from `BaseException` puts it out of reach of any
+    well-behaved catch-all.
+    """
+
 
 def jline(**kw) -> str:
     return json.dumps(kw) + "\n"
+
+
+@pytest.fixture(autouse=True)
+def never_touch_the_real_bridge_dir(monkeypatch):
+    """Refuse any spool operation against the user's real `~/.bridge`.
+
+    `create_app` drains the spool on boot, and a drain MOVES files out of it. A
+    fixture that overrides `db_path` but forgets `spool_dir` would therefore
+    quietly consume real, unrecoverable handoffs — the one kind of data in
+    Bridge that cannot be rebuilt from transcripts. Guarding here is what makes
+    that a loud failure instead of a silent one, rather than trusting every
+    present and future fixture to remember.
+    """
+    from bridge import spool
+
+    def guarded(name, orig):
+        def wrapper(*args, **kwargs):
+            for value in (*args, *kwargs.values()):
+                if isinstance(value, (str, Path)):
+                    p = Path(value)
+                    if p == REAL_BRIDGE_DIR or REAL_BRIDGE_DIR in p.parents:
+                        raise RealBridgeDirTouched(
+                            f"spool.{name}() was called with the real path {p}. "
+                            "Pass spool_dir=tmp_path/'spool' in this test's Config."
+                        )
+            return orig(*args, **kwargs)
+
+        return wrapper
+
+    for name in ("write", "journal", "drain", "rebuild_if_empty", "pending",
+                 "pending_count"):
+        monkeypatch.setattr(spool, name, guarded(name, getattr(spool, name)))
 
 
 @pytest.fixture

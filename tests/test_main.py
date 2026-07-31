@@ -5,7 +5,8 @@ def test_index_subcommand_runs_and_reports(tmp_path, capsys):
     projects = tmp_path / "projects"
     (projects / "-Users-mitsheth-dev-demo").mkdir(parents=True)
     code = main(["index", "--projects-dir", str(projects),
-                 "--db", str(tmp_path / "b.db")])
+                 "--db", str(tmp_path / "b.db"),
+                 "--spool-dir", str(tmp_path / "spool")])
     assert code == 0
     assert "files_seen" in capsys.readouterr().out
 

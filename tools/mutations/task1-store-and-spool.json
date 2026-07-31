@@ -1,0 +1,110 @@
+[
+  {
+    "name": "drop the supersede UPDATE entirely",
+    "file": "src/bridge/store.py",
+    "old": "            self.conn.execute(\n                \"UPDATE handoffs SET status='superseded' \"\n                \"WHERE project_id=? AND status='queued' AND id<>?\",\n                (project_id, h.id),\n            )\n            self.conn.execute(",
+    "new": "            self.conn.execute(",
+    "tests": [
+      "tests/test_store.py::test_second_handoff_supersedes_the_first_and_both_survive"
+    ]
+  },
+  {
+    "name": "remove the `AND id<>?` self-supersede guard",
+    "file": "src/bridge/store.py",
+    "old": "                \"WHERE project_id=? AND status='queued' AND id<>?\",\n                (project_id, h.id),",
+    "new": "                \"WHERE project_id=? AND status='queued'\",\n                (project_id,),",
+    "tests": [
+      "tests/test_store.py::test_reinserting_the_queued_handoff_does_not_supersede_itself"
+    ]
+  },
+  {
+    "name": "move the INSERT outside the transaction (supersede commits alone)",
+    "file": "src/bridge/store.py",
+    "old": "                (project_id, h.id),\n            )\n            self.conn.execute(\n                \"INSERT INTO handoffs(id, project_id, source_session_id, summary, \"",
+    "new": "                (project_id, h.id),\n            )\n        if True:\n            self.conn.execute(\n                \"INSERT INTO handoffs(id, project_id, source_session_id, summary, \"",
+    "tests": [
+      "tests/test_store.py::test_supersede_and_insert_are_atomic"
+    ]
+  },
+  {
+    "name": "server mints its own id instead of using the spool file's",
+    "file": "src/bridge/spool.py",
+    "old": "        try:\n            store.create_handoff(h, resolve(store, h.project_path))\n        except Exception:  # noqa: BLE001 - leave it spooled and retry next boot",
+    "new": "        try:\n            import uuid as _u\n            h.id = str(_u.uuid4())\n            store.create_handoff(h, resolve(store, h.project_path))\n        except Exception:  # noqa: BLE001 - leave it spooled and retry next boot",
+    "tests": [
+      "tests/test_spool.py::test_drain_is_idempotent"
+    ]
+  },
+  {
+    "name": "let a parse error propagate instead of quarantining the file",
+    "file": "src/bridge/spool.py",
+    "old": "        try:\n            parsed.append((_load(path), path))\n        except Exception:  # noqa: BLE001 - one bad file must not stop the drain\n            _quarantine(path, bad_dir)\n            stats.bad += 1",
+    "new": "        parsed.append((_load(path), path))\n        if False:\n            _quarantine(path, bad_dir)\n            stats.bad += 1",
+    "tests": [
+      "tests/test_spool.py::test_a_corrupt_file_is_quarantined_and_the_valid_ones_still_drain"
+    ]
+  },
+  {
+    "name": "UNLINK the spool file on successful drain instead of retaining it",
+    "file": "src/bridge/spool.py",
+    "old": "        drained_dir.mkdir(parents=True, exist_ok=True)\n        os.replace(path, drained_dir / path.name)",
+    "new": "        path.unlink()",
+    "tests": [
+      "tests/test_spool.py::test_drained_files_are_retained_and_can_rebuild_the_table"
+    ]
+  },
+  {
+    "name": "drop the created_at sort so replay order is filename order",
+    "file": "src/bridge/spool.py",
+    "old": "    parsed.sort(key=lambda pair: (pair[0].created_at, pair[0].id))",
+    "new": "    pass  # deliberately unsorted",
+    "tests": [
+      "tests/test_spool.py::test_drain_replays_in_created_at_order_not_filename_order"
+    ]
+  },
+  {
+    "name": "drop the empty-table guard on rebuild",
+    "file": "src/bridge/spool.py",
+    "old": "    if store.handoff_count() > 0:\n        return DrainStats(skipped=1)",
+    "new": "    if False:\n        return DrainStats(skipped=1)",
+    "tests": [
+      "tests/test_spool.py::test_rebuild_is_skipped_when_the_table_is_not_empty"
+    ]
+  },
+  {
+    "name": "skip alias resolution when attaching a handoff to a project",
+    "file": "src/bridge/registry.py",
+    "old": "    canonical = store.alias_map().get(raw_path, raw_path)",
+    "new": "    canonical = raw_path",
+    "tests": [
+      "tests/test_spool.py::test_drain_resolves_an_aliased_path_to_the_canonical_project"
+    ]
+  },
+  {
+    "name": "write the spool file in place, without the temp + os.replace",
+    "file": "src/bridge/spool.py",
+    "old": "    fd, tmp = tempfile.mkstemp(dir=live, prefix=f\".{h.id}.\", suffix=\".tmp\")\n    try:\n        with os.fdopen(fd, \"w\", encoding=\"utf-8\") as f:\n            f.write(payload)\n            f.flush()\n            os.fsync(f.fileno())\n        final = live / f\"{h.id}.json\"\n        os.replace(tmp, final)\n        return final\n    except BaseException:\n        Path(tmp).unlink(missing_ok=True)\n        raise",
+    "new": "    final = live / f\"{h.id}.json\"\n    with open(final, \"w\", encoding=\"utf-8\") as f:\n        f.write(payload)\n        f.flush()\n        os.fsync(f.fileno())\n    return final",
+    "tests": [
+      "tests/test_spool.py::test_an_interrupted_write_leaves_no_readable_final_file"
+    ]
+  },
+  {
+    "name": "consume the spool file even when the insert failed",
+    "file": "src/bridge/spool.py",
+    "old": "            stats.failed += 1\n            continue",
+    "new": "            stats.failed += 1",
+    "tests": [
+      "tests/test_spool.py::test_a_failed_insert_leaves_the_file_spooled_for_the_next_boot"
+    ]
+  },
+  {
+    "name": "stamp consumed_at on every status change (binding count preserved)",
+    "file": "src/bridge/store.py",
+    "old": "                \"consumed_at=CASE WHEN ?='consumed' THEN ? ELSE consumed_at END \"",
+    "new": "                \"consumed_at=CASE WHEN ?=? THEN ? ELSE consumed_at END \"",
+    "tests": [
+      "tests/test_store.py::test_consumed_at_is_stamped_only_by_the_consumed_transition"
+    ]
+  }
+]
