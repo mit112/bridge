@@ -54,7 +54,7 @@ def probe(path: Path, timeout: float = 2.0) -> GitState:
             g.last_commit_summary = summary
             g.last_commit_at = int(ct)
         return g
-    except (subprocess.TimeoutExpired, OSError):
+    except (subprocess.TimeoutExpired, OSError, ValueError):
         return GitState(status="unavailable")
 
 
@@ -62,9 +62,10 @@ def _oldest_mtime(root: Path, porcelain_lines: list[str]) -> int | None:
     """Oldest mtime among changed files: how long work has sat uncommitted."""
     oldest: int | None = None
     for line in porcelain_lines:
-        rel = line[3:].strip().strip('"')
+        rel = line[3:].strip()
         if " -> " in rel:  # rename
             rel = rel.split(" -> ", 1)[1]
+        rel = rel.strip().strip('"')
         try:
             mt = int((root / rel).stat().st_mtime)
         except OSError:
