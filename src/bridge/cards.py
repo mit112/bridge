@@ -18,7 +18,12 @@ FIVE_HOURS = 5 * 3600
 ONE_DAY = 24 * 3600
 
 
-def build_cards(store: Store, cfg: Config, probe_fn=gitprobe.probe) -> list[Card]:
+def build_cards(store: Store, cfg: Config, probe_fn=None) -> list[Card]:
+    # Late-bound default: looked up at call time (not at def time) so tests
+    # can monkeypatch `gitprobe.probe` and have callers that omit `probe_fn`
+    # (e.g. the API layer) pick up the replacement.
+    if probe_fn is None:
+        probe_fn = gitprobe.probe
     now = now_epoch()
     cards: list[Card] = []
 

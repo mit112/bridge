@@ -1,0 +1,64 @@
+:root {
+  color-scheme: light dark;
+  --bg: #ffffff; --fg: #16191d; --muted: #5c636b;
+  --line: #d8dce1; --card: #fbfcfd;
+  --risk-fg: #8a3a00; --risk-bg: #fff4e8; --accent: #0b5fb0;
+  --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14171a; --fg: #e8eaed; --muted: #a2abb4;
+    --line: #2c3238; --card: #1b1f24;
+    --risk-fg: #ffcf9e; --risk-bg: #3a2508; --accent: #7fb6f0;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--fg);
+  font: 15px/1.5 -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+}
+a { color: var(--accent); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.topbar {
+  display: flex; align-items: baseline; gap: 2rem; flex-wrap: wrap;
+  padding: 1rem 1.5rem; border-bottom: 1px solid var(--line);
+}
+.topbar h1 { font-size: 1rem; letter-spacing: .08em; text-transform: uppercase; margin: 0; }
+.totals { display: flex; gap: 1.5rem; margin: 0; }
+.totals dt { color: var(--muted); font-size: .8rem; }
+.totals dd { margin: 0 0 0 .35rem; font-variant-numeric: tabular-nums; }
+.totals dt, .totals dd { display: inline; }
+
+main { padding: 1.5rem; }
+.cards { list-style: none; margin: 0; padding: 0; display: grid; gap: 1rem; }
+@media (min-width: 1400px) { .cards { grid-template-columns: 1fr 1fr; } }
+
+.card {
+  border: 1px solid var(--line); border-left: 3px solid var(--line);
+  border-radius: 6px; background: var(--card); padding: 1rem 1.15rem;
+}
+.card--risk { border-left-color: var(--risk-fg); }
+.card__head { display: flex; justify-content: space-between; gap: 1rem; align-items: baseline; }
+.card__head h2 { font-size: 1.05rem; margin: 0; }
+.card__meta, .card__path, .card__note { color: var(--muted); font-size: .82rem; }
+.card__path { font-family: var(--mono); margin: .15rem 0 .9rem; }
+.card__session { margin-bottom: .9rem; }
+.card__session h3 { font-size: .95rem; font-weight: 600; margin: 0 0 .2rem; }
+.card__session time { color: var(--muted); font-size: .8rem; }
+.card__git, .card__burn {
+  margin: .35rem 0 0; font-size: .85rem; color: var(--muted);
+  display: flex; gap: .75rem; flex-wrap: wrap;
+  font-variant-numeric: tabular-nums;
+}
+.risk {
+  color: var(--risk-fg); background: var(--risk-bg);
+  padding: .05rem .4rem; border-radius: 3px; font-weight: 600;
+}
+.empty { color: var(--muted); }
+.sessions { border-collapse: collapse; width: 100%; font-size: .88rem; }
+.sessions caption { text-align: left; color: var(--muted); padding-bottom: .5rem; }
+.sessions th, .sessions td {
+  text-align: left; padding: .45rem .6rem; border-bottom: 1px solid var(--line);
+}
+.sessions td { font-variant-numeric: tabular-nums; }

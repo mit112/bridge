@@ -5,7 +5,10 @@ requires-python = ">=3.13"
 dependencies = ["fastapi", "uvicorn[standard]", "jinja2"]
 
 [project.optional-dependencies]
-dev = ["pytest"]
+dev = [
+    "httpx2>=2.9.1",
+    "pytest",
+]
 
 [build-system]
 requires = ["hatchling"]
