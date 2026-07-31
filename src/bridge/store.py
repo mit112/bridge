@@ -64,6 +64,12 @@ SCHEMA = [
     """,
 ]
 
+# Additive column migrations. SQLite has no `ADD COLUMN IF NOT EXISTS`, so we
+# consult `table_info` and add only what is missing, making every open
+# idempotent. Append to this map to evolve a table; never rewrite one.
+# (Interpolation is only over our own hardcoded identifiers, never user input.)
+COLUMN_MIGRATIONS: dict[str, dict[str, str]] = {}
+
 
 def to_epoch(iso: str | None) -> int | None:
     if not iso:
@@ -89,9 +95,19 @@ class Store:
         self.conn.execute("PRAGMA busy_timeout=5000")
         for stmt in SCHEMA:
             self.conn.execute(stmt)
+        self._ensure_columns()
 
     def close(self) -> None:
         self.conn.close()
+
+    def _ensure_columns(self) -> None:
+        for table, columns in COLUMN_MIGRATIONS.items():
+            existing = {
+                row["name"] for row in self.conn.execute(f"PRAGMA table_info({table})")
+            }
+            for name, decl in columns.items():
+                if name not in existing:
+                    self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
 
     def upsert_project(self, path: str, name: str) -> int:
         self.conn.execute(

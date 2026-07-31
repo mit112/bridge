@@ -4,7 +4,7 @@ import threading
 import pytest
 
 from bridge.models import SessionRecord
-from bridge.store import Store
+from bridge.store import Store, to_epoch
 
 
 @pytest.fixture
@@ -26,9 +26,10 @@ def rec(sid="s1", **kw):
     return SessionRecord(**base)
 
 
-def test_wal_and_foreign_keys_enabled(store):
+def test_pragmas_are_set(store):
     assert store.conn.execute("pragma journal_mode").fetchone()[0].lower() == "wal"
     assert store.conn.execute("pragma foreign_keys").fetchone()[0] == 1
+    assert store.conn.execute("pragma busy_timeout").fetchone()[0] == 5000
 
 
 def test_creates_parent_directory(tmp_path):
@@ -51,14 +52,47 @@ def test_hidden_projects_excluded_by_default(store):
     assert len(store.projects(include_hidden=True)) == 1
 
 
-def test_upsert_session_is_idempotent_and_updates(store):
+def test_upsert_session_updates_every_mutable_column(store):
+    """Every column in the ON CONFLICT clause must actually update.
+
+    Dropping any single column from the clause must fail this test.
+    """
     pid = store.upsert_project("/Users/mitsheth/dev/demo", "demo")
     store.upsert_session(rec(), pid)
-    store.upsert_session(rec(title="Updated", tokens_out=99), pid)
+
+    updated = rec(
+        title="Updated", started_at="2026-07-31T01:00:00.000Z",
+        ended_at="2026-07-31T02:00:00.000Z", model="claude-sonnet-5",
+        effort="low", git_branch="feature", user_msgs=7, assistant_msgs=9,
+        last_prompt="next thing", tokens_in=11, tokens_out=22,
+        tokens_cache_create=33, tokens_cache_read=44, sidechain_tokens=55,
+        interrupted=True, transcript_path="/t/moved.jsonl",
+    )
+    store.upsert_session(updated, pid)
+
     rows = store.sessions(pid)
     assert len(rows) == 1
-    assert rows[0]["title"] == "Updated"
-    assert rows[0]["tokens_out"] == 99
+    row = rows[0]
+    for column, expected in [
+        ("title", "Updated"),
+        ("started_at", "2026-07-31T01:00:00.000Z"),
+        ("ended_at", "2026-07-31T02:00:00.000Z"),
+        ("model", "claude-sonnet-5"),
+        ("effort", "low"),
+        ("git_branch", "feature"),
+        ("user_msgs", 7),
+        ("assistant_msgs", 9),
+        ("last_prompt", "next thing"),
+        ("tokens_in", 11),
+        ("tokens_out", 22),
+        ("tokens_cache_create", 33),
+        ("tokens_cache_read", 44),
+        ("sidechain_tokens", 55),
+        ("interrupted", 1),
+        ("transcript_path", "/t/moved.jsonl"),
+    ]:
+        assert row[column] == expected, column
+    assert row["ended_epoch"] == to_epoch("2026-07-31T02:00:00.000Z")
 
 
 def test_latest_session_is_most_recent_by_ended_at(store):
@@ -83,20 +117,32 @@ def test_token_totals_respects_since(store):
                              tokens_in=10, tokens_out=10), pid)
     store.upsert_session(rec("b", ended_at="2026-01-01T00:00:00.000Z",
                              tokens_in=99, tokens_out=99), pid)
+    store.upsert_session(rec("c", ended_at="2026-07-30T00:00:00.000Z",
+                             tokens_in=3, tokens_out=4), pid)
     # 2026-07-30T00:00:00Z == 1785369600
-    assert store.token_totals(pid, 1785369600) == 20
+    # 20 from "a" + 7 from "c" sitting exactly on the cutoff (>= is inclusive)
+    assert store.token_totals(pid, 1785369600) == 27
 
 
-def test_concurrent_writers_do_not_error(tmp_path):
-    """Proves the WAL + busy_timeout assumption the architecture rests on."""
+def test_concurrent_writers_do_not_error_or_lose_rows(tmp_path):
+    """Concurrent writers across connections neither error nor lose rows.
+
+    This exercises real thread interleaving and row-count integrity. It does
+    NOT isolate `journal_mode=WAL` or `PRAGMA busy_timeout`: Python's
+    `sqlite3.connect(timeout=...)` supplies an equivalent busy-retry, so this
+    test passes with both PRAGMAs removed. Their values are asserted directly
+    in test_pragmas_are_set instead.
+    """
     db = tmp_path / "c.db"
     main = Store(db)
     pid = main.upsert_project("/d", "d")
     errors: list[Exception] = []
+    barrier = threading.Barrier(4)
 
     def worker(n: int):
         s = Store(db)
         try:
+            barrier.wait()  # All four threads start simultaneously
             for i in range(20):
                 s.upsert_session(rec(f"s{n}-{i}"), pid)
         except Exception as e:  # noqa: BLE001
@@ -114,13 +160,43 @@ def test_concurrent_writers_do_not_error(tmp_path):
     main.close()
 
 
-def test_additive_migration_preserves_data(tmp_path):
+def test_reopen_preserves_data(tmp_path):
+    """Reopening an existing DB replays SCHEMA idempotently without loss."""
     db = tmp_path / "m.db"
     s = Store(db)
     pid = s.upsert_project("/d", "d")
     s.upsert_session(rec(), pid)
     s.close()
-    # Re-opening applies migrations against a populated DB without loss.
     s2 = Store(db)
     assert len(s2.sessions(pid)) == 1
     s2.close()
+
+
+def test_additive_column_migration_is_idempotent(tmp_path, monkeypatch):
+    """A newly appended column must apply once and survive later opens.
+
+    SQLite has no ADD COLUMN IF NOT EXISTS, so a naive schema replay would
+    raise `duplicate column name` on the second open. This is the test that
+    makes the spec's additive-migration doctrine real.
+    """
+    import bridge.store as store_mod
+
+    db = tmp_path / "mig.db"
+    s = Store(db)
+    pid = s.upsert_project("/d", "d")
+    s.upsert_session(rec(), pid)
+    s.close()
+
+    monkeypatch.setattr(
+        store_mod, "COLUMN_MIGRATIONS", {"sessions": {"note": "TEXT"}}
+    )
+
+    s2 = Store(db)  # applies the ALTER
+    cols = {r["name"] for r in s2.conn.execute("PRAGMA table_info(sessions)")}
+    assert "note" in cols
+    assert len(s2.sessions(pid)) == 1  # data preserved
+    s2.close()
+
+    s3 = Store(db)  # must NOT raise "duplicate column name"
+    assert len(s3.sessions(pid)) == 1
+    s3.close()
