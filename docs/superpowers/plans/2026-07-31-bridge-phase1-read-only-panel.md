@@ -423,9 +423,10 @@ class Card:
 
 Design notes driven by the real corpus (9,229 files, 3.5 GB):
   * `attachment` records are ~62% of all lines and carry nothing we need, so
-    they get a cheap prefix check before the JSON parse. If key order ever
-    changes the check simply misses and we parse normally — correctness is
-    never at stake, only speed.
+    `_apply` ignores them by `type`. A byte-prefix fast path was tried and
+    removed: measured against the real corpus it never matched once across
+    13,796 attachment records, because the attachment payload precedes the
+    record's own `type` key on the line.
   * Unknown `type` values and absent keys are normal across CLI versions.
   * A truncated final line means the session is still being written. It is not
     an error, and the returned offset stops before it so the next scan re-reads
@@ -437,8 +438,6 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from bridge.models import SessionRecord
-
-_ATTACHMENT_HINT = b'"type":"attachment"'
 
 
 @dataclass
@@ -465,8 +464,6 @@ def scan(path: Path, start_offset: int = 0, prev: SessionRecord | None = None) -
             if not raw.endswith(b"\n"):
                 break  # partial trailing line; leave offset before it
             offset += len(raw)
-            if _ATTACHMENT_HINT in raw[:64]:
-                continue
             try:
                 obj = json.loads(raw)
             except (ValueError, UnicodeDecodeError):
