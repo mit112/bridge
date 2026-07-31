@@ -15,12 +15,12 @@ last handoff that has to be a stray markdown file.
 cd ~/dev/bridge
 uv run python -m bridge index    # 7,706 transcripts: ~11s cold, ~0.2s rescan
 uv run python -m bridge serve    # http://127.0.0.1:8787
-uv run pytest                    # 81 passing
+uv run pytest                    # 93 passing
 ```
 
-Against the real corpus: **35 project cards** from 421,480 parsed lines, 0 parse
-errors. 8 cards `not a git repo`, 6 showing the ⚠ staleness warning. WCAG AA
-contrast verified in both light and dark. No probe failure can block rendering.
+Against the real corpus: **29 project cards** from 421,635 parsed lines, 0 parse
+errors — 35 before path aliasing merged the split halves. WCAG AA contrast
+verified in both light and dark. No probe failure can block rendering.
 
 Eight modules, each independently tested: `config`, `models`, `transcripts`,
 `store`, `gitprobe`, `registry`, `indexer`, `cards`, plus `api` and `__main__`.
