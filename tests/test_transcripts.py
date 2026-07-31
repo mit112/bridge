@@ -110,17 +110,22 @@ def test_interrupted_session_flagged(write_transcript):
 
 
 def test_nested_attachment_type_does_not_drop_the_record(write_transcript):
-    """A record whose nested payload contains an attachment type must still count.
+    """A byte-window prefilter would have dropped this record. Guard against that.
 
-    Real lines put a large `attachment` payload before the record's own `type`
-    key, so any early-bytes prefilter risked silently dropping real records.
+    Hand-written with compact separators (what real Claude Code emits) and the
+    nested `"type":"attachment"` inside the first 64 bytes, with the record's
+    own top-level type being `user`. Any future early-bytes fast path that
+    skips on this pattern would silently lose a real turn, so this test must
+    fail if one is reintroduced.
     """
-    p = write_transcript("s.jsonl", [
-        jline(type="user", sessionId="s11", isSidechain=False,
-              attachment={"type": "attachment", "payload": "x" * 200},
-              timestamp="2026-07-30T10:00:00.000Z", cwd="/tmp/x",
-              message={"role": "user", "content": "hi"}),
-    ])
+    raw = (
+        '{"attachment":{"type":"attachment"},"type":"user",'
+        '"sessionId":"s11","isSidechain":false,"cwd":"/tmp/x",'
+        '"timestamp":"2026-07-30T10:00:00.000Z",'
+        '"message":{"role":"user","content":"hi"}}\n'
+    )
+    assert raw.index('"type":"attachment"') < 64  # the fixture's whole point
+    p = write_transcript("s.jsonl", [raw])
     r = scan(p)
     assert r.record is not None
     assert r.record.user_msgs == 1
