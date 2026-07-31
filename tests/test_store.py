@@ -278,7 +278,12 @@ def test_supersede_and_insert_are_atomic(store):
     with pytest.raises(sqlite3.IntegrityError):
         store.create_handoff(handoff("h2", next_prompt=None), pid)
 
-    assert store.queued_handoff(pid)["id"] == "h1"
+    still_queued = store.queued_handoff(pid)
+    assert still_queued is not None, (
+        "rollback left the project with nothing queued: the supersede committed "
+        "without the insert"
+    )
+    assert still_queued["id"] == "h1"
     assert store.get_handoff("h1")["status"] == "queued"
     assert store.get_handoff("h2") is None
 
