@@ -1,8 +1,9 @@
 # Bridge — Handoff
 
 **Date:** 2026-07-31
-**Branch:** `phase1-read-only-panel` — 25 commits, 81 tests passing, tree clean at `80ddb71`
-**Status:** Phase 1 complete and working. **Not merged.** Phases 2–4 not started.
+**Branch:** `phase1-read-only-panel` — 29 commits, 93 tests passing, tree clean
+**Status:** Phase 1 complete and working, **plus path aliasing**. **Not merged.**
+Phase 2 is planned but not started.
 
 There is an irony worth noting: this file exists because Bridge's Phase 2 — the
 handoff loop that would store this automatically — isn't built yet. This is the
@@ -35,18 +36,32 @@ canonical.
 Key enabling fact: **the database is a pure derived cache.** Re-attribution needs
 no migration — delete `~/.bridge/bridge.db` and re-index (~11s).
 
-## Open items, in priority order
+## Closed since the last handoff
 
-1. **Path aliasing** (approved, specified, not built). Needs a `project_aliases`
-   table, a lookup in `indexer._index_one` before `upsert_project`, and
-   `set_project_status` exposed so `Vandit & Zeel/VANDITZEEL` can be archived.
-   `set_project_status` currently exists but is unreachable from any code path.
-2. **`test_concurrent_mixed_routes_do_not_error` is probably flaky.** Reverting
-   the bug it guards did not reliably fail it — the race is timing-dependent. The
-   *fix* is verified sound (zero `.conn` access outside `store.py`); the test
-   guarding it is weaker than it looks. Either make it deterministic or stop
-   trusting it as a gate.
-3. **Merge decision** for `phase1-read-only-panel`. Held open pending 1 and 2.
+1. **Path aliasing — done** (`bed0b3a`, `7c484d1`). Seven old `~/Documents/...`
+   cwds now resolve through a `project_aliases` table before `upsert_project`;
+   `Vandit & Zeel/VANDITZEEL` is archived through `set_project_status`, which is
+   now reachable. Against the real corpus: **35 cards → 29**, 0 parse errors,
+   ~10s. Job apps 6922+576=7498, StreakSync 17+1=18, anghkooey 2+6=8, projectX
+   2+3=5, dota2 2+1=3; `hookrail` and `Houston social` are new canonical cards.
+   The mappings live in `config.DEFAULT_ALIASES`, seeded into the table on every
+   index, so a rebuilt database re-applies them.
+2. **The flaky test is resolved** (`5102420`). Measured, not guessed:
+   reintroducing the `store.conn`-bypasses-the-lock bug fails
+   `test_concurrent_mixed_routes_do_not_error` **10 times in 20**, and it never
+   fails on correct code (0/5). It is kept as a smoke check with that rate in
+   its docstring, and the invariant it was reaching for is now asserted
+   deterministically by `test_no_module_outside_store_touches_the_raw_connection`
+   (fails 5/5 when violated).
+
+## Open items
+
+1. **Merge decision** for `phase1-read-only-panel`. Mit's call; nothing is
+   blocking it now.
+2. **Four Phase 2 decisions** were put to Mit and timed out unanswered. They are
+   implemented as assumptions in the Phase 2 plan's first table — queue
+   semantics, server uptime model, Phase 2's usable surface, and backfill.
+   Confirm before Task 2.
 
 ## Advisory, from the final whole-branch review
 
@@ -76,6 +91,18 @@ What actually worked, and should be standard for Phases 2–4:
 - **Mutate the real file and `git checkout --` to restore.** A scratch copy with
   `PYTHONPATH` does *not* override the venv-installed `bridge` package and will
   silently test unmutated code. The tell is that the control run also fails.
+- **Commit the implementation before falsifying it.** `git checkout --` restores
+  to HEAD, so mutating an uncommitted implementation deletes it at the first
+  restore, and every later mutation is measured against a missing feature.
+- **Disable bytecode caching in the harness** (`PYTHONDONTWRITEBYTECODE=1`, clear
+  `__pycache__` between runs). A mutation that only *moves* code is byte-size
+  identical to the original, and `git checkout` restores it within the same
+  second. CPython validates a `.pyc` by (source mtime, source size) at one-second
+  granularity, so both match and the stale bytecode compiled from the *mutated*
+  source keeps running in later processes. This cost an hour during path
+  aliasing: it presented as a real archiving bug, reproduced consistently, and
+  survived both a source read and `inspect.getsource` — which show the correct
+  file while the wrong bytecode executes.
 
 Three bugs this discipline caught, for calibration:
 
@@ -102,7 +129,11 @@ Full per-task history, every finding, and both controller process errors:
 ## Phases remaining
 
 2. **Handoff loop** — `bridge` CLI, `/handoff` command, spool-on-server-down.
-   This is the phase that solves the original problem.
+   This is the phase that solves the original problem. **Planned:**
+   `docs/superpowers/plans/2026-07-31-bridge-phase2-handoff-loop.md`. Note the
+   plan's finding that Phase 2 breaks the "database is a pure derived cache"
+   invariant — handoffs are the first authored data Bridge stores — and keeps it
+   by treating the spool as a retained append-only journal.
 3. **Launcher** — new terminal + `--bg`, with `--session-id` pre-assignment so a
    launched session is followed back into its transcript.
 4. **Live** — SSE, `claude agents --json` probe, sparklines, diagnostics.
