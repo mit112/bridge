@@ -33,6 +33,7 @@ DEFAULT_ARCHIVED = ("Documents/Vandit & Zeel/VANDITZEEL",)
 class Config:
     claude_projects_dir: Path
     db_path: Path
+    spool_dir: Path
     dev_dir: Path
     stale_hours: int
     models: list[str]
@@ -47,6 +48,7 @@ def load(overrides: dict | None = None) -> Config:
     cfg = Config(
         claude_projects_dir=home / ".claude" / "projects",
         db_path=home / ".bridge" / "bridge.db",
+        spool_dir=home / ".bridge" / "spool",
         dev_dir=home / "dev",
         stale_hours=12,
         models=list(DEFAULT_MODELS),

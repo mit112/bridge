@@ -34,6 +34,18 @@ def display_name(project_path: str) -> str:
     return Path(project_path.rstrip("/")).name
 
 
+def resolve_project(store, raw_path: str) -> int:
+    """Attach an arbitrary cwd to its canonical project, creating the row if new.
+
+    A handoff can arrive from a project that has never been indexed, or from one
+    of the old `~/Documents/...` locations, so this resolves through the same
+    alias table indexing uses. Skipping that step would re-split the history
+    path aliasing just merged.
+    """
+    canonical = store.alias_map().get(raw_path, raw_path)
+    return store.upsert_project(canonical, display_name(canonical))
+
+
 def transcript_files(projects_dir: Path) -> list[Path]:
     projects_dir = Path(projects_dir)
     if not projects_dir.is_dir():

@@ -38,6 +38,27 @@ class GitState:
 
 
 @dataclass
+class Handoff:
+    """An authored next-session prompt.
+
+    Unlike everything else Bridge stores, this cannot be regenerated from
+    transcripts: it is composed once, at the end of a session, and if it is lost
+    it is gone. `project_path` is the raw path the CLI observed; alias
+    resolution to a canonical project happens server-side, never here.
+    """
+
+    id: str
+    project_path: str
+    next_prompt: str
+    source_session_id: str | None = None
+    summary: str | None = None
+    suggested_model: str | None = None
+    suggested_effort: str | None = None
+    created_at: int = 0
+    status: str = "queued"
+
+
+@dataclass
 class Card:
     project_id: int
     path: str
