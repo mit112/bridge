@@ -69,6 +69,7 @@ def build_cards(store: Store, cfg: Config, probe_fn=None) -> list[Card]:
                     cfg.models, (handoff or {}).get("suggested_model")
                 ),
                 launch_efforts=list(cfg.efforts),
+                launch_permission_modes=list(cfg.permission_modes),
             )
         )
 

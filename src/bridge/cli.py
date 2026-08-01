@@ -173,11 +173,28 @@ def cmd_launch(args, cfg) -> int:
     """Ask the panel to spawn a session. This module never spawns one itself and
     never imports `bridge.launcher`: the server is the only process that writes
     the `launches` row, so it must also be the one that spawns."""
+    # `--dangerously-skip-permissions` is spelled the way `claude` spells it so
+    # muscle memory transfers, and resolves to the one enum value it means. The
+    # explicit flag wins over `--permission-mode` only by being the more
+    # emphatic of the two; asking for both and disagreeing is a user error worth
+    # naming rather than silently resolving.
+    permission_mode = args.permission_mode
+    if args.dangerously_skip_permissions:
+        if permission_mode and permission_mode != "bypassPermissions":
+            print(
+                "bridge launch: --dangerously-skip-permissions contradicts "
+                f"--permission-mode {permission_mode}; pick one",
+                file=sys.stderr,
+            )
+            return 2
+        permission_mode = "bypassPermissions"
+
     payload = {
         "project_path": args.project or os.getcwd(),
         "mode": args.mode,
         "model": args.model,
         "effort": args.effort,
+        "permission_mode": permission_mode,
     }
     if args.prompt_file:
         try:
@@ -272,6 +289,15 @@ def build_parser() -> argparse.ArgumentParser:
                     default="terminal")
     la.add_argument("--model")
     la.add_argument("--effort")
+    # Choices restated rather than imported: this module never imports
+    # `bridge.launcher` (the server is the only process that spawns), and the
+    # server revalidates against `launcher.PERMISSION_MODES` regardless, so the
+    # duplication buys a local `--help` without weakening the real gate.
+    la.add_argument("--permission-mode",
+                    choices=("acceptEdits", "auto", "bypassPermissions",
+                             "manual", "dontAsk", "plan"))
+    la.add_argument("--dangerously-skip-permissions", action="store_true",
+                    help="alias for --permission-mode bypassPermissions")
     la.add_argument("--prompt-file",
                     help="path to a prompt, or - for stdin; "
                          "defaults to the project's queued handoff")

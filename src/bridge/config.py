@@ -62,6 +62,41 @@ DEFAULT_ARCHIVED = ("Documents/Vandit & Zeel/VANDITZEEL",)
 
 
 @dataclass(frozen=True)
+class PermissionChoice:
+    """One entry in the launch band's permission selector.
+
+    An empty `value` means *emit no flag at all*, which is the default and the
+    only safe one. `danger` drives the conspicuous styling: the affordance must
+    never read as ordinary, and must say so in words as well as colour.
+    """
+
+    value: str
+    label: str
+    danger: bool = False
+
+
+# Measured against `claude` 2.1.220, which rejects anything else with
+# "Allowed choices are acceptEdits, auto, bypassPermissions, manual, dontAsk,
+# plan". There is deliberately no `default` here: that value belongs to
+# settings.json's `permissions.defaultMode` (a different, smaller set --
+# `"default" | "plan" | "acceptEdits" | "dontAsk"`), and passing it to
+# `--permission-mode` fails the launch outright. The two are easy to conflate.
+#
+# The no-flag entry is first because it is what an unsuggested launch selects.
+DEFAULT_PERMISSION_MODES = [
+    PermissionChoice("", "Ask as usual"),
+    PermissionChoice("plan", "plan — plan first, no edits"),
+    PermissionChoice("acceptEdits", "acceptEdits — auto-accept file edits"),
+    PermissionChoice("dontAsk", "dontAsk — stop prompting"),
+    PermissionChoice("auto", "auto"),
+    PermissionChoice("manual", "manual"),
+    PermissionChoice(
+        "bypassPermissions", "bypassPermissions — SKIP ALL CHECKS", danger=True
+    ),
+]
+
+
+@dataclass(frozen=True)
 class Config:
     claude_projects_dir: Path
     db_path: Path
@@ -74,6 +109,7 @@ class Config:
     stale_hours: int
     models: list[ModelChoice]
     efforts: list[str]
+    permission_modes: list[PermissionChoice]
     port: int
     aliases: dict[str, str]
     archived_paths: tuple[str, ...]
@@ -90,6 +126,7 @@ def load(overrides: dict | None = None) -> Config:
         stale_hours=12,
         models=list(DEFAULT_MODELS),
         efforts=list(DEFAULT_EFFORTS),
+        permission_modes=list(DEFAULT_PERMISSION_MODES),
         # Env-overridable so the CLI's exit-zero-when-the-panel-is-down property
         # can be tested in a real subprocess against a genuinely closed port,
         # rather than against a mocked transport.

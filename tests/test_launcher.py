@@ -1090,3 +1090,107 @@ def test_the_conftest_guard_fires_when_launches_dir_is_not_overridden(store, tmp
 def test_the_default_launches_dir_lives_under_the_bridge_dir():
     assert load().launches_dir == Path.home() / ".bridge" / "launches"
     assert load({"launches_dir": Path("/tmp/x")}).launches_dir == Path("/tmp/x")
+
+
+# --- Phase 4 Task 2: permission modes ----------------------------------------
+#
+# Widened from the plan's `bypass_permissions` boolean to the CLI's real enum.
+# Measured against 2.1.220: `--permission-mode` rejects anything outside
+# {acceptEdits, auto, bypassPermissions, manual, dontAsk, plan}. There is NO
+# `default` -- that value belongs to settings.json's `permissions.defaultMode`,
+# which is a different and smaller set.
+
+
+def test_terminal_mode_omits_the_permission_flag_by_default():
+    """The default must be no flag at all, not a flag with a benign value.
+
+    This is the highest-value assertion in the task: a default that emits
+    anything makes every launch carry a permission decision nobody took.
+    """
+    command = build_shell_command(spec(), PROMPT_FILE, claude=CLAUDE)
+    assert "--permission-mode" not in command
+    assert "dangerously" not in command
+
+
+def test_background_mode_omits_the_permission_flag_by_default():
+    argv = build_bg_argv(spec(mode="background"), claude=CLAUDE)
+    assert not any("permission" in a for a in argv)
+    assert not any("dangerously" in a for a in argv)
+
+
+def test_an_empty_permission_mode_is_the_same_as_none():
+    """The select's default option has value="" and posts as an empty string."""
+    command = build_shell_command(
+        spec(permission_mode=""), PROMPT_FILE, claude=CLAUDE
+    )
+    assert "--permission-mode" not in command
+
+
+@pytest.mark.parametrize(
+    "mode", ["acceptEdits", "auto", "bypassPermissions", "manual", "dontAsk", "plan"]
+)
+def test_every_mode_the_cli_accepts_is_emitted_verbatim(mode):
+    command = build_shell_command(
+        spec(permission_mode=mode), PROMPT_FILE, claude=CLAUDE
+    )
+    assert f"--permission-mode {mode}" in command
+    assert command.count("--permission-mode") == 1
+
+
+@pytest.mark.parametrize(
+    "mode", ["acceptEdits", "auto", "bypassPermissions", "manual", "dontAsk", "plan"]
+)
+def test_background_mode_passes_the_mode_as_its_own_argv_element(mode):
+    argv = build_bg_argv(spec(mode="background", permission_mode=mode), claude=CLAUDE)
+    assert argv.count("--permission-mode") == 1
+    assert argv[argv.index("--permission-mode") + 1] == mode
+    assert argv[-1] == HOSTILE_PROMPT  # still exactly one element, still last
+
+
+def test_an_unrecognised_permission_mode_is_refused_not_forwarded():
+    """Deliberately unlike `model` and `effort`, which pass through unvalidated.
+
+    Those are capability knobs where the CLI is the authority. This is a SAFETY
+    control: a value that is not one of the known modes must not become a flag,
+    because the failure mode is a session running with permissions nobody chose.
+    Fail closed and construct nothing.
+    """
+    with pytest.raises(LaunchError):
+        build_shell_command(
+            spec(permission_mode="bypassPermission"), PROMPT_FILE, claude=CLAUDE
+        )
+    with pytest.raises(LaunchError):
+        build_bg_argv(
+            spec(mode="background", permission_mode="yolo"), claude=CLAUDE
+        )
+
+
+def test_the_bypass_mode_is_never_the_allow_variant():
+    """`--allow-dangerously-skip-permissions` only makes the mode AVAILABLE.
+
+    Substituting it would produce a launch that looks bypassed and is not.
+    """
+    argv = build_bg_argv(
+        spec(mode="background", permission_mode="bypassPermissions"), claude=CLAUDE
+    )
+    assert "--allow-dangerously-skip-permissions" not in argv
+    command = build_shell_command(
+        spec(permission_mode="bypassPermissions"), PROMPT_FILE, claude=CLAUDE
+    )
+    assert "--allow-dangerously-skip-permissions" not in command
+
+
+def test_the_emitted_mode_is_a_member_of_a_closed_set_not_caller_text():
+    """Validated against a frozen set, so the emitted token can never be
+    assembled from or influenced by user input -- the constraint the plan wrote
+    for the boolean, carried over to the enum."""
+    from bridge.launcher import PERMISSION_MODES
+
+    assert PERMISSION_MODES == frozenset(
+        {"acceptEdits", "auto", "bypassPermissions", "manual", "dontAsk", "plan"}
+    )
+    for hostile in ("plan; rm -rf /", "plan --foo", "plan\nplan", " plan"):
+        with pytest.raises(LaunchError):
+            build_shell_command(
+                spec(permission_mode=hostile), PROMPT_FILE, claude=CLAUDE
+            )

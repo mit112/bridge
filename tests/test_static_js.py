@@ -82,3 +82,82 @@ def test_bridge_text_prefers_the_live_value_over_the_rendered_text(tmp_path):
         "an emptied textarea fell back to the rendered text, so Copy would "
         "silently resurrect a prompt the user had deleted"
     )
+
+
+# --- Phase 4 Task 2: the permission mode reaches the request body ------------
+
+LAUNCH_JS = Path(__file__).resolve().parent.parent / "src" / "bridge" / "static" / "launch.js"
+
+# `launch.js` registers a delegated click listener, so the harness captures that
+# listener at load and invokes it with a synthetic event. Everything the handler
+# reaches for is stubbed to a known value, which is what makes the POST body the
+# only interesting output. Executed under node resolved by ABSOLUTE PATH: under
+# `tools/falsify.py` (PATH=/usr/bin:/bin) a bare `node` would SKIP, and a skipped
+# test reports SURVIVED for a mutation it would actually catch.
+LAUNCH_HARNESS = """
+globalThis.window = globalThis;
+let clickHandler = null;
+const controls = {
+  '[data-launch-model="launch-1"]': { value: "claude-opus-4-8" },
+  '[data-launch-effort="launch-1"]': { value: "xhigh" },
+  '[data-launch-perm="launch-1"]': { value: PERM_VALUE },
+  '[data-launch="launch-1"]': {
+    getAttribute: (name) =>
+      name === "data-launch-path" ? "/Users/mitsheth/dev/demo" : null,
+  },
+};
+globalThis.document = {
+  addEventListener(type, fn) { if (type === "click") clickHandler = fn; },
+  getElementById: () => null,
+  querySelector: (sel) => controls[sel] ?? null,
+  createRange: () => ({}),
+};
+globalThis.navigator = { clipboard: { writeText: async () => {} } };
+let sentBody = null;
+globalThis.fetch = async (url, init) => {
+  sentBody = JSON.parse(init.body);
+  return { ok: true, status: 200, json: async () => ({ outcome: "started" }) };
+};
+const fs = require("fs");
+eval(fs.readFileSync(process.argv[2], "utf8"));
+
+const button = {
+  getAttribute: () => "launch-1",
+  closest: () => button,
+  disabled: false,
+  setAttribute() {}, removeAttribute() {},
+};
+clickHandler({ target: { closest: (sel) =>
+  sel === "[data-launch-button]" ? button : null } }).then(() => {
+  console.log(JSON.stringify(sentBody));
+});
+"""
+
+
+def _run_launch_harness(tmp_path, perm_value: str) -> dict:
+    harness = tmp_path / "launch_harness.js"
+    harness.write_text(LAUNCH_HARNESS.replace("PERM_VALUE", json.dumps(perm_value)))
+    proc = subprocess.run(
+        [_node(), str(harness), str(LAUNCH_JS)], capture_output=True, text=True
+    )
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout)
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_launch_js_sends_the_selected_permission_mode(tmp_path):
+    """Without this key the server always defaults to none and the select is
+    decorative -- it would look armed and launch unarmed."""
+    body = _run_launch_harness(tmp_path, "bypassPermissions")
+    assert body["permission_mode"] == "bypassPermissions"
+    # And the rest of the band still goes with it.
+    assert body["model"] == "claude-opus-4-8"
+    assert body["effort"] == "xhigh"
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_launch_js_sends_the_empty_default_rather_than_omitting_it(tmp_path):
+    """The no-flag option posts "", which the server treats as none. Sending it
+    explicitly is what keeps the client the only thing deciding the mode."""
+    body = _run_launch_harness(tmp_path, "")
+    assert body["permission_mode"] == ""

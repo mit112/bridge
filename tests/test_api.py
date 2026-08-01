@@ -763,7 +763,10 @@ def test_both_launch_selects_are_labelled_and_preselect_the_suggestion(launch_ap
     # (Sonnet 5)"` and fail the launch.
     assert '<option value="sonnet" selected>sonnet — latest (Sonnet 5)</option>' in html
     assert '<option value="xhigh" selected>xhigh</option>' in html
-    assert html.count(" selected>") == 2, "one preselection per select, no more"
+    # Three selects now: model, effort, permissions. The permission select is
+    # always preselected on its first option, which is the no-flag one.
+    assert html.count(" selected>") == 3, "one preselection per select, no more"
+    assert '<option value="" selected>Ask as usual</option>' in html
 
 
 def test_a_suggestion_the_config_does_not_list_is_still_preselected(launch_app):
@@ -813,8 +816,8 @@ def test_two_cards_produce_no_duplicate_element_id(launch_app):
 
     ids = re.findall(r'\sid="([^"]+)"', html)
     assert len(ids) == len(set(ids)), f"duplicate ids: {sorted(ids)}"
-    assert len([i for i in ids if i.startswith("launch-")]) == 4, (
-        "two selects on each of the two cards"
+    assert len([i for i in ids if i.startswith("launch-")]) == 6, (
+        "three selects on each of the two cards"
     )
 
 
@@ -845,7 +848,7 @@ def test_every_new_control_is_labelled_and_none_leaves_the_tab_order(launch_app)
     assert 'tabindex="-1"' not in html
     labelled = set(re.findall(r'<label[^>]*\sfor="([^"]+)"', html))
     fields = re.findall(r"<(?:select|textarea)\b[^>]*>", html)
-    assert len(fields) == 3, "two selects and the prompt field"
+    assert len(fields) == 4, "three selects and the prompt field"
     for tag in fields:
         ident = re.search(r'\sid="([^"]+)"', tag)
         assert (ident and ident.group(1) in labelled) or "aria-label=" in tag, tag
@@ -890,3 +893,65 @@ def test_the_project_page_lists_launch_history_with_its_linked_session(launch_ap
     assert "Launched work" in html, "the linked session is shown as its own title"
     # A launch whose session never appeared is not an error; it stays visible.
     assert "no session yet" in html
+
+
+# --- Phase 4 Task 2: permission modes ----------------------------------------
+
+
+def test_a_launch_with_no_permission_mode_reaches_the_spec_as_none(launch_app):
+    """The default must survive the whole way to the LaunchSpec, not be
+    reconstituted into a benign-looking mode somewhere in the middle."""
+    c, _, _, launch_fn = launch_app
+    c.post("/api/handoff", json=body("h1"))
+    c.post("/api/launch", json={"project_path": DEMO})
+    spec, _ = launch_fn.calls[-1]
+    assert spec.permission_mode is None
+
+
+def test_the_requested_permission_mode_reaches_the_spec_verbatim(launch_app):
+    c, _, _, launch_fn = launch_app
+    c.post("/api/handoff", json=body("h1"))
+    c.post("/api/launch",
+           json={"project_path": DEMO, "permission_mode": "bypassPermissions"})
+    spec, _ = launch_fn.calls[-1]
+    assert spec.permission_mode == "bypassPermissions"
+
+
+def test_an_unknown_permission_mode_is_refused_before_anything_is_launched(launch_app):
+    """422 at the edge, and -- the part that matters -- no launch recorded."""
+    c, _, _, launch_fn = launch_app
+    c.post("/api/handoff", json=body("h1"))
+    before = len(launch_fn.calls)
+    response = c.post("/api/launch",
+                      json={"project_path": DEMO, "permission_mode": "yolo"})
+    assert response.status_code == 422
+    assert len(launch_fn.calls) == before, "a refused mode still spawned something"
+
+
+def test_no_handoff_field_can_arm_a_permission_mode(launch_app):
+    """A handoff may suggest a model and an effort. It must never be able to
+    suggest a permission mode: an authored brief that could pre-arm a bypass is
+    exactly the sticky default the design forbids.
+    """
+    c, _, _, _ = launch_app
+    c.post("/api/handoff", json=body("h1"))
+    html = c.get("/").text
+
+    # The rendered select always lands on the no-flag option, whatever the
+    # handoff says, and the dangerous option is never the selected one.
+    assert '<option value="" selected>Ask as usual</option>' in html
+    assert 'value="bypassPermissions" class="launch__option--danger">' in html
+    assert '"bypassPermissions" selected' not in html
+    # And the field is not among the things a handoff can carry at all.
+    from bridge.api import HandoffIn
+
+    assert not any("permission" in f for f in HandoffIn.model_fields)
+
+
+def test_the_permission_select_is_labelled_and_marked_dangerous(launch_app):
+    c, _, _, _ = launch_app
+    c.post("/api/handoff", json=body("h1"))
+    html = c.get("/").text
+    assert re.search(r'<label[^>]*for="launch-\d+-perm">Permissions</label>', html)
+    # Colour is never the only signal: the option says so in words.
+    assert "SKIP ALL CHECKS" in html

@@ -54,12 +54,17 @@ document.addEventListener("click", async (event) => {
   const field = promptId ? document.getElementById(promptId) : null;
   const model = document.querySelector(`[data-launch-model="${id}"]`);
   const effort = document.querySelector(`[data-launch-effort="${id}"]`);
+  const perm = document.querySelector(`[data-launch-perm="${id}"]`);
 
   const body = {
     project_path: band.getAttribute("data-launch-path"),
     mode: "terminal",
     model: model ? model.value : null,
     effort: effort ? effort.value : null,
+    // Read fresh from the select on every click and never cached: the server
+    // holds no permission memory, so this is the only thing that decides the
+    // mode, and it must not be able to carry over from a previous launch.
+    permission_mode: perm ? perm.value : null,
   };
   // The field's current value is sent rather than relying on the blur save
   // having landed first: clicking ▶ fires blur and click back to back, and the

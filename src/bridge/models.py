@@ -3,7 +3,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # `config` imports nothing from here, so this is cycle-free;
     # it stays behind the guard only to keep `models` importable on its own.
-    from bridge.config import ModelChoice
+    from bridge.config import ModelChoice, PermissionChoice
 
 
 @dataclass
@@ -111,3 +111,4 @@ class Card:
     # out of the template as a literal.
     launch_models: list["ModelChoice"] = field(default_factory=list)
     launch_efforts: list[str] = field(default_factory=list)
+    launch_permission_modes: list["PermissionChoice"] = field(default_factory=list)

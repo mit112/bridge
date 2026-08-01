@@ -89,6 +89,17 @@
         {%- endfor %}
       </select>
     </span>
+    {# Always renders with the no-flag option selected. Deliberately NOT driven
+       by any handoff suggestion: no authored brief may arm a permission mode,
+       and nothing here is remembered between launches. #}
+    <span class="launch__field launch__field--perm">
+      <label class="launch__label" for="{{ lid }}-perm">Permissions</label>
+      <select class="launch__select" id="{{ lid }}-perm" data-launch-perm="{{ lid }}">
+        {%- for p in card.launch_permission_modes %}
+        <option value="{{ p.value }}"{% if p.danger %} class="launch__option--danger"{% endif %}{% if loop.first %} selected{% endif %}>{{ p.label }}</option>
+        {%- endfor %}
+      </select>
+    </span>
     <button type="button" class="btn btn--icon" data-launch-button="{{ lid }}"
             aria-label="Launch a session for {{ card.name }}"
             title="Launch a session in Terminal"><span aria-hidden="true">▶</span></button>

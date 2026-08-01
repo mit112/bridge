@@ -87,6 +87,22 @@ class LaunchIn(BaseModel):
     effort: str | None = None
     handoff_id: str | None = None
     title: str | None = None
+    # Absent means "ask as usual". Deliberately has no server-side memory: the
+    # panel re-sends it per launch, so a dangerous mode can never carry over.
+    permission_mode: str | None = None
+
+    @field_validator("permission_mode")
+    @classmethod
+    def _known_permission_mode(cls, value: str | None) -> str | None:
+        # Rejected at the edge with a 422 rather than deep inside `launch()`,
+        # and read from `launcher.PERMISSION_MODES` rather than restated so the
+        # vocabulary has one source. "" is the select's default and means none.
+        if value and value not in launcher.PERMISSION_MODES:
+            raise ValueError(
+                f"permission_mode must be one of "
+                f"{sorted(launcher.PERMISSION_MODES)}"
+            )
+        return value
 
     @field_validator("mode")
     @classmethod
@@ -304,6 +320,7 @@ def create_app(
                 handoff["summary"] if handoff else None, display_name(canonical)
             ),
             mode=body.mode,
+            permission_mode=body.permission_mode,
         )
         try:
             result = launch_fn(store, cfg, spec, handoff_id)
