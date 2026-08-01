@@ -5,6 +5,12 @@
 > `main` and the data rebuild has been run (measured 2.733× inflation removed
 > across 7,706 sessions, zero sessions increased).
 >
+> **The mutation-anchor debt below is closed.** 512 tests; a full sweep of all
+> 24 specs reports 230 caught, 0 survived, 1 deliberate must-survive. Repairing
+> the anchors uncovered one genuine SURVIVED they had been masking — see "Known
+> debt" at the foot of this file for why a drifted anchor hides the mutations
+> behind it.
+>
 > **Building it corrected this document three times.** See
 > "Measured while building" at the foot of this file before trusting the
 > `--permission-mode` list or the sensor cost figure above.
@@ -342,10 +348,31 @@ an `interval=0` stream running forever. Any test exercising a termination
 condition needs an independent backstop (here, `max_ticks`) so the mutation
 fails fast instead of hanging.
 
-### Known debt, deliberately not fixed here
+### Known debt, deliberately not fixed here — **closed 2026-08-01**
 
-Seven mutation anchors are **zero-match on `main`** and therefore silently test
-nothing: one in `task1-store-and-spool`, four in `task2-api`, one in
-`task3-cli`, one in `task5-card-ui`. They pre-date this branch. The two that
+Seven mutation anchors were **mis-anchored on `main`** and therefore silently
+tested nothing: one in `task1-store-and-spool`, four in `task2-api`, one in
+`task3-cli`, one in `task5-card-ui`. They pre-dated this branch. The two that
 *this* branch invalidated (`phase3-task6`, `task5-card-ui`'s sort-key mutation)
 were re-anchored in the same commit as the change that broke them.
+
+**Resolved.** All seven are re-anchored, and a full sweep of every spec now
+reports **230 caught, 0 survived**, plus `harness-selftest`'s one deliberate
+must-survive. Three things are worth carrying forward:
+
+- **Four matched zero times, two matched twice.** Both are hard errors, so the
+  count above was never "seven missing tests" — the ambiguous pair would have
+  mutated two sites at once had the harness allowed it. `bridge launch` having
+  grown a second empty-prompt check is what made the `bridge handoff` anchor
+  ambiguous.
+- **Repairing an anchor exposed a real SURVIVED behind it.** falsify aborts a
+  spec at its first bad anchor, so a drifted anchor hides every mutation after
+  it. `task5-card-ui`'s "remove the live region from the copy confirmation"
+  had never once been evaluated; it survived, because the card renders three
+  status lines and the test asserted a bare `role="status"` substring over the
+  whole page. A mis-anchored spec is not merely untested, it is *masking*.
+- **The blind spot is structural, so it now has a standing check.**
+  `tests/test_mutation_specs.py` asserts every anchor still matches its
+  `expect_count` and every named test still exists, reporting all offenders in
+  one run rather than one per commit-and-rerun cycle. Verified by perturbation,
+  not by passing: drift an anchor and rename a test, and it fails on both.
