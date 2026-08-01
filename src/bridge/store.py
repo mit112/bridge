@@ -122,7 +122,12 @@ SCHEMA = [
 # consult `table_info` and add only what is missing, making every open
 # idempotent. Append to this map to evolve a table; never rewrite one.
 # (Interpolation is only over our own hardcoded identifiers, never user input.)
-COLUMN_MIGRATIONS: dict[str, dict[str, str]] = {}
+COLUMN_MIGRATIONS: dict[str, dict[str, str]] = {
+    # Carries the transcript scanner's usage-dedup state across index runs. An
+    # incremental scan can resume in the middle of one API response's entries,
+    # and without this the totals for actively-running sessions triple again.
+    "sessions": {"last_usage_request_id": "TEXT"},
+}
 
 
 def to_epoch(iso: str | None) -> int | None:
@@ -256,8 +261,9 @@ class Store:
                     id, project_id, title, started_at, ended_at, ended_epoch, model,
                     effort, git_branch, user_msgs, assistant_msgs, last_prompt,
                     tokens_in, tokens_out, tokens_cache_create, tokens_cache_read,
-                    sidechain_tokens, interrupted, transcript_path
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    sidechain_tokens, interrupted, transcript_path,
+                    last_usage_request_id
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(id) DO UPDATE SET
                     title=excluded.title, started_at=excluded.started_at,
                     ended_at=excluded.ended_at, ended_epoch=excluded.ended_epoch,
@@ -270,7 +276,8 @@ class Store:
                     tokens_cache_read=excluded.tokens_cache_read,
                     sidechain_tokens=excluded.sidechain_tokens,
                     interrupted=excluded.interrupted,
-                    transcript_path=excluded.transcript_path
+                    transcript_path=excluded.transcript_path,
+                    last_usage_request_id=excluded.last_usage_request_id
                 """,
                 (
                     rec.session_id, project_id, rec.title, rec.started_at, rec.ended_at,
@@ -278,6 +285,7 @@ class Store:
                     rec.user_msgs, rec.assistant_msgs, rec.last_prompt, rec.tokens_in,
                     rec.tokens_out, rec.tokens_cache_create, rec.tokens_cache_read,
                     rec.sidechain_tokens, int(rec.interrupted), rec.transcript_path,
+                    rec.last_usage_request_id,
                 ),
             )
 
