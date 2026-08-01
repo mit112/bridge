@@ -1237,6 +1237,49 @@ def test_the_wire_payload_excludes_unattributed_sessions(tmp_path, monkeypatch):
     assert agents.UNATTRIBUTED not in payload["live"]
 
 
+def test_the_stream_never_holds_the_store_lock_while_it_sleeps(client, monkeypatch):
+    """The deterministic guard for the worst regression in this phase.
+
+    The timing test below is a smoke check only, and it cannot see this:
+    TestClient consumes a streaming body by PULLING, so between frames the
+    generator is parked on its yield and has not reached the sleep at all. A
+    concurrent request therefore never overlaps the sleep, and the assertion
+    passes even when the lock is held across it.
+
+    So the property is asserted where it lives instead. `Store._lock` is an
+    RLock, which the owning thread can re-acquire freely -- the check has to
+    come from a different thread or it proves nothing.
+    """
+    import threading
+
+    c, store, _ = client
+    free_during_sleep = []
+
+    def probing_sleep(_seconds):
+        got = []
+
+        def try_acquire():
+            acquired = store._lock.acquire(blocking=False)
+            got.append(acquired)
+            if acquired:
+                store._lock.release()  # RLock: released by its owning thread
+
+        thread = threading.Thread(target=try_acquire)
+        thread.start()
+        thread.join()
+        free_during_sleep.append(bool(got and got[0]))
+
+    monkeypatch.setattr("bridge.api.time.sleep", probing_sleep)
+    with c.stream("GET", "/events?max_ticks=3&interval=0") as r:
+        "".join(r.iter_text())
+
+    assert free_during_sleep, "the stream never slept, so nothing was proved"
+    assert all(free_during_sleep), (
+        "the store lock was held across the stream's sleep: every other route "
+        "would block while a tab is open"
+    )
+
+
 def test_an_open_stream_does_not_block_other_requests(client):
     """The store is ONE connection behind ONE lock. A stream that holds it
     across its sleep freezes the entire panel."""

@@ -5,7 +5,7 @@
     "old": "                time.sleep(interval)         # the lock is NOT held here",
     "new": "                with store._lock:\n                    time.sleep(interval)",
     "tests": [
-      "tests/test_api.py::test_an_open_stream_does_not_block_other_requests"
+      "tests/test_api.py::test_the_stream_never_holds_the_store_lock_while_it_sleeps"
     ],
     "expect_count": 1
   },
