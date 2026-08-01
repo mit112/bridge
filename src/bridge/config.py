@@ -4,7 +4,35 @@ import os
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-DEFAULT_MODELS = ["opus", "sonnet", "haiku"]
+@dataclass(frozen=True)
+class ModelChoice:
+    """One entry in the launch band's model selector.
+
+    `value` goes to `--model` verbatim and is never validated here: the CLI is
+    the authority on what it accepts, exactly as with `effort`. `label` exists
+    because "opus" alone cannot express "pin me to 4.8" — the alias floats to
+    whatever is newest, which is the right default and the wrong record.
+    """
+
+    value: str
+    label: str
+
+
+# Ids verified against `claude` 2.1.220 on this machine. Aliases first (the
+# common case, and the default selection), then pinned versions newest-first.
+DEFAULT_MODELS = [
+    ModelChoice("opus", "opus — latest (Opus 5)"),
+    ModelChoice("claude-opus-5", "Opus 5"),
+    ModelChoice("claude-opus-4-8", "Opus 4.8"),
+    ModelChoice("claude-opus-4-7", "Opus 4.7"),
+    ModelChoice("sonnet", "sonnet — latest (Sonnet 5)"),
+    ModelChoice("claude-sonnet-5", "Sonnet 5"),
+    ModelChoice("claude-sonnet-4-6", "Sonnet 4.6"),
+    ModelChoice("haiku", "haiku — latest (Haiku 4.5)"),
+    ModelChoice("claude-haiku-4-5", "Haiku 4.5"),
+    ModelChoice("fable", "fable — latest (Fable 5)"),
+    ModelChoice("claude-fable-5", "Fable 5"),
+]
 # The full set `claude --effort` accepts. Phase 3 is the first phase to surface
 # the list in the UI, so the two values nothing read before are added here rather
 # than left implicit. The spec's `~/.bridge/config.toml` is still out of scope.
@@ -44,7 +72,7 @@ class Config:
     launches_dir: Path
     dev_dir: Path
     stale_hours: int
-    models: list[str]
+    models: list[ModelChoice]
     efforts: list[str]
     port: int
     aliases: dict[str, str]

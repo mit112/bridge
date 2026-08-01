@@ -65,10 +65,10 @@
   {% set lid = "launch-" ~ card.project_id %}
   {% set sm = card.handoff.suggested_model if card.handoff else None %}
   {% set se = card.handoff.suggested_effort if card.handoff else None %}
-  {# A suggestion the configured list does not contain is prepended rather than
-     dropped: silently launching a different model than the last session used is
-     worse than showing an unfamiliar value. #}
-  {% set model_options = ([sm] if sm and sm not in card.launch_models else []) + card.launch_models %}
+  {# `card.launch_models` already has an off-catalog suggestion prepended —
+     `cards.model_options` does it, because building a ModelChoice here would
+     mean exposing the class to the template environment. Effort has no
+     versions to name, so it stays a bare list and keeps its inline prepend. #}
   {% set effort_options = ([se] if se and se not in card.launch_efforts else []) + card.launch_efforts %}
   <p class="launch" data-launch="{{ lid }}" data-launch-path="{{ card.path }}"
      {%- if card.handoff %} data-launch-handoff="{{ card.handoff.id }}"
@@ -76,8 +76,8 @@
     <span class="launch__field">
       <label class="launch__label" for="{{ lid }}-model">Model</label>
       <select class="launch__select" id="{{ lid }}-model" data-launch-model="{{ lid }}">
-        {%- for m in model_options %}
-        <option value="{{ m }}"{% if m == sm or (not sm and loop.first) %} selected{% endif %}>{{ m }}</option>
+        {%- for m in card.launch_models %}
+        <option value="{{ m.value }}"{% if m.value == sm or (not sm and loop.first) %} selected{% endif %}>{{ m.label }}</option>
         {%- endfor %}
       </select>
     </span>

@@ -6,7 +6,7 @@ returning a rank-first tuple is the contract that makes that a local change.
 """
 
 from bridge import gitprobe
-from bridge.config import Config
+from bridge.config import Config, ModelChoice
 from bridge.models import Card, GitState, SessionRecord
 from bridge.store import Store, now_epoch, to_epoch
 
@@ -17,6 +17,21 @@ RANK_OTHER = 2
 
 FIVE_HOURS = 5 * 3600
 ONE_DAY = 24 * 3600
+
+
+def model_options(
+    catalog: list[ModelChoice], suggested: str | None
+) -> list[ModelChoice]:
+    """The catalog, with an off-catalog suggestion prepended labelled as itself.
+
+    Silently launching a different model than the last session used is worse
+    than showing an unfamiliar value, so an unknown suggestion is surfaced
+    rather than dropped. Always returns a new list: the caller passes the
+    Config's own catalog, which must not be mutated by a card build.
+    """
+    if suggested and suggested not in [m.value for m in catalog]:
+        return [ModelChoice(suggested, suggested), *catalog]
+    return list(catalog)
 
 
 def build_cards(store: Store, cfg: Config, probe_fn=None) -> list[Card]:
@@ -34,6 +49,7 @@ def build_cards(store: Store, cfg: Config, probe_fn=None) -> list[Card]:
         except Exception:  # noqa: BLE001 - a broken probe must not hide a card
             git = GitState(status="unavailable")
 
+        handoff = _handoff(store, row["id"])
         cards.append(
             Card(
                 project_id=row["id"],
@@ -44,8 +60,14 @@ def build_cards(store: Store, cfg: Config, probe_fn=None) -> list[Card]:
                 tokens_today=store.token_totals(row["id"], now - ONE_DAY),
                 tokens_5h=store.token_totals(row["id"], now - FIVE_HOURS),
                 is_stale=_is_stale(git, cfg.stale_hours, now),
-                handoff=_handoff(store, row["id"]),
-                launch_models=list(cfg.models),
+                handoff=handoff,
+                # Resolved here rather than in Jinja: prepending an off-catalog
+                # suggestion needs to construct a ModelChoice, and exposing the
+                # class to the template environment to do that would put a data
+                # decision inside the markup.
+                launch_models=model_options(
+                    cfg.models, (handoff or {}).get("suggested_model")
+                ),
                 launch_efforts=list(cfg.efforts),
             )
         )

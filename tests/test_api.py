@@ -758,7 +758,10 @@ def test_both_launch_selects_are_labelled_and_preselect_the_suggestion(launch_ap
     assert f'<label class="launch__label" for="{lid}-effort">Effort</label>' in html
     assert f'id="{lid}-model"' in html
     assert f'id="{lid}-effort"' in html
-    assert '<option value="sonnet" selected>sonnet</option>' in html
+    # The value is what reaches `--model`; the label is what a human reads.
+    # Emitting the label as the value would send `--model "sonnet — latest
+    # (Sonnet 5)"` and fail the launch.
+    assert '<option value="sonnet" selected>sonnet — latest (Sonnet 5)</option>' in html
     assert '<option value="xhigh" selected>xhigh</option>' in html
     assert html.count(" selected>") == 2, "one preselection per select, no more"
 
@@ -768,13 +771,35 @@ def test_a_suggestion_the_config_does_not_list_is_still_preselected(launch_app):
     one of the configured short names. Dropping it would silently launch a
     different model than the one being suggested."""
     c, _, _, _ = launch_app
-    pid = c.post("/api/handoff", json=body("h1")).json()["project_id"]
-    assert "claude-opus-5" not in load({}).models
+    # Deliberately NOT `body()`'s default: Phase 4 added `claude-opus-5` to the
+    # catalog, so the old default silently stopped being off-catalog and this
+    # test stopped testing the prepend. Pin a value the catalog does not list.
+    off_catalog = "claude-opus-4-2"
+    pid = c.post(
+        "/api/handoff", json=body("h1", suggested_model=off_catalog)
+    ).json()["project_id"]
+    assert off_catalog not in [m.value for m in load({}).models]
 
     html = c.get("/").text
 
-    assert '<option value="claude-opus-5" selected>claude-opus-5</option>' in html
+    assert f'<option value="{off_catalog}" selected>{off_catalog}</option>' in html
     assert f'id="launch-{pid}-model"' in html
+
+
+def test_with_no_suggestion_the_first_catalog_entry_is_selected(launch_app):
+    """Without an explicit `selected` the browser silently picks option one
+    anyway, so the preselection becomes invisible rather than absent — and a
+    later reorder of the catalog would change what launches with no warning.
+    """
+    c, store, _, _ = launch_app
+    store.upsert_project("/Users/mitsheth/dev/nohandoff", "nohandoff")
+
+    html = c.get("/").text
+
+    first = load({}).models[0]
+    assert (
+        f'<option value="{first.value}" selected>{first.label}</option>' in html
+    )
 
 
 def test_two_cards_produce_no_duplicate_element_id(launch_app):

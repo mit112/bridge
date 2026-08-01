@@ -1,7 +1,7 @@
 import pytest
 
-from bridge.cards import build_cards, sort_key
-from bridge.config import load
+from bridge.cards import build_cards, model_options, sort_key
+from bridge.config import ModelChoice, load
 from bridge.models import GitState, SessionRecord
 from bridge.store import Store
 
@@ -169,3 +169,41 @@ def test_a_card_carries_the_configured_launch_options(store, tmp_path):
     assert card.launch_models == cfg.models
     assert card.launch_efforts == cfg.efforts
     assert card.launch_efforts == ["low", "medium", "high", "xhigh", "max"]
+
+
+# --- Phase 4 Task 1: the model catalog ---------------------------------------
+
+
+def test_an_off_catalog_suggestion_is_prepended_labelled_as_itself():
+    """Silently launching a different model than the last session used is worse
+    than showing an unfamiliar value, so an unknown suggestion is surfaced."""
+    catalog = [ModelChoice("opus", "opus — latest"), ModelChoice("sonnet", "sonnet")]
+    options = model_options(catalog, "claude-opus-4-2")
+    assert options[0] == ModelChoice("claude-opus-4-2", "claude-opus-4-2")
+    assert len(options) == 3
+
+
+def test_a_suggestion_already_in_the_catalog_is_not_duplicated():
+    catalog = [ModelChoice("opus", "opus — latest"), ModelChoice("sonnet", "sonnet")]
+    options = model_options(catalog, "sonnet")
+    assert [m.value for m in options] == ["opus", "sonnet"]
+
+
+def test_no_suggestion_leaves_the_catalog_untouched():
+    catalog = [ModelChoice("opus", "opus — latest")]
+    assert model_options(catalog, None) == catalog
+
+
+def test_model_options_does_not_alias_the_caller_s_catalog():
+    """`build_cards` hands this the Config's list; mutating it would leak."""
+    catalog = [ModelChoice("opus", "opus — latest")]
+    model_options(catalog, "off-catalog").append(ModelChoice("x", "x"))
+    assert len(catalog) == 1
+
+
+def test_the_card_carries_model_choices_not_bare_strings(store, tmp_path):
+    """The template reads `.value` and `.label`; a plain str has neither."""
+    add(store, "/p/cat", "cat", "s-cat", "2026-07-30T10:00:00.000Z")
+    cfg = load({"db_path": tmp_path / "c.db"})
+    card = build_cards(store, cfg, probe_fn=lambda p: GitState(status="ok"))[0]
+    assert all(isinstance(m, ModelChoice) for m in card.launch_models)

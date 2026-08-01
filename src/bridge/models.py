@@ -1,4 +1,9 @@
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # `config` imports nothing from here, so this is cycle-free;
+    # it stays behind the guard only to keep `models` importable on its own.
+    from bridge.config import ModelChoice
 
 
 @dataclass
@@ -104,5 +109,5 @@ class Card:
     # live on the card because the launch band renders per card and the template
     # only ever sees the card, so this is what keeps the configured vocabulary
     # out of the template as a literal.
-    launch_models: list[str] = field(default_factory=list)
+    launch_models: list["ModelChoice"] = field(default_factory=list)
     launch_efforts: list[str] = field(default_factory=list)
