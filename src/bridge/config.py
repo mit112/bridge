@@ -1,6 +1,14 @@
-"""Configuration for Bridge. Overrides are for tests; there is no config file yet."""
+"""Configuration for Bridge.
+
+`aliases` and `archived_paths` name directories on one particular machine, so
+they live in `~/.bridge/config.toml` and not in version-controlled source:
+adding an alias should not mean editing Python. Everything else in this module
+is a fact about the `claude` CLI rather than about the user, and stays a
+constant. Overrides are for tests.
+"""
 
 import os
+import tomllib
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -35,30 +43,71 @@ DEFAULT_MODELS = [
 ]
 # The full set `claude --effort` accepts. Phase 3 is the first phase to surface
 # the list in the UI, so the two values nothing read before are added here rather
-# than left implicit. The spec's `~/.bridge/config.toml` is still out of scope.
+# than left implicit. A fact about the CLI, so it stays here rather than moving
+# to `config.toml`: nothing about it varies by machine.
 DEFAULT_EFFORTS = ["low", "medium", "high", "xhigh", "max"]
 
-# Projects move, and a transcript records the cwd it was written under, so one
-# logical project can appear under several paths with its history split between
-# them. These are the verified old locations on this machine; every target was
-# confirmed present on disk. Home-relative here, absolute once `load` expands
-# them, because that is the form a transcript `cwd` takes.
-DEFAULT_ALIASES = {
-    "Documents/Job apps": "dev/Job apps",
-    "Documents/projectX": "dev/projectX",
-    "Documents/projectX/hookrail": "dev/projectX/hookrail",
-    "Documents/claude-stuff/dota2": "dev/claude-stuff/dota2",
-    "Documents/claude-stuff/Houston social": "dev/claude-stuff/Houston social",
-    # A rename as well as a move: the two spellings genuinely differ.
-    "Documents/anhkhooey": "dev/anghkooey",
-    # A deleted worktree folded back into its parent repo: the work landed in
-    # the parent, so its sessions belong there.
-    "dev/StreakSync/.worktrees/streaksync-ui-polish": "dev/StreakSync",
-}
 
-# Paths with no alias target because the directory is gone entirely. Archived,
-# never deleted.
-DEFAULT_ARCHIVED = ("Documents/Vandit & Zeel/VANDITZEEL",)
+class ConfigError(Exception):
+    """A malformed `config.toml`, reported with the file that caused it.
+
+    Absorbing the error instead would drop every alias, and the symptom of that
+    is one project silently splitting into several cards with nothing anywhere
+    to say why. A hand-edited file has to fail loudly.
+    """
+
+
+def config_path() -> Path:
+    """Where `load` looks for the config file.
+
+    `BRIDGE_CONFIG` exists for the same reason `BRIDGE_PORT` does: so the suite
+    can be pointed somewhere hermetic. Without it every test would inherit
+    whatever aliases the developer happens to have declared.
+    """
+    return Path(
+        os.environ.get("BRIDGE_CONFIG") or Path.home() / ".bridge" / "config.toml"
+    )
+
+
+def _absolute(path: str) -> str:
+    """Home-relative by default, because that keeps the file portable.
+
+    An absolute path is honoured as written. Someone editing this file by hand
+    will paste one, and prefixing home to it would produce a path that matches
+    no transcript `cwd` and reports no error -- the alias would simply never
+    fire. Absolute is the form a `cwd` takes, so that is what this returns.
+    """
+    p = Path(path).expanduser()
+    return str(p if p.is_absolute() else Path.home() / p)
+
+
+def _read_config_file(path: Path) -> tuple[dict[str, str], tuple[str, ...]]:
+    """`[aliases]` and `[archived] paths`, both absolute. Absent file means neither.
+
+    Both live under table headers so their order in the file cannot matter. A
+    bare top-level `archived_paths` written *after* `[aliases]` would silently
+    become a member of that table instead, which is precisely the kind of
+    mistake a hand-edited file makes and nothing would report.
+    """
+    if not path.exists():
+        return {}, ()
+    try:
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+    except (tomllib.TOMLDecodeError, OSError) as exc:
+        raise ConfigError(f"{path}: {exc}") from exc
+
+    aliases = data.get("aliases", {})
+    archived = data.get("archived", {})
+    if not isinstance(aliases, dict) or not isinstance(archived, dict):
+        raise ConfigError(f"{path}: [aliases] and [archived] must be tables")
+    paths = archived.get("paths", [])
+    if not isinstance(paths, list):
+        raise ConfigError(f"{path}: archived.paths must be a list of paths")
+
+    return (
+        {_absolute(a): _absolute(c) for a, c in aliases.items()},
+        tuple(_absolute(p) for p in paths),
+    )
 
 
 @dataclass(frozen=True)
@@ -111,12 +160,16 @@ class Config:
     efforts: list[str]
     permission_modes: list[PermissionChoice]
     port: int
+    # Both from `config.toml`, absolute. Empty when there is no file: these name
+    # one machine's directories, so having none is the ordinary fresh-install
+    # state and not a degraded one.
     aliases: dict[str, str]
     archived_paths: tuple[str, ...]
 
 
 def load(overrides: dict | None = None) -> Config:
     home = Path.home()
+    aliases, archived_paths = _read_config_file(config_path())
     cfg = Config(
         claude_projects_dir=home / ".claude" / "projects",
         db_path=home / ".bridge" / "bridge.db",
@@ -131,8 +184,8 @@ def load(overrides: dict | None = None) -> Config:
         # can be tested in a real subprocess against a genuinely closed port,
         # rather than against a mocked transport.
         port=int(os.environ.get("BRIDGE_PORT") or 8787),
-        aliases={f"{home}/{a}": f"{home}/{c}" for a, c in DEFAULT_ALIASES.items()},
-        archived_paths=tuple(f"{home}/{p}" for p in DEFAULT_ARCHIVED),
+        aliases=aliases,
+        archived_paths=archived_paths,
     )
     if overrides:
         cfg = replace(cfg, **overrides)

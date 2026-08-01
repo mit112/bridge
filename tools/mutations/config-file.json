@@ -1,0 +1,90 @@
+[
+  {
+    "name": "absorb a malformed config.toml instead of reporting it, dropping every alias in silence",
+    "file": "src/bridge/config.py",
+    "old": "        raise ConfigError(f\"{path}: {exc}\") from exc",
+    "new": "        return {}, ()",
+    "tests": ["tests/test_config.py::test_a_malformed_config_file_names_itself_and_refuses_to_load"],
+    "expect_count": 1
+  },
+  {
+    "name": "report the parse failure without naming the file that caused it",
+    "file": "src/bridge/config.py",
+    "old": "        raise ConfigError(f\"{path}: {exc}\") from exc",
+    "new": "        raise ConfigError(str(exc)) from exc",
+    "tests": ["tests/test_config.py::test_a_malformed_config_file_names_itself_and_refuses_to_load"],
+    "expect_count": 1
+  },
+  {
+    "name": "stop expanding a leading tilde, so `~/x` is home-prefixed into `$HOME/~/x`",
+    "file": "src/bridge/config.py",
+    "old": "    p = Path(path).expanduser()",
+    "new": "    p = Path(path)",
+    "tests": ["tests/test_config.py::test_an_absolute_path_in_the_file_is_left_alone"],
+    "expect_count": 1
+  },
+  {
+    "name": "prefix home to an absolute path too, building a path that matches no cwd",
+    "file": "src/bridge/config.py",
+    "old": "    return str(p if p.is_absolute() else Path.home() / p)",
+    "new": "    return f\"{Path.home()}/{p}\"",
+    "tests": ["tests/test_config.py::test_an_absolute_path_in_the_file_is_left_alone"],
+    "expect_count": 1
+  },
+  {
+    "name": "leave config paths home-relative, so no alias key ever matches a transcript cwd",
+    "file": "src/bridge/config.py",
+    "old": "    return str(p if p.is_absolute() else Path.home() / p)",
+    "new": "    return str(p)",
+    "tests": ["tests/test_config.py::test_aliases_are_read_from_the_config_file_and_made_absolute"],
+    "expect_count": 1
+  },
+  {
+    "name": "accept a non-table [aliases] and let it fail later somewhere unattributable",
+    "file": "src/bridge/config.py",
+    "old": "    if not isinstance(aliases, dict) or not isinstance(archived, dict):\n        raise ConfigError(f\"{path}: [aliases] and [archived] must be tables\")",
+    "new": "    pass",
+    "tests": ["tests/test_config.py::test_a_non_table_aliases_key_is_refused"],
+    "expect_count": 1
+  },
+  {
+    "name": "accept a bare string for archived.paths, silently archiving one path per character",
+    "file": "src/bridge/config.py",
+    "old": "    if not isinstance(paths, list):\n        raise ConfigError(f\"{path}: archived.paths must be a list of paths\")",
+    "new": "    pass",
+    "tests": ["tests/test_config.py::test_archived_paths_must_be_a_list"],
+    "expect_count": 1
+  },
+  {
+    "name": "read archived paths from the top level, so the documented [archived] table is ignored",
+    "file": "src/bridge/config.py",
+    "old": "    paths = archived.get(\"paths\", [])",
+    "new": "    paths = data.get(\"paths\", [])",
+    "tests": ["tests/test_config.py::test_archived_paths_are_read_from_the_config_file"],
+    "expect_count": 1
+  },
+  {
+    "name": "ignore BRIDGE_CONFIG, so the suite reads whatever the developer has on disk",
+    "file": "src/bridge/config.py",
+    "old": "        os.environ.get(\"BRIDGE_CONFIG\") or Path.home() / \".bridge\" / \"config.toml\"",
+    "new": "        Path.home() / \".bridge\" / \"config.toml\"",
+    "tests": ["tests/test_config.py::test_aliases_are_read_from_the_config_file_and_made_absolute"],
+    "expect_count": 1
+  },
+  {
+    "name": "never read the file at all, so an alias declared in config.toml does nothing",
+    "file": "src/bridge/config.py",
+    "old": "    aliases, archived_paths = _read_config_file(config_path())",
+    "new": "    aliases, archived_paths = {}, ()",
+    "tests": ["tests/test_config.py::test_aliases_are_read_from_the_config_file_and_made_absolute"],
+    "expect_count": 1
+  },
+  {
+    "name": "let the config file beat an explicit override, breaking every test that pins aliases inline",
+    "file": "src/bridge/config.py",
+    "old": "    if overrides:\n        cfg = replace(cfg, **overrides)",
+    "new": "    if overrides:\n        cfg = replace(cfg, **{k: v for k, v in overrides.items() if k != \"aliases\"})",
+    "tests": ["tests/test_config.py::test_overrides_still_beat_the_config_file"],
+    "expect_count": 1
+  }
+]

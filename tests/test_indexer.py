@@ -379,7 +379,9 @@ def test_a_linked_launch_shows_its_session_on_the_detail_page(env):
     assert "no session yet" not in table
 
 
-def test_against_the_real_corpus_no_launch_joins_a_session_it_did_not_launch(tmp_path):
+def test_against_the_real_corpus_no_launch_joins_a_session_it_did_not_launch(
+    tmp_path, monkeypatch
+):
     """Real session ids, real project directories, launches seeded from them.
 
     Fixtures choose their own ids, so only real ids can say whether an 8-hex
@@ -387,7 +389,14 @@ def test_against_the_real_corpus_no_launch_joins_a_session_it_did_not_launch(tmp
     corpus (filenames are session ids, so it needs no parsing); the index itself
     runs over a bounded symlinked subset, because the full corpus is gigabytes
     and a test that slow would stop being run.
+
+    The real `config.toml` is read here, against the autouse guard, because
+    aliasing is what makes this test hard: collapsing two paths into one project
+    *merges* their session sets, and a larger candidate set is exactly what
+    makes an 8-hex prefix collision possible. Running it un-aliased would ask an
+    easier question than the live panel answers.
     """
+    monkeypatch.delenv("BRIDGE_CONFIG", raising=False)
     real = Path.home() / ".claude" / "projects"
     files = transcript_files(real)
     if not files:

@@ -75,6 +75,22 @@ def never_touch_the_real_bridge_dir(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def never_read_the_real_config_file(tmp_path, monkeypatch):
+    """Point `config.load` at a file that does not exist, for every test.
+
+    The guard above cannot cover this one: it inspects the arguments a function
+    was called with, and reading `~/.bridge/config.toml` is a bare read inside
+    `load()` that takes no path at all. Without this fixture every one of the
+    ~90 `load(...)` calls in the suite would inherit whichever aliases the
+    developer happens to have declared -- an alias whose key matched a fixture's
+    `cwd` would quietly change what a test indexes, and the suite would pass or
+    fail depending on the machine. Tests that want a config file set
+    `BRIDGE_CONFIG` themselves.
+    """
+    monkeypatch.setenv("BRIDGE_CONFIG", str(tmp_path / "no-such-config.toml"))
+
+
+@pytest.fixture(autouse=True)
 def never_read_the_real_session_registry(tmp_path, monkeypatch):
     """Point the liveness sensor at an empty directory for every test.
 

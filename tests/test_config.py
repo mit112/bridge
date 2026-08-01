@@ -1,6 +1,8 @@
 from pathlib import Path
 
-from bridge.config import Config, ModelChoice, load
+import pytest
+
+from bridge.config import ConfigError, ModelChoice, load
 
 
 def test_load_returns_defaults():
@@ -30,28 +32,123 @@ def test_config_is_frozen():
     raise AssertionError("Config must be immutable")
 
 
-def test_default_aliases_are_the_verified_moved_project_mappings():
-    """These seven cwds are old locations of projects that now live in ~/dev.
-    Without the mapping each shows as a duplicate card with split history."""
+# --- `~/.bridge/config.toml` --------------------------------------------------
+#
+# The autouse `never_read_the_real_config_file` fixture points `BRIDGE_CONFIG`
+# at a path that does not exist, so a test wanting a file writes one and repoints
+# the variable at it.
+
+
+def write_config(tmp_path, monkeypatch, body: str) -> Path:
+    p = tmp_path / "config.toml"
+    p.write_text(body, encoding="utf-8")
+    monkeypatch.setenv("BRIDGE_CONFIG", str(p))
+    return p
+
+
+def test_no_config_file_means_no_aliases_and_nothing_archived():
+    """The fresh-install state, and not a degraded one.
+
+    These two fields name one machine's directories. Having none of them is
+    ordinary; the panel indexes every project under its own path and archives
+    nothing.
+    """
+    cfg = load()
+    assert cfg.aliases == {}
+    assert cfg.archived_paths == ()
+
+
+def test_aliases_are_read_from_the_config_file_and_made_absolute(tmp_path, monkeypatch):
+    """Home-relative in the file, absolute in the Config.
+
+    A transcript records an absolute `cwd`, so that is the form the alias table
+    has to be keyed by for a lookup to ever hit.
+    """
+    write_config(tmp_path, monkeypatch, """
+        [aliases]
+        "Documents/old thing" = "dev/new thing"
+    """)
+    h = str(Path.home())
+    assert load().aliases == {f"{h}/Documents/old thing": f"{h}/dev/new thing"}
+
+
+def test_archived_paths_are_read_from_the_config_file(tmp_path, monkeypatch):
+    write_config(tmp_path, monkeypatch, """
+        [archived]
+        paths = ["Documents/gone"]
+    """)
+    assert load().archived_paths == (f"{Path.home()}/Documents/gone",)
+
+
+def test_an_absolute_path_in_the_file_is_left_alone(tmp_path, monkeypatch):
+    """Someone editing this by hand will paste an absolute path.
+
+    Prefixing home to it would build `/Users/me//Users/me/x`, which matches no
+    `cwd` and reports nothing: the alias would just never fire.
+    """
+    write_config(tmp_path, monkeypatch, """
+        [aliases]
+        "/opt/old" = "/opt/new"
+        "~/tilde-old" = "~/tilde-new"
+    """)
     h = str(Path.home())
     assert load().aliases == {
-        f"{h}/Documents/Job apps": f"{h}/dev/Job apps",
-        f"{h}/Documents/projectX": f"{h}/dev/projectX",
-        f"{h}/Documents/projectX/hookrail": f"{h}/dev/projectX/hookrail",
-        f"{h}/Documents/claude-stuff/dota2": f"{h}/dev/claude-stuff/dota2",
-        f"{h}/Documents/claude-stuff/Houston social":
-            f"{h}/dev/claude-stuff/Houston social",
-        # A rename as well as a move: the two spellings genuinely differ.
-        f"{h}/Documents/anhkhooey": f"{h}/dev/anghkooey",
-        # A deleted worktree folded back into its parent repo.
-        f"{h}/dev/StreakSync/.worktrees/streaksync-ui-polish": f"{h}/dev/StreakSync",
+        "/opt/old": "/opt/new",
+        f"{h}/tilde-old": f"{h}/tilde-new",
     }
 
 
-def test_vanditzeel_is_archived_because_it_has_no_alias_target():
-    assert load().archived_paths == (
-        f"{Path.home()}/Documents/Vandit & Zeel/VANDITZEEL",
-    )
+def test_the_two_tables_may_appear_in_either_order(tmp_path, monkeypatch):
+    """Both live under a table header so their order cannot matter.
+
+    A bare top-level `archived_paths` written after `[aliases]` would silently
+    join that table instead — the exact mistake a hand-edited file makes.
+    """
+    write_config(tmp_path, monkeypatch, """
+        [archived]
+        paths = ["Documents/gone"]
+
+        [aliases]
+        "Documents/old" = "dev/new"
+    """)
+    cfg = load()
+    assert cfg.archived_paths == (f"{Path.home()}/Documents/gone",)
+    assert cfg.aliases == {f"{Path.home()}/Documents/old": f"{Path.home()}/dev/new"}
+
+
+def test_a_malformed_config_file_names_itself_and_refuses_to_load(
+    tmp_path, monkeypatch
+):
+    """Loud, because the silent version is unattributable.
+
+    Absorbing the error drops every alias, and the symptom of *that* is one
+    project splitting into several cards with nothing anywhere to say why.
+    """
+    p = write_config(tmp_path, monkeypatch, "[aliases\nbroken = ")
+    with pytest.raises(ConfigError) as exc:
+        load()
+    assert str(p) in str(exc.value)
+
+
+def test_a_non_table_aliases_key_is_refused(tmp_path, monkeypatch):
+    write_config(tmp_path, monkeypatch, 'aliases = "not a table"\n')
+    with pytest.raises(ConfigError):
+        load()
+
+
+def test_archived_paths_must_be_a_list(tmp_path, monkeypatch):
+    write_config(tmp_path, monkeypatch, '[archived]\npaths = "Documents/gone"\n')
+    with pytest.raises(ConfigError):
+        load()
+
+
+def test_overrides_still_beat_the_config_file(tmp_path, monkeypatch):
+    """Every test that pins aliases inline depends on this ordering."""
+    write_config(tmp_path, monkeypatch, """
+        [aliases]
+        "Documents/old" = "dev/new"
+    """)
+    assert load({"aliases": {}}).aliases == {}
 
 
 # --- Phase 4 Task 1: the model catalog ---------------------------------------
