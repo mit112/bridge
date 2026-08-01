@@ -7,10 +7,13 @@ adding an alias should not mean editing Python. Overrides are for tests.
 The model catalog, the effort list and the permission modes stay constants here
 because they are facts about the `claude` CLI rather than about the user.
 
-Known divergence, recorded rather than silently kept: the design spec also puts
-`stale_hours` (spec line 366) and `models`/`efforts` (spec lines 375-378) in
-this file. Neither has moved. The reader below now makes both cheap, so this is
-a decision left open, not an obstacle.
+`stale_hours` is there too (spec line 366): how long a repo may sit dirty before
+the panel calls it stale is a judgement about how the user works, not a fact
+about anything.
+
+Known divergence, recorded rather than silently kept: spec lines 375-378 also
+put `models` and `efforts` in the file, seeded on first run. They have not
+moved, deliberately -- see the note above the catalog.
 """
 
 import os
@@ -87,16 +90,19 @@ def _absolute(path: str) -> str:
     return str(p if p.is_absolute() else Path.home() / p)
 
 
-def _read_config_file(path: Path) -> tuple[dict[str, str], tuple[str, ...]]:
-    """`[aliases]` and `[archived] paths`, both absolute. Absent file means neither.
+def _read_config_file(path: Path) -> dict:
+    """The fields this file may set, as `replace` kwargs. Absent file sets none.
 
-    Both live under table headers so their order in the file cannot matter. A
-    bare top-level `archived_paths` written *after* `[aliases]` would silently
-    become a member of that table instead, which is precisely the kind of
-    mistake a hand-edited file makes and nothing would report.
+    Only keys actually present are returned, so precedence in `load` reads as
+    defaults < file < overrides with no sentinel values to interpret.
+
+    Every setting lives under a table header so its order in the file cannot
+    matter. A bare top-level `archived_paths` written *after* `[aliases]` would
+    silently become a member of that table instead, which is precisely the kind
+    of mistake a hand-edited file makes and nothing would report.
     """
     if not path.exists():
-        return {}, ()
+        return {}
     try:
         data = tomllib.loads(path.read_text(encoding="utf-8"))
     except (tomllib.TOMLDecodeError, OSError) as exc:
@@ -104,16 +110,28 @@ def _read_config_file(path: Path) -> tuple[dict[str, str], tuple[str, ...]]:
 
     aliases = data.get("aliases", {})
     archived = data.get("archived", {})
-    if not isinstance(aliases, dict) or not isinstance(archived, dict):
-        raise ConfigError(f"{path}: [aliases] and [archived] must be tables")
+    stale = data.get("stale", {})
+    if not all(isinstance(t, dict) for t in (aliases, archived, stale)):
+        raise ConfigError(
+            f"{path}: [aliases], [archived] and [stale] must be tables"
+        )
     paths = archived.get("paths", [])
     if not isinstance(paths, list):
         raise ConfigError(f"{path}: archived.paths must be a list of paths")
 
-    return (
-        {_absolute(a): _absolute(c) for a, c in aliases.items()},
-        tuple(_absolute(p) for p in paths),
-    )
+    values: dict = {}
+    if aliases:
+        values["aliases"] = {_absolute(a): _absolute(c) for a, c in aliases.items()}
+    if paths:
+        values["archived_paths"] = tuple(_absolute(p) for p in paths)
+    if "hours" in stale:
+        hours = stale["hours"]
+        # Zero or negative would mark every project stale the instant it went
+        # dirty, turning the one warning treatment into permanent furniture.
+        if not isinstance(hours, int) or hours < 1:
+            raise ConfigError(f"{path}: stale.hours must be a positive whole number")
+        values["stale_hours"] = hours
+    return values
 
 
 @dataclass(frozen=True)
@@ -175,7 +193,6 @@ class Config:
 
 def load(overrides: dict | None = None) -> Config:
     home = Path.home()
-    aliases, archived_paths = _read_config_file(config_path())
     cfg = Config(
         claude_projects_dir=home / ".claude" / "projects",
         db_path=home / ".bridge" / "bridge.db",
@@ -190,9 +207,12 @@ def load(overrides: dict | None = None) -> Config:
         # can be tested in a real subprocess against a genuinely closed port,
         # rather than against a mocked transport.
         port=int(os.environ.get("BRIDGE_PORT") or 8787),
-        aliases=aliases,
-        archived_paths=archived_paths,
+        aliases={},
+        archived_paths=(),
     )
+    # defaults < config.toml < overrides. The file can only reach the fields it
+    # actually names, and a test's explicit override always wins.
+    cfg = replace(cfg, **_read_config_file(config_path()))
     if overrides:
         cfg = replace(cfg, **overrides)
     return cfg

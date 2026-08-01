@@ -190,3 +190,41 @@ def test_a_model_choice_is_immutable():
     except Exception:
         return
     raise AssertionError("ModelChoice must be frozen")
+
+
+def test_stale_hours_is_read_from_the_config_file(tmp_path, monkeypatch):
+    """How long a repo may sit dirty before the panel calls it stale is a
+    judgement about how the user works, not a fact about anything."""
+    write_config(tmp_path, monkeypatch, """
+        [stale]
+        hours = 3
+    """)
+    assert load().stale_hours == 3
+
+
+def test_stale_hours_defaults_when_the_file_does_not_say(tmp_path, monkeypatch):
+    write_config(tmp_path, monkeypatch, """
+        [aliases]
+        "Documents/old" = "dev/new"
+    """)
+    assert load().stale_hours == 12
+
+
+def test_a_zero_or_negative_stale_hours_is_refused(tmp_path, monkeypatch):
+    """It would mark every project stale the instant it went dirty, turning the
+    one warning treatment into permanent furniture."""
+    for value in ("0", "-1"):
+        write_config(tmp_path, monkeypatch, f"[stale]\nhours = {value}\n")
+        with pytest.raises(ConfigError):
+            load()
+
+
+def test_a_non_numeric_stale_hours_is_refused(tmp_path, monkeypatch):
+    write_config(tmp_path, monkeypatch, '[stale]\nhours = "twelve"\n')
+    with pytest.raises(ConfigError):
+        load()
+
+
+def test_an_override_still_beats_a_configured_stale_hours(tmp_path, monkeypatch):
+    write_config(tmp_path, monkeypatch, "[stale]\nhours = 3\n")
+    assert load({"stale_hours": 99}).stale_hours == 99

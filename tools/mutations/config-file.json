@@ -3,7 +3,7 @@
     "name": "absorb a malformed config.toml instead of reporting it, dropping every alias in silence",
     "file": "src/bridge/config.py",
     "old": "        raise ConfigError(f\"{path}: {exc}\") from exc",
-    "new": "        return {}, ()",
+    "new": "        return {}",
     "tests": ["tests/test_config.py::test_a_malformed_config_file_names_itself_and_refuses_to_load"],
     "expect_count": 1
   },
@@ -42,7 +42,7 @@
   {
     "name": "accept a non-table [aliases] and let it fail later somewhere unattributable",
     "file": "src/bridge/config.py",
-    "old": "    if not isinstance(aliases, dict) or not isinstance(archived, dict):\n        raise ConfigError(f\"{path}: [aliases] and [archived] must be tables\")",
+    "old": "    if not all(isinstance(t, dict) for t in (aliases, archived, stale)):\n        raise ConfigError(\n            f\"{path}: [aliases], [archived] and [stale] must be tables\"\n        )",
     "new": "    pass",
     "tests": ["tests/test_config.py::test_a_non_table_aliases_key_is_refused"],
     "expect_count": 1
@@ -74,9 +74,41 @@
   {
     "name": "never read the file at all, so an alias declared in config.toml does nothing",
     "file": "src/bridge/config.py",
-    "old": "    aliases, archived_paths = _read_config_file(config_path())",
-    "new": "    aliases, archived_paths = {}, ()",
+    "old": "    cfg = replace(cfg, **_read_config_file(config_path()))",
+    "new": "    pass",
     "tests": ["tests/test_config.py::test_aliases_are_read_from_the_config_file_and_made_absolute"],
+    "expect_count": 1
+  },
+  {
+    "name": "accept a zero or negative stale.hours, making the warning permanent furniture",
+    "file": "src/bridge/config.py",
+    "old": "        if not isinstance(hours, int) or hours < 1:\n            raise ConfigError(f\"{path}: stale.hours must be a positive whole number\")",
+    "new": "        pass",
+    "tests": ["tests/test_config.py::test_a_zero_or_negative_stale_hours_is_refused"],
+    "expect_count": 1
+  },
+  {
+    "name": "accept a non-numeric stale.hours, which fails later inside the staleness maths",
+    "file": "src/bridge/config.py",
+    "old": "        if not isinstance(hours, int) or hours < 1:",
+    "new": "        if False:",
+    "tests": ["tests/test_config.py::test_a_non_numeric_stale_hours_is_refused"],
+    "expect_count": 1
+  },
+  {
+    "name": "ignore a configured stale.hours, silently keeping the 12-hour default",
+    "file": "src/bridge/config.py",
+    "old": "        values[\"stale_hours\"] = hours",
+    "new": "        pass",
+    "tests": ["tests/test_config.py::test_stale_hours_is_read_from_the_config_file"],
+    "expect_count": 1
+  },
+  {
+    "name": "set stale_hours even when the file does not name it, overwriting the default with nothing",
+    "file": "src/bridge/config.py",
+    "old": "    if \"hours\" in stale:\n        hours = stale[\"hours\"]",
+    "new": "    if True:\n        hours = stale.get(\"hours\")",
+    "tests": ["tests/test_config.py::test_stale_hours_defaults_when_the_file_does_not_say"],
     "expect_count": 1
   },
   {
