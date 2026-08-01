@@ -1,0 +1,32 @@
+[
+  {
+    "name": "never collect prompt files, so ~/.bridge/launches grows without bound",
+    "file": "src/bridge/__main__.py",
+    "old": "        launcher.gc_prompt_files(cfg.launches_dir)",
+    "new": "        pass",
+    "tests": [
+      "tests/test_main.py::test_serve_collects_stale_prompt_files_before_it_starts"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "collect with no age floor, deleting the prompt file of a launch that is still starting",
+    "file": "src/bridge/__main__.py",
+    "old": "        launcher.gc_prompt_files(cfg.launches_dir)",
+    "new": "        launcher.gc_prompt_files(cfg.launches_dir, max_age_days=0)",
+    "tests": [
+      "tests/test_main.py::test_serve_collects_stale_prompt_files_before_it_starts"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "let an unreadable launches dir stop the panel from booting",
+    "file": "src/bridge/__main__.py",
+    "old": "    except OSError:\n        pass\n\n    uvicorn.run(",
+    "new": "    except OSError:\n        raise\n\n    uvicorn.run(",
+    "tests": [
+      "tests/test_main.py::test_an_uncollectable_launches_dir_does_not_stop_the_panel"
+    ],
+    "expect_count": 1
+  }
+]

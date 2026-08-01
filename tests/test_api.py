@@ -1215,6 +1215,117 @@ def test_a_delta_carries_a_tombstone_when_a_session_ends(tmp_path, monkeypatch):
     assert frames[1][1]["removed"] == ["/p/gone"]
 
 
+def test_a_single_sample_busy_to_idle_flap_never_reaches_the_wire(
+    tmp_path, monkeypatch
+):
+    """The hysteresis has to sit in `_live_snapshot`, not only in `build_cards`.
+
+    `LivenessDebouncer` exists so a session that goes quiet for one sample does
+    not flicker the card. It was applied on the render path alone, so the SSE
+    path re-emitted every flap the render was busy suppressing: the card held
+    "running" while a delta told the client "idle", and the two disagreed on the
+    same page. `interval=0` puts all three ticks inside the 1.5 s hold.
+    """
+    from bridge import agents
+    from bridge.models import AgentsState, LiveSession
+
+    cfg = load({"db_path": tmp_path / "flap.db", "spool_dir": tmp_path / "spool"})
+    store = Store(cfg.db_path)
+    store.upsert_project("/p/flap", "flap")
+
+    def session(status):
+        return AgentsState(status="ok", sessions=[LiveSession(
+            session_id="aaaaaaaa-0000-0000-0000-000000000001", cwd="/p/flap",
+            kind="interactive", status=status, started_at=5)])
+
+    states = [session("busy"), session("idle"), session("idle")]
+    monkeypatch.setattr(agents, "probe",
+                        lambda *a, **k: states.pop(0) if states else session("idle"))
+    c = TestClient(create_app(store, cfg))
+    with c.stream("GET", "/events?max_ticks=3&interval=0") as r:
+        frames = _frames("".join(r.iter_text()))
+    store.close()
+
+    assert frames[0][1]["live"]["/p/flap"]["status"] == "busy"
+    assert [n for n, _ in frames] == ["snapshot"], (
+        "the idle samples are inside the hold, so nothing changed to report"
+    )
+
+
+def test_the_hold_releases_so_idle_is_delayed_and_not_suppressed(
+    tmp_path, monkeypatch
+):
+    """The other half of the hysteresis, and the worse failure of the two.
+
+    Debouncing the wire payload buys a permanent lie if the hold never expires:
+    a finished session would sit at "running" until the page was reloaded, which
+    is the state the tombstone work existed to eliminate. The clock is what
+    separates a 1.5 s delay from a stuck card, so it is asserted directly.
+    """
+    from bridge import agents, api
+    from bridge.models import AgentsState, LiveSession
+
+    cfg = load({"db_path": tmp_path / "hold.db", "spool_dir": tmp_path / "spool"})
+    store = Store(cfg.db_path)
+    store.upsert_project("/p/hold", "hold")
+
+    def session(status):
+        return AgentsState(status="ok", sessions=[LiveSession(
+            session_id="aaaaaaaa-0000-0000-0000-000000000003", cwd="/p/hold",
+            kind="interactive", status=status, started_at=5)])
+
+    states = [session("busy"), session("idle"), session("idle")]
+    monkeypatch.setattr(agents, "probe",
+                        lambda *a, **k: states.pop(0) if states else session("idle"))
+    # Two samples inside the 1.5 s hold, the third well outside it.
+    clock = iter([1000, 1000, 1010])
+    monkeypatch.setattr(api, "now_epoch", lambda: next(clock, 1010))
+
+    c = TestClient(create_app(store, cfg))
+    with c.stream("GET", "/events?max_ticks=3&interval=0") as r:
+        frames = _frames("".join(r.iter_text()))
+    store.close()
+
+    assert [n for n, _ in frames] == ["snapshot", "delta"], (
+        "one delta, on the tick after the hold expired -- not two, and not none"
+    )
+    assert frames[0][1]["live"]["/p/hold"]["status"] == "busy"
+    assert frames[1][1]["live"]["/p/hold"]["status"] == "idle"
+
+
+def test_the_unattributed_block_holds_the_same_status_the_cards_do(
+    tmp_path, monkeypatch
+):
+    """One debouncer, both consumers.
+
+    An unattributed session is rendered from `_live_snapshot` while a card is
+    rendered from `build_cards`. Debouncing only the second means two blocks on
+    ONE page disagree about whether the same machine is busy.
+    """
+    from bridge import agents
+    from bridge.models import AgentsState, LiveSession
+
+    cfg = load({"db_path": tmp_path / "un2.db", "spool_dir": tmp_path / "spool"})
+    store = Store(cfg.db_path)
+
+    def state(status):
+        return AgentsState(status="ok", sessions=[LiveSession(
+            session_id="aaaaaaaa-0000-0000-0000-000000000002",
+            cwd="/somewhere/unregistered", kind="interactive", status=status)])
+
+    states = [state("busy"), state("idle")]
+    monkeypatch.setattr(agents, "probe",
+                        lambda *a, **k: states.pop(0) if states else state("idle"))
+    c = TestClient(create_app(store, cfg))
+    assert 'class="live live--busy"' in c.get("/").text
+    second = c.get("/").text
+    store.close()
+
+    assert 'class="live live--busy"' in second, (
+        "the sensor said idle once, inside the hold, so the block still says busy"
+    )
+
+
 def test_the_wire_payload_keys_unattributed_sessions_by_their_own_cwd(
     tmp_path, monkeypatch
 ):

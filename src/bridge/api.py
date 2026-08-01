@@ -244,6 +244,16 @@ def create_app(
                     dataclasses_replace(s, status=hooks.NEEDS_INPUT)
                     if s.session_id in waiting else s for s in state.sessions
                 ])
+        # The same hysteresis `build_cards` applies, in the same order relative
+        # to the hook overlay, from the SAME debouncer instance. Both consumers
+        # have to run it or neither is debounced in practice: the render would
+        # hold a card at "busy" while the SSE tick told the client "idle", and a
+        # flap the debouncer exists to swallow would reach the wire anyway.
+        # `apply` is idempotent for one `now`, so the dashboard calling this and
+        # `build_cards` off one probe settles both to the same answer.
+        state = dataclasses_replace(
+            state, sessions=debouncer.apply(state.sessions, now_epoch())
+        )
         rows = store.projects()
         grouped = agents.by_project(
             state, store.alias_map(), [row["path"] for row in rows]

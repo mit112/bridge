@@ -73,7 +73,22 @@ def run_db_command(argv: list[str] | None = None) -> int:
 
     import uvicorn
 
+    from bridge import launcher
     from bridge.api import create_app
+
+    # Collect stale prompt files here rather than in `create_app`. A manual
+    # `bridge serve` is the only recurring event this process has -- there is no
+    # background loop to hang it off -- and the suite builds apps directly with
+    # configs that still point `launches_dir` at the real `~/.bridge`, so a
+    # collector inside `create_app` would delete real provenance under test.
+    #
+    # `OSError` only, matching the boot drain: an unreadable directory must not
+    # stop the panel, but a programming error in the collector must still be
+    # loud. Called through the module so the suite's guard can see the path.
+    try:
+        launcher.gc_prompt_files(cfg.launches_dir)
+    except OSError:
+        pass
 
     uvicorn.run(create_app(store, cfg), host="127.0.0.1", port=cfg.port)
     return 0

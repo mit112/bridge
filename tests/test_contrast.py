@@ -30,6 +30,21 @@ PAIRS = [
     # The prompt field's border is adjacent to two surfaces: its own --card fill
     # and the queued block it sits in, so both sides are held to 3:1.
     ("--field-line", "--queued-bg", 3.0, "prompt field border in a queued block"),
+    # The armed permission affordance: the label's text and the select's border,
+    # both `--risk-fg` on the bare card. Only `--card` is listed because
+    # `.launch` sits outside the handoff block (app.css:161), so this control
+    # never renders on `--queued-bg`.
+    #
+    # Recorded because it is NOT independently falsifiable today, and a row that
+    # cannot fail is the kind of thing this suite is otherwise careful to avoid.
+    # `--card` is lighter than `--risk-bg` in the light theme and darker than it
+    # in the dark one, so this pair measures HIGHER than the `--risk-fg` /
+    # `--risk-bg` row above in both (7.61 vs 7.21, 11.57 vs 10.13). It is
+    # dominated: nothing can break it that does not break that row first, and a
+    # sweep of every `--card` value at 8-step RGB found no exception. It is kept
+    # because the domination is a property of the current palette, not of the
+    # design -- move `--risk-bg` and this row starts doing real work.
+    ("--risk-fg", "--card", 4.5, "armed permission label and select border"),
 ]
 
 

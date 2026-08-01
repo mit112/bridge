@@ -429,16 +429,24 @@ def test_the_bypass_flag_is_never_the_allow_variant():
   body.bypass_permissions = bypass ? bypass.checked : false;
 ```
 
-- [ ] **Step 6: Style the affordance so it does not read as ordinary.** In `app.css`, give
+- [x] **Step 6: Style the affordance so it does not read as ordinary.** In `app.css`, give
       `.launch__field--danger` the existing warning accent used for the risk band — colour plus the
       word "Skip permissions", never colour alone. `tests/test_contrast.py` already enforces contrast
       ratios; add the new class to whatever it iterates so AA is checked rather than assumed.
 
-      > **2026-08-01: left unticked — half of this did not ship.** The styling exists in the
-      > enum's form (`.launch__field--perm:has(.launch__option--danger:checked)` in `app.css`,
-      > and the option's own text says `SKIP ALL CHECKS`, so it is never colour alone). But the
-      > second sentence was never done: `tests/test_contrast.py`'s `PAIRS` has no entry for the
-      > permission affordance, so its colours are asserted by eye rather than by the suite.
+      > **2026-08-01: closed, and the gap was smaller than it looked.** The styling landed with
+      > Phase 4 in the enum's form (`.launch__field--perm:has(.launch__option--danger:checked)`,
+      > and the option's own text says `SKIP ALL CHECKS`, so it is never colour alone). `PAIRS`
+      > now carries `--risk-fg` on `--card` — the armed label's text and the armed select's
+      > border — at **7.61:1 light, 11.57:1 dark**.
+      >
+      > But the affordance was never actually unverified. Trying to write a mutation for the new
+      > row proved it cannot fail on its own: `--card` is lighter than `--risk-bg` in the light
+      > theme and darker in the dark one, so this pair always measures above the `--risk-fg` /
+      > `--risk-bg` row that shipped in Phase 3 (7.21 and 10.13). A sweep of every `--card` value
+      > at 8-step RGB found no value that breaks this row without breaking an older one first.
+      > The colours were already enforced transitively; the row makes that explicit and starts
+      > doing independent work only if `--risk-bg` moves.
 
 - [x] **Step 7: Run the suite, write** `tools/mutations/phase4-task2.json`**, run it, commit.**
 
