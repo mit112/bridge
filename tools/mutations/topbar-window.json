@@ -1,0 +1,74 @@
+[
+  {
+    "name": "divide the window total by a hardcoded 5, letting the rate drift from FIVE_HOURS",
+    "file": "src/bridge/api.py",
+    "old": "                    \"burn_rate\": last_5h // (FIVE_HOURS // 3600),",
+    "new": "                    \"burn_rate\": last_5h,",
+    "tests": ["tests/test_api.py::test_the_topbar_reports_a_burn_rate_over_the_measured_window"],
+    "expect_count": 1
+  },
+  {
+    "name": "report the burn rate per minute while labelling it per hour",
+    "file": "src/bridge/api.py",
+    "old": "                    \"burn_rate\": last_5h // (FIVE_HOURS // 3600),",
+    "new": "                    \"burn_rate\": last_5h // (FIVE_HOURS // 60),",
+    "tests": ["tests/test_api.py::test_the_topbar_reports_a_burn_rate_over_the_measured_window"],
+    "expect_count": 1
+  },
+  {
+    "name": "read the running count from nothing, so the topbar always claims zero sessions",
+    "file": "src/bridge/api.py",
+    "old": "                    \"running\": diag[\"running_sessions\"],",
+    "new": "                    \"running\": 0,",
+    "tests": ["tests/test_api.py::test_the_topbar_reports_running_sessions_and_queued_handoffs"],
+    "expect_count": 1
+  },
+  {
+    "name": "swap the running and queued counts, so each reports the other's number",
+    "file": "src/bridge/api.py",
+    "old": "                    \"running\": diag[\"running_sessions\"],\n                    \"queued\": diag[\"queued_handoffs\"],",
+    "new": "                    \"running\": diag[\"queued_handoffs\"],\n                    \"queued\": diag[\"running_sessions\"],",
+    "tests": ["tests/test_api.py::test_the_topbar_reports_running_sessions_and_queued_handoffs"],
+    "expect_count": 1
+  },
+  {
+    "name": "never surface the last index time, leaving the cell permanently `never`",
+    "file": "src/bridge/api.py",
+    "old": "                    \"last_index\": (diag[\"last_index\"] or {}).get(\"ran_at\"),",
+    "new": "                    \"last_index\": None,",
+    "tests": ["tests/test_api.py::test_the_topbar_reports_the_last_index_time_once_there_is_one"],
+    "expect_count": 1
+  },
+  {
+    "name": "500 on a fresh install instead of answering `never`",
+    "file": "src/bridge/api.py",
+    "old": "                    \"last_index\": (diag[\"last_index\"] or {}).get(\"ran_at\"),",
+    "new": "                    \"last_index\": diag[\"last_index\"][\"ran_at\"],",
+    "tests": ["tests/test_api.py::test_the_topbar_says_never_rather_than_leaving_the_index_time_blank"],
+    "expect_count": 1
+  },
+  {
+    "name": "leave the index cell blank when there has never been a run, so it reads as a fault",
+    "file": "src/bridge/templates/dashboard.html",
+    "old": "  <dt>indexed</dt><dd>{{ (totals.last_index | ago_epoch) or \"never\" }}</dd>",
+    "new": "  <dt>indexed</dt><dd>{{ totals.last_index | ago_epoch }}</dd>",
+    "tests": ["tests/test_api.py::test_the_topbar_says_never_rather_than_leaving_the_index_time_blank"],
+    "expect_count": 1
+  },
+  {
+    "name": "drop the per-hour unit, leaving a bare number that reads as another total",
+    "file": "src/bridge/templates/dashboard.html",
+    "old": "  <dt>burn</dt><dd>{{ totals.burn_rate | kilo }}/h</dd>",
+    "new": "  <dt>burn</dt><dd>{{ totals.burn_rate | kilo }}</dd>",
+    "tests": ["tests/test_api.py::test_the_topbar_reports_a_burn_rate_over_the_measured_window"],
+    "expect_count": 1
+  },
+  {
+    "name": "render the burn rate as a gauge, inventing the denominator the plan does not publish",
+    "file": "src/bridge/templates/dashboard.html",
+    "old": "  <dt>burn</dt><dd>{{ totals.burn_rate | kilo }}/h</dd>",
+    "new": "  <dt>burn</dt><dd><meter max=\"100000\" value=\"{{ totals.burn_rate }}\"></meter>{{ totals.burn_rate | kilo }}/h</dd>",
+    "tests": ["tests/test_api.py::test_the_topbar_reports_a_burn_rate_over_the_measured_window"],
+    "expect_count": 1
+  }
+]

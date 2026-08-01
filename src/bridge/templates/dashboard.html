@@ -2,8 +2,17 @@
 {% block topbar %}
 <dl class="totals">
   <dt>projects</dt><dd>{{ totals.projects }}</dd>
+  <dt>running</dt><dd>{{ totals.running }}</dd>
+  <dt>queued</dt><dd>{{ totals.queued }}</dd>
   <dt>tokens today</dt><dd>{{ totals.today | kilo }}</dd>
   <dt>last 5h</dt><dd>{{ totals.last_5h | kilo }}</dd>
+  {# A rate over the measured window, never a share of a cap: the plan
+     publishes no total, so a percentage would have no denominator and a gauge
+     would be inventing one. The unit is written out for the same reason. #}
+  <dt>burn</dt><dd>{{ totals.burn_rate | kilo }}/h</dd>
+  {# "never" rather than a blank: an empty cell reads as a rendering fault,
+     and a fresh install genuinely has not indexed yet. #}
+  <dt>indexed</dt><dd>{{ (totals.last_index | ago_epoch) or "never" }}</dd>
 </dl>
 {% endblock %}
 {% block content %}

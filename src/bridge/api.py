@@ -20,7 +20,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, field_validator, model_validator
 
 from bridge import agents, hooks, launcher, spool
-from bridge.cards import LivenessDebouncer, build_cards, spark_points
+from bridge.cards import FIVE_HOURS, LivenessDebouncer, build_cards, spark_points
 from bridge.config import Config
 from bridge.indexer import reindex
 from bridge.models import Handoff
@@ -349,17 +349,32 @@ def create_app(
         hidden = [
             r for r in store.projects(include_hidden=True) if r["status"] != "active"
         ]
+        # Called once, not twice: `_diagnostics()` runs the liveness sensor, and
+        # the topbar's running count has to be the same number the alert beside
+        # it was computed from.
+        diag = _diagnostics()
+        last_5h = sum(c.tokens_5h for c in cards)
         return templates.TemplateResponse(
             request,
             "dashboard.html",
             {
                 "cards": cards,
                 "hidden": hidden,
-                "diag_alert": _needs_attention(_diagnostics()),
+                "diag_alert": _needs_attention(diag),
                 "totals": {
                     "today": sum(c.tokens_today for c in cards),
-                    "last_5h": sum(c.tokens_5h for c in cards),
+                    "last_5h": last_5h,
+                    # A rate over a measured window, not a share of a cap. The
+                    # 5h plan publishes no total, so a percentage would have no
+                    # denominator -- this divides by the window's own length,
+                    # read from the constant that defines it so the two cannot
+                    # drift apart. Integer division: the figure is rendered to
+                    # the nearest thousand anyway.
+                    "burn_rate": last_5h // (FIVE_HOURS // 3600),
                     "projects": len(cards),
+                    "running": diag["running_sessions"],
+                    "queued": diag["queued_handoffs"],
+                    "last_index": (diag["last_index"] or {}).get("ran_at"),
                 },
             },
         )

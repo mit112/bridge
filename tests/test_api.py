@@ -10,7 +10,7 @@ from bridge.api import create_app
 from bridge.config import load
 from bridge.models import Handoff, Launch, SessionRecord
 from bridge.registry import resolve_project
-from bridge.store import Store
+from bridge.store import Store, now_epoch
 
 DEMO = "/Users/mitsheth/dev/demo"
 
@@ -1452,3 +1452,63 @@ def test_projects_js_never_reloads_over_a_half_typed_prompt():
               / "static" / "projects.js").read_text()
     assert "location.reload" not in source
     assert ".innerHTML" not in source
+
+
+# --- The topbar's global state ------------------------------------------------
+
+
+def _iso_now() -> str:
+    """Inside the 5h window, so the session counts toward the burn rate.
+
+    The fixture's own session is dated two days back on purpose, which is what
+    makes the totals below attributable to exactly the row each test adds.
+    """
+    from datetime import datetime, timezone
+
+    return (datetime.fromtimestamp(now_epoch(), tz=timezone.utc)
+            .strftime("%Y-%m-%dT%H:%M:%S.000Z"))
+
+
+def test_the_topbar_reports_a_burn_rate_over_the_measured_window(client):
+    """Tokens per hour across the 5h window, divided by the window's own length.
+
+    A rate, not a share: the plan publishes no total, so there is no
+    denominator a percentage could use.
+    """
+    c, store, pid = client
+    store.upsert_session(
+        SessionRecord(session_id="burn", transcript_path="/t/burn.jsonl",
+                      project_path=DEMO, ended_at=_iso_now(),
+                      tokens_in=30_000, tokens_out=20_000),
+        pid,
+    )
+    body = c.get("/").text
+    assert re.search(r"<dt>burn</dt><dd>10k/h</dd>", body), (
+        "50k over the 5h window is 10k/h"
+    )
+    assert "% of" not in body            # still no fabricated denominator
+    assert "<meter" not in body          # and no gauge implying one
+
+
+def test_the_topbar_reports_running_sessions_and_queued_handoffs(client):
+    c, store, pid = client
+    store.create_handoff(Handoff(
+        id="h-top", project_path=DEMO, next_prompt="go", status="queued",
+    ), pid)
+    body = c.get("/").text
+    assert re.search(r"<dt>queued</dt><dd>1</dd>", body)
+    # The registry is pointed at an empty directory by conftest, so nothing runs.
+    assert re.search(r"<dt>running</dt><dd>0</dd>", body)
+
+
+def test_the_topbar_says_never_rather_than_leaving_the_index_time_blank(client):
+    """An empty cell reads as a rendering fault; a fresh install genuinely has
+    not indexed yet."""
+    c, _, _ = client
+    assert re.search(r"<dt>indexed</dt><dd>never</dd>", c.get("/").text)
+
+
+def test_the_topbar_reports_the_last_index_time_once_there_is_one(client):
+    c, store, _ = client
+    store.record_index_run({"files_seen": 1}, ran_at=now_epoch(), duration_ms=1)
+    assert re.search(r"<dt>indexed</dt><dd>0m</dd>", c.get("/").text)
