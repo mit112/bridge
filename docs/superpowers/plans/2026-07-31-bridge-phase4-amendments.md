@@ -177,7 +177,37 @@ separate bugs from conflating terminal identity with UI visibility, with auth-to
 with browser connection state. Gating poll *cadence* on connected SSE clients is fine; deriving
 *status* from it is not.
 
-## Task 9 — Hooks for `needs_input` **[GATED ON A DECISION]**
+## Task 9 — Hooks for `needs_input` **[DECIDED 2026-08-01: global, minimal set]**
+
+**Mit's decision, taken with the measured risk below in hand. Do not relitigate it.** Install into
+`~/.claude/settings.json`: **`Notification`, `SessionStart`, `SessionEnd` only** — all non-blocking
+events, all `type: "http"` posting to Bridge's localhost URL, each with an **explicit `timeout: 2`**,
+and `allowedHttpHookUrls` pinned to that URL.
+
+Three constraints that made this the safe shape:
+
+- **`timeout` is not optional.** The HTTP hook path is `await Bv.post(...)` — Claude Code waits on
+  the response — and the default is `xm = 600000` ms, i.e. **10 minutes**. Bridge *not running* costs
+  nothing (`ECONNREFUSED` returns immediately); Bridge running-but-wedged with a defaulted timeout
+  stalls a hook for ten minutes. One field is the whole mitigation.
+- **`Notification`, not `PermissionRequest`.** Its `notification_type` already distinguishes
+  `permission_prompt` / `agent_needs_input` / `idle_prompt` / `agent_completed`, so it carries the
+  same signal, and unlike `PermissionRequest` it cannot block a turn.
+- **Additive only.** Mit's existing global hooks are on `UserPromptSubmit`, `PreToolUse`,
+  `PostToolUse` and `Stop` (swift-format, attribution guard, the max-parallelisation trigger). None
+  of the three events above collides, so no working hook is edited. Keep it that way — the fuller
+  telemetry variant was rejected precisely because it appends to two of those.
+
+**Order of work: build and test the receiving route BEFORE touching `settings.json`.** Hooks pointed
+at a route that does not exist would make every session on the machine POST into a 404. The settings
+edit is the last step of this task, not the first.
+
+Rejected in the same decision: a project-scoped trial in one repo (would not give cross-project
+needs-input, which is the point), and skipping hooks entirely.
+
+---
+
+### Background: why hooks at all
 
 The one genuine capability addition available, and the only route to a state polling cannot see.
 
