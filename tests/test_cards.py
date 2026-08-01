@@ -195,9 +195,18 @@ def test_no_suggestion_leaves_the_catalog_untouched():
 
 
 def test_model_options_does_not_alias_the_caller_s_catalog():
-    """`build_cards` hands this the Config's list; mutating it would leak."""
+    """`build_cards` hands this the Config's list once per card; mutating it
+    would leak across cards and grow the catalog on every page load.
+
+    Exercised with NO suggestion on purpose. The prepend branch builds a fresh
+    list anyway, so passing an off-catalog suggestion here would test the wrong
+    path and let `return catalog` survive.
+    """
     catalog = [ModelChoice("opus", "opus — latest")]
-    model_options(catalog, "off-catalog").append(ModelChoice("x", "x"))
+    model_options(catalog, None).append(ModelChoice("x", "x"))
+    assert len(catalog) == 1
+    # And the in-catalog-suggestion path, which returns by the same statement.
+    model_options(catalog, "opus").append(ModelChoice("y", "y"))
     assert len(catalog) == 1
 
 
