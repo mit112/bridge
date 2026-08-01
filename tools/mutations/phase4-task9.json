@@ -1,0 +1,124 @@
+[
+  {
+    "name": "treat every notification as a wait, so cards claim attention nobody asked for",
+    "file": "src/bridge/hooks.py",
+    "old": "            if kind in NEEDS_INPUT_TYPES:\n                self._waiting[session_id] = now\n            else:",
+    "new": "            if True:\n                self._waiting[session_id] = now\n            else:",
+    "tests": [
+      "tests/test_hooks.py::test_agent_completed_clears_the_wait",
+      "tests/test_hooks.py::test_an_unrecognised_notification_type_clears_rather_than_sets"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "never record a wait, so the one state polling cannot see stays invisible",
+    "file": "src/bridge/hooks.py",
+    "old": "                self._waiting[session_id] = now",
+    "new": "                pass",
+    "tests": [
+      "tests/test_hooks.py::test_every_waiting_notification_marks_the_session",
+      "tests/test_hooks.py::test_a_waiting_session_shows_needs_input_on_its_card"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "let SessionStart and SessionEnd set a wait instead of clearing it",
+    "file": "src/bridge/hooks.py",
+    "old": "        elif name in (\"SessionStart\", \"SessionEnd\"):\n            # A session that just started is not waiting, and one that ended\n            # cannot be. Both clear rather than set.\n            self._waiting.pop(session_id, None)",
+    "new": "        elif name in (\"SessionStart\", \"SessionEnd\"):\n            self._waiting[session_id] = now",
+    "tests": [
+      "tests/test_hooks.py::test_session_start_and_end_both_clear_the_wait"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "drop the TTL, so a wait Bridge missed the clear for lasts until the process restarts",
+    "file": "src/bridge/hooks.py",
+    "old": "        if now - seen > self.ttl_s:\n            del self._waiting[session_id]\n            return False",
+    "new": "        if False:\n            return False",
+    "tests": [
+      "tests/test_hooks.py::test_a_wait_expires_so_a_missed_clear_does_not_last_forever"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "let a malformed hook event raise, turning noise into an exception in an unrelated session",
+    "file": "src/bridge/hooks.py",
+    "old": "        if not isinstance(event, dict):\n            return None",
+    "new": "        if False:\n            return None",
+    "tests": [
+      "tests/test_hooks.py::test_a_malformed_event_is_ignored_not_fatal"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "accept a non-string session id, keying the overlay on something that can never match",
+    "file": "src/bridge/hooks.py",
+    "old": "        if not isinstance(session_id, str) or not session_id:\n            return None",
+    "new": "        if session_id is None:\n            return None",
+    "tests": [
+      "tests/test_hooks.py::test_a_malformed_event_is_ignored_not_fatal"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "stop reconciling against the sensor, so a finished session waits forever",
+    "file": "src/bridge/hooks.py",
+    "old": "        keep = set(session_ids)\n        for sid in [s for s in self._waiting if s not in keep]:\n            del self._waiting[sid]",
+    "new": "        pass",
+    "tests": [
+      "tests/test_hooks.py::test_forget_reconciles_against_the_liveness_sensor"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "return a 500 on a malformed hook body, making every Claude session on the machine POST into an error",
+    "file": "src/bridge/api.py",
+    "old": "        except Exception:  # noqa: BLE001 - a malformed body is still a 200\n            return {\"ok\": True}",
+    "new": "        except Exception:  # noqa: BLE001 - a malformed body is still a 200\n            raise",
+    "tests": [
+      "tests/test_hooks.py::test_a_malformed_body_still_answers_200"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "let a recording failure escape the route, so a Bridge bug surfaces inside somebody else's session",
+    "file": "src/bridge/api.py",
+    "old": "        try:\n            hook_state.record(event)\n        except Exception:  # noqa: BLE001\n            pass",
+    "new": "        hook_state.record(event)",
+    "tests": [
+      "tests/test_hooks.py::test_a_bug_inside_record_cannot_escape_into_the_posting_session"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "never record the event at the route, so the whole hook path is decorative",
+    "file": "src/bridge/api.py",
+    "old": "            hook_state.record(event)\n        except Exception:  # noqa: BLE001",
+    "new": "            pass\n        except Exception:  # noqa: BLE001",
+    "tests": [
+      "tests/test_hooks.py::test_the_route_records_a_permission_prompt"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "apply the overlay even when the sensor failed, asserting \"waiting\" from a probe that read nothing",
+    "file": "src/bridge/cards.py",
+    "old": "    if hook_state is not None and live_state.status == \"ok\":",
+    "new": "    if hook_state is not None:",
+    "tests": [
+      "tests/test_hooks.py::test_a_failed_sensor_does_not_apply_the_overlay"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "rank needs_input below busy, burying the one card that is actually waiting on you",
+    "file": "src/bridge/cards.py",
+    "old": "    \"needs_input\": 0,",
+    "new": "    \"needs_input\": 3,",
+    "tests": [
+      "tests/test_hooks.py::test_needs_input_sits_at_the_top_of_the_attention_ladder"
+    ],
+    "expect_count": 1
+  }
+]

@@ -758,9 +758,15 @@ def test_both_launch_selects_are_labelled_and_preselect_the_suggestion(launch_ap
     assert f'<label class="launch__label" for="{lid}-effort">Effort</label>' in html
     assert f'id="{lid}-model"' in html
     assert f'id="{lid}-effort"' in html
-    assert '<option value="sonnet" selected>sonnet</option>' in html
+    # The value is what reaches `--model`; the label is what a human reads.
+    # Emitting the label as the value would send `--model "sonnet — latest
+    # (Sonnet 5)"` and fail the launch.
+    assert '<option value="sonnet" selected>sonnet — latest (Sonnet 5)</option>' in html
     assert '<option value="xhigh" selected>xhigh</option>' in html
-    assert html.count(" selected>") == 2, "one preselection per select, no more"
+    # Three selects now: model, effort, permissions. The permission select is
+    # always preselected on its first option, which is the no-flag one.
+    assert html.count(" selected>") == 3, "one preselection per select, no more"
+    assert '<option value="" selected>Ask as usual</option>' in html
 
 
 def test_a_suggestion_the_config_does_not_list_is_still_preselected(launch_app):
@@ -768,13 +774,35 @@ def test_a_suggestion_the_config_does_not_list_is_still_preselected(launch_app):
     one of the configured short names. Dropping it would silently launch a
     different model than the one being suggested."""
     c, _, _, _ = launch_app
-    pid = c.post("/api/handoff", json=body("h1")).json()["project_id"]
-    assert "claude-opus-5" not in load({}).models
+    # Deliberately NOT `body()`'s default: Phase 4 added `claude-opus-5` to the
+    # catalog, so the old default silently stopped being off-catalog and this
+    # test stopped testing the prepend. Pin a value the catalog does not list.
+    off_catalog = "claude-opus-4-2"
+    pid = c.post(
+        "/api/handoff", json=body("h1", suggested_model=off_catalog)
+    ).json()["project_id"]
+    assert off_catalog not in [m.value for m in load({}).models]
 
     html = c.get("/").text
 
-    assert '<option value="claude-opus-5" selected>claude-opus-5</option>' in html
+    assert f'<option value="{off_catalog}" selected>{off_catalog}</option>' in html
     assert f'id="launch-{pid}-model"' in html
+
+
+def test_with_no_suggestion_the_first_catalog_entry_is_selected(launch_app):
+    """Without an explicit `selected` the browser silently picks option one
+    anyway, so the preselection becomes invisible rather than absent — and a
+    later reorder of the catalog would change what launches with no warning.
+    """
+    c, store, _, _ = launch_app
+    store.upsert_project("/Users/mitsheth/dev/nohandoff", "nohandoff")
+
+    html = c.get("/").text
+
+    first = load({}).models[0]
+    assert (
+        f'<option value="{first.value}" selected>{first.label}</option>' in html
+    )
 
 
 def test_two_cards_produce_no_duplicate_element_id(launch_app):
@@ -788,8 +816,8 @@ def test_two_cards_produce_no_duplicate_element_id(launch_app):
 
     ids = re.findall(r'\sid="([^"]+)"', html)
     assert len(ids) == len(set(ids)), f"duplicate ids: {sorted(ids)}"
-    assert len([i for i in ids if i.startswith("launch-")]) == 4, (
-        "two selects on each of the two cards"
+    assert len([i for i in ids if i.startswith("launch-")]) == 6, (
+        "three selects on each of the two cards"
     )
 
 
@@ -820,7 +848,7 @@ def test_every_new_control_is_labelled_and_none_leaves_the_tab_order(launch_app)
     assert 'tabindex="-1"' not in html
     labelled = set(re.findall(r'<label[^>]*\sfor="([^"]+)"', html))
     fields = re.findall(r"<(?:select|textarea)\b[^>]*>", html)
-    assert len(fields) == 3, "two selects and the prompt field"
+    assert len(fields) == 4, "three selects and the prompt field"
     for tag in fields:
         ident = re.search(r'\sid="([^"]+)"', tag)
         assert (ident and ident.group(1) in labelled) or "aria-label=" in tag, tag
@@ -865,3 +893,439 @@ def test_the_project_page_lists_launch_history_with_its_linked_session(launch_ap
     assert "Launched work" in html, "the linked session is shown as its own title"
     # A launch whose session never appeared is not an error; it stays visible.
     assert "no session yet" in html
+
+
+# --- Phase 4 Task 2: permission modes ----------------------------------------
+
+
+def test_a_launch_with_no_permission_mode_reaches_the_spec_as_none(launch_app):
+    """The default must survive the whole way to the LaunchSpec, not be
+    reconstituted into a benign-looking mode somewhere in the middle."""
+    c, _, _, launch_fn = launch_app
+    c.post("/api/handoff", json=body("h1"))
+    c.post("/api/launch", json={"project_path": DEMO})
+    spec, _ = launch_fn.calls[-1]
+    assert spec.permission_mode is None
+
+
+def test_the_requested_permission_mode_reaches_the_spec_verbatim(launch_app):
+    c, _, _, launch_fn = launch_app
+    c.post("/api/handoff", json=body("h1"))
+    c.post("/api/launch",
+           json={"project_path": DEMO, "permission_mode": "bypassPermissions"})
+    spec, _ = launch_fn.calls[-1]
+    assert spec.permission_mode == "bypassPermissions"
+
+
+def test_an_unknown_permission_mode_is_refused_before_anything_is_launched(launch_app):
+    """422 at the edge, and -- the part that matters -- no launch recorded."""
+    c, _, _, launch_fn = launch_app
+    c.post("/api/handoff", json=body("h1"))
+    before = len(launch_fn.calls)
+    response = c.post("/api/launch",
+                      json={"project_path": DEMO, "permission_mode": "yolo"})
+    assert response.status_code == 422
+    assert len(launch_fn.calls) == before, "a refused mode still spawned something"
+
+
+def test_no_handoff_field_can_arm_a_permission_mode(launch_app):
+    """A handoff may suggest a model and an effort. It must never be able to
+    suggest a permission mode: an authored brief that could pre-arm a bypass is
+    exactly the sticky default the design forbids.
+    """
+    c, _, _, _ = launch_app
+    c.post("/api/handoff", json=body("h1"))
+    html = c.get("/").text
+
+    # The rendered select always lands on the no-flag option, whatever the
+    # handoff says, and the dangerous option is never the selected one.
+    assert '<option value="" selected>Ask as usual</option>' in html
+    assert 'value="bypassPermissions" class="launch__option--danger">' in html
+    assert '"bypassPermissions" selected' not in html
+    # And the field is not among the things a handoff can carry at all.
+    from bridge.api import HandoffIn
+
+    assert not any("permission" in f for f in HandoffIn.model_fields)
+
+
+def test_the_permission_select_is_labelled_and_marked_dangerous(launch_app):
+    c, _, _, _ = launch_app
+    c.post("/api/handoff", json=body("h1"))
+    html = c.get("/").text
+    assert re.search(r'<label[^>]*for="launch-\d+-perm">Permissions</label>', html)
+    # Colour is never the only signal: the option says so in words.
+    assert "SKIP ALL CHECKS" in html
+
+
+# --- Phase 4 Task 4: the last good git state renders with its age ------------
+
+
+def test_a_stale_git_probe_renders_the_last_good_state_and_its_age(tmp_path):
+    """Rendered rather than asserted on the dataclass, because the filter choice
+    is the bug: `ago` takes an ISO-8601 string and `cached_at` is an epoch int,
+    so the wrong one either raises or renders nonsense."""
+    from bridge.models import GitState
+
+    import bridge.cards as cards_mod
+
+    cfg = load({"db_path": tmp_path / "g.db", "spool_dir": tmp_path / "spool"})
+    store = Store(cfg.db_path)
+    pid = store.upsert_project("/Users/mitsheth/dev/cached", "cached")
+    store.upsert_session(
+        SessionRecord(session_id="s-cached", transcript_path="/t/s-cached",
+                      title="Work", ended_at="2026-07-30T10:00:00.000Z"),
+        pid,
+    )
+    orig = cards_mod.gitprobe.probe
+    try:
+        cards_mod.gitprobe.probe = lambda p: GitState(status="ok", branch="cached-branch")
+        c = TestClient(create_app(store, cfg))
+        assert "cached-branch" in c.get("/").text
+
+        cards_mod.gitprobe.probe = lambda p: GitState(status="unavailable")
+        text = c.get("/").text
+        assert "cached-branch" in text, "the last good branch was not shown"
+        assert "as of" in text
+        assert "git unavailable" not in text
+    finally:
+        cards_mod.gitprobe.probe = orig
+        store.close()
+
+
+# --- Phase 4 Task 7: diagnostics ---------------------------------------------
+
+
+def test_diagnostics_survives_never_having_indexed(client):
+    """A fresh install has no runs; the route must answer, not 500."""
+    c, _, _ = client
+    r = c.get("/api/diagnostics")
+    assert r.status_code == 200
+    assert r.json()["last_index"] is None
+    assert r.json()["parse_errors"] == 0
+
+
+def test_an_index_run_is_recorded_so_diagnostics_has_something_to_read(client):
+    c, _, _ = client
+    c.post("/api/refresh")
+    body = c.get("/api/diagnostics").json()
+    assert body["last_index"] is not None
+    assert body["last_index"]["duration_ms"] >= 0
+
+
+def test_diagnostics_reports_parse_errors_from_the_last_run(client):
+    c, store, _ = client
+    store.record_index_run({"parse_errors": 3, "files_seen": 9},
+                           ran_at=100, duration_ms=5)
+    assert c.get("/api/diagnostics").json()["parse_errors"] == 3
+
+
+def test_diagnostics_reads_the_LATEST_run_not_the_first(client):
+    c, store, _ = client
+    store.record_index_run({"parse_errors": 7}, ran_at=100, duration_ms=1)
+    store.record_index_run({"parse_errors": 0}, ran_at=200, duration_ms=1)
+    assert c.get("/api/diagnostics").json()["parse_errors"] == 0
+
+
+def test_diagnostics_counts_undrained_spool_files(tmp_path):
+    cfg = load({"db_path": tmp_path / "d.db", "spool_dir": tmp_path / "spool"})
+    store = Store(cfg.db_path)
+    c = TestClient(create_app(store, cfg))
+    # The live outbox IS `spool_dir`; `drained/` and `bad/` sit under it.
+    cfg.spool_dir.mkdir(parents=True, exist_ok=True)
+    (cfg.spool_dir / "x.json").write_text("{}")
+    assert c.get("/api/diagnostics").json()["spool_depth"] == 1
+    store.close()
+
+
+def test_drained_spool_files_are_not_counted_as_depth(tmp_path):
+    """`spool/drained/` is history, not backlog. Counting it makes the depth
+    grow forever and permanently claim a backlog that was drained."""
+    cfg = load({"db_path": tmp_path / "d2.db", "spool_dir": tmp_path / "spool"})
+    store = Store(cfg.db_path)
+    c = TestClient(create_app(store, cfg))
+    (cfg.spool_dir / "drained").mkdir(parents=True, exist_ok=True)
+    (cfg.spool_dir / "drained" / "x.json").write_text("{}")
+    assert c.get("/api/diagnostics").json()["spool_depth"] == 0
+    store.close()
+
+
+def test_diagnostics_records_which_sensor_answered_and_what_version(client):
+    """When the schema next drifts this is the difference between a diagnosis
+    and a bisect."""
+    body = client[0].get("/api/diagnostics").json()
+    assert body["live_source"] in ("registry", "subprocess", "none")
+    assert "claude_version" in body
+
+
+def test_diagnostics_counts_only_still_queued_handoffs(client):
+    c, store, pid = client
+    store.create_handoff(Handoff(id="dq1", project_path=DEMO,
+                                 next_prompt="p", created_at=1), pid)
+    assert c.get("/api/diagnostics").json()["queued_handoffs"] == 1
+    store.set_handoff_status("dq1", "consumed")
+    assert c.get("/api/diagnostics").json()["queued_handoffs"] == 0
+
+
+def test_the_header_links_to_diagnostics_only_when_something_is_wrong(client):
+    """A permanent link would train the eye to ignore it."""
+    c, store, _ = client
+    store.record_index_run({"parse_errors": 0}, ran_at=1, duration_ms=1)
+    assert "data-diagnostics-alert" not in c.get("/").text
+    store.record_index_run({"parse_errors": 2}, ran_at=2, duration_ms=1)
+    assert "data-diagnostics-alert" in c.get("/").text
+
+
+def test_the_diagnostics_page_renders_and_says_so_in_words(client):
+    c, store, _ = client
+    store.record_index_run({"parse_errors": 2, "files_seen": 4},
+                           ran_at=2, duration_ms=7)
+    text = c.get("/diagnostics").text
+    assert "Diagnostics" in text
+    assert "Parse errors" in text
+    # Status is never colour alone.
+    assert "needs attention" in text
+
+
+def test_a_diagnostics_write_failure_cannot_fail_an_index(client, monkeypatch):
+    """Indexing is the one thing that must always work."""
+    c, store, _ = client
+
+    def boom(*a, **k):
+        raise RuntimeError("diagnostics exploded")
+
+    monkeypatch.setattr(store, "record_index_run", boom)
+    assert c.post("/api/refresh").status_code == 200
+
+
+def test_diagnostics_reports_terminal_agents_as_not_running(tmp_path, monkeypatch):
+    """A background agent that is `done` occupies nothing. Counting it would
+    inflate "running sessions" forever after the work finished."""
+    from bridge import agents
+    from bridge.models import AgentsState, LiveSession
+
+    def fake_probe(*a, **k):
+        return AgentsState(status="ok", source="registry", sessions=[
+            LiveSession(session_id="aaaaaaaa-0000-0000-0000-000000000001",
+                        cwd="/p", kind="background", status="done"),
+            LiveSession(session_id="aaaaaaaa-0000-0000-0000-000000000002",
+                        cwd="/p", kind="background", status="working"),
+        ])
+
+    monkeypatch.setattr(agents, "probe", fake_probe)
+    cfg = load({"db_path": tmp_path / "t.db", "spool_dir": tmp_path / "spool"})
+    store = Store(cfg.db_path)
+    c = TestClient(create_app(store, cfg))
+    assert c.get("/api/diagnostics").json()["running_sessions"] == 1
+    store.close()
+
+
+# --- Phase 4 Task 8: SSE -----------------------------------------------------
+
+
+def _frames(text: str) -> list[tuple[str, dict]]:
+    out = []
+    for block in text.split("\n\n"):
+        if not block.strip() or block.startswith(":"):
+            continue
+        name, data = None, None
+        for line in block.splitlines():
+            if line.startswith("event: "):
+                name = line[len("event: "):]
+            elif line.startswith("data: "):
+                data = json.loads(line[len("data: "):])
+        if name:
+            out.append((name, data))
+    return out
+
+
+def test_events_opens_with_a_full_snapshot_in_sse_frame_format(client):
+    c, _, _ = client
+    with c.stream("GET", "/events?max_ticks=1&interval=0") as response:
+        assert response.headers["content-type"].startswith("text/event-stream")
+        assert response.headers["x-accel-buffering"] == "no"
+        body = "".join(response.iter_text())
+
+    assert body.startswith("event: snapshot\n")
+    # The trailing BLANK line terminates the frame. With a single "\n" the
+    # browser buffers forever and no event ever fires, with no error anywhere.
+    assert body.endswith("\n\n")
+    name, payload = _frames(body)[0]
+    assert name == "snapshot"
+    assert "live" in payload
+
+
+def test_every_reconnect_begins_with_a_snapshot_so_no_replay_is_needed(client):
+    """This is why there is no Last-Event-ID handling to write."""
+    c, _, _ = client
+    for _ in range(2):
+        with c.stream("GET", "/events?max_ticks=1&interval=0") as r:
+            assert _frames("".join(r.iter_text()))[0][0] == "snapshot"
+
+
+def test_an_unchanged_tick_emits_nothing_after_the_snapshot(client):
+    c, _, _ = client
+    with c.stream("GET", "/events?max_ticks=4&interval=0") as r:
+        frames = _frames("".join(r.iter_text()))
+    assert [n for n, _ in frames] == ["snapshot"], "a quiet server still emitted"
+
+
+def test_a_capped_stream_ends_with_a_named_refresh_rather_than_running_forever(client):
+    """`max_ticks` is a BACKSTOP, not the thing under test.
+
+    Without it, a build that has lost the time cap streams forever at
+    interval=0 and this test hangs instead of failing -- which is exactly what
+    it did under mutation, taking the falsifier down with it. With the backstop
+    the cap is still what produces the `refresh`, and its absence fails fast.
+    """
+    c, _, _ = client
+    with c.stream("GET", "/events?interval=0&max_seconds=0&max_ticks=5") as r:
+        frames = _frames("".join(r.iter_text()))
+    assert [n for n, _ in frames] == ["snapshot", "refresh"]
+
+
+def test_a_delta_carries_a_tombstone_when_a_session_ends(tmp_path, monkeypatch):
+    """The planned payload could say "busy" but had no way to say "gone", so a
+    card kept its live band until the page was reloaded."""
+    from bridge import agents
+    from bridge.models import AgentsState, LiveSession
+
+    cfg = load({"db_path": tmp_path / "sse.db", "spool_dir": tmp_path / "spool"})
+    store = Store(cfg.db_path)
+    store.upsert_project("/p/gone", "gone")
+    states = [
+        AgentsState(status="ok", sessions=[LiveSession(
+            session_id="aaaaaaaa-0000-0000-0000-000000000001", cwd="/p/gone",
+            kind="interactive", status="busy", started_at=5)]),
+        AgentsState(status="ok", sessions=[]),
+    ]
+    monkeypatch.setattr(agents, "probe", lambda *a, **k: states.pop(0) if states
+                        else AgentsState(status="ok", sessions=[]))
+    c = TestClient(create_app(store, cfg))
+    with c.stream("GET", "/events?max_ticks=2&interval=0") as r:
+        frames = _frames("".join(r.iter_text()))
+    store.close()
+
+    assert [n for n, _ in frames] == ["snapshot", "delta"]
+    assert frames[0][1]["live"]["/p/gone"]["status"] == "busy"
+    assert frames[1][1]["removed"] == ["/p/gone"]
+
+
+def test_the_wire_payload_excludes_unattributed_sessions(tmp_path, monkeypatch):
+    """A session in no registered project has no card to patch. Putting it on
+    the wire keyed by its own cwd would make the client look for a band that
+    does not exist -- or, worse, find an unrelated one."""
+    from bridge import agents
+    from bridge.models import AgentsState, LiveSession
+
+    cfg = load({"db_path": tmp_path / "un.db", "spool_dir": tmp_path / "spool"})
+    store = Store(cfg.db_path)
+    store.upsert_project("/p/real", "real")
+    monkeypatch.setattr(agents, "probe", lambda *a, **k: AgentsState(
+        status="ok", sessions=[
+            LiveSession(session_id="aaaaaaaa-0000-0000-0000-000000000001",
+                        cwd="/p/real", kind="interactive", status="busy"),
+            LiveSession(session_id="aaaaaaaa-0000-0000-0000-000000000002",
+                        cwd="/somewhere/unregistered", kind="interactive",
+                        status="busy"),
+        ]))
+    c = TestClient(create_app(store, cfg))
+    with c.stream("GET", "/events?max_ticks=1&interval=0") as r:
+        payload = _frames("".join(r.iter_text()))[0][1]
+    store.close()
+
+    assert list(payload["live"]) == ["/p/real"]
+    assert agents.UNATTRIBUTED not in payload["live"]
+
+
+def test_the_stream_never_holds_the_store_lock_while_it_sleeps(client, monkeypatch):
+    """The deterministic guard for the worst regression in this phase.
+
+    The timing test below is a smoke check only, and it cannot see this:
+    TestClient consumes a streaming body by PULLING, so between frames the
+    generator is parked on its yield and has not reached the sleep at all. A
+    concurrent request therefore never overlaps the sleep, and the assertion
+    passes even when the lock is held across it.
+
+    So the property is asserted where it lives instead. `Store._lock` is an
+    RLock, which the owning thread can re-acquire freely -- the check has to
+    come from a different thread or it proves nothing.
+    """
+    import threading
+
+    c, store, _ = client
+    free_during_sleep = []
+
+    def probing_sleep(_seconds):
+        got = []
+
+        def try_acquire():
+            acquired = store._lock.acquire(blocking=False)
+            got.append(acquired)
+            if acquired:
+                store._lock.release()  # RLock: released by its owning thread
+
+        thread = threading.Thread(target=try_acquire)
+        thread.start()
+        thread.join()
+        free_during_sleep.append(bool(got and got[0]))
+
+    monkeypatch.setattr("bridge.api.time.sleep", probing_sleep)
+    with c.stream("GET", "/events?max_ticks=3&interval=0") as r:
+        "".join(r.iter_text())
+
+    assert free_during_sleep, "the stream never slept, so nothing was proved"
+    assert all(free_during_sleep), (
+        "the store lock was held across the stream's sleep: every other route "
+        "would block while a tab is open"
+    )
+
+
+def test_an_open_stream_does_not_block_other_requests(client):
+    """The store is ONE connection behind ONE lock. A stream that holds it
+    across its sleep freezes the entire panel."""
+    import time as _time
+
+    c, _, _ = client
+    with c.stream("GET", "/events?max_ticks=3&interval=0.4") as response:
+        chunks = response.iter_text()
+        # Pull the first frame. Without this the generator is still parked on
+        # its opening yield and has not reached the sleep at all, so the
+        # assertion below passes even when the sleep holds the lock -- which is
+        # exactly how this test let that mutation survive.
+        next(chunks)
+        start = _time.monotonic()
+        assert c.get("/api/projects").status_code == 200
+        elapsed = _time.monotonic() - start
+    assert elapsed < 0.3, f"a request waited {elapsed:.2f}s behind the stream"
+
+
+def test_the_stream_never_writes(client):
+    """`/events` reads. It must not index, launch, or write."""
+    c, store, _ = client
+    before = store.latest_index_run()
+    with c.stream("GET", "/events?max_ticks=2&interval=0") as r:
+        "".join(r.iter_text())
+    after = store.latest_index_run()
+    assert (before is None) == (after is None)
+
+
+def test_live_js_never_touches_the_prompt_textarea():
+    """The handoff prompt is the only state Bridge cannot rebuild."""
+    source = (Path(__file__).resolve().parent.parent / "src" / "bridge"
+              / "static" / "live.js").read_text()
+    assert "data-prompt-handoff" not in source
+    assert ".innerHTML" not in source        # no subtree replacement
+    assert "location.reload" not in source
+    # No replay handling: `lastEventId` is the EventSource property a
+    # replay design would have to read, and every reconnect already opens
+    # with a full snapshot. Asserted on the API name, not on the prose --
+    # the header is named in a comment explaining why it is absent.
+    assert "lastEventId" not in source
+
+
+def test_live_js_handles_all_three_named_events():
+    source = (Path(__file__).resolve().parent.parent / "src" / "bridge"
+              / "static" / "live.js").read_text()
+    for name in ("snapshot", "delta", "refresh"):
+        assert f'"{name}"' in source
+    assert "removed" in source               # the tombstone is applied

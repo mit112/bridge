@@ -63,6 +63,17 @@ SESSION_ID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0
 
 TITLE_MAX = 60
 
+# The exact set `claude --permission-mode` accepts, measured against 2.1.220.
+# Unlike `model` and `effort` -- capability knobs passed through unvalidated
+# because the CLI is the authority -- this is a SAFETY control, so it is
+# validated against a closed set and fails closed. An unrecognised value must
+# never become a flag: the failure mode is a session running with permissions
+# nobody chose. A future CLI mode therefore needs adding here deliberately,
+# which is the intended cost.
+PERMISSION_MODES = frozenset(
+    {"acceptEdits", "auto", "bypassPermissions", "manual", "dontAsk", "plan"}
+)
+
 
 class LaunchError(Exception):
     """A launch that cannot be constructed safely, so it is not constructed."""
@@ -84,6 +95,10 @@ class LaunchSpec:
     effort: str | None = None
     title: str | None = None
     mode: str = "terminal"
+    # None or "" means emit no `--permission-mode` at all. Never sticky and
+    # never armed from a handoff: a persisted default would silently apply a
+    # dangerous mode to a launch nobody was watching.
+    permission_mode: str | None = None
 
 
 def new_session_id() -> str:
@@ -177,6 +192,26 @@ def default_title(summary: str | None, project_name: str) -> str:
     return sanitize_title(summary or "") or sanitize_title(project_name)
 
 
+def permission_flag(spec: LaunchSpec) -> bool:
+    """Whether to emit `--permission-mode`, validating the value first.
+
+    Returns False for None and "" -- the select's default option posts an empty
+    string, and `--permission-mode ''` is not the same as omitting the flag.
+    Raises rather than dropping an unrecognised value: silently ignoring it
+    would launch under whatever the CLI's own default is while the panel showed
+    something else.
+    """
+    mode = spec.permission_mode
+    if not mode:
+        return False
+    if mode not in PERMISSION_MODES:
+        raise LaunchError(
+            f"permission mode {mode!r} is not one of "
+            f"{', '.join(sorted(PERMISSION_MODES))}"
+        )
+    return True
+
+
 def build_shell_command(
     spec: LaunchSpec, prompt_path: str | Path, claude: str | None = None
 ) -> str:
@@ -207,6 +242,11 @@ def build_shell_command(
         argv += ["--model", sh_quote(spec.model)]
     if spec.effort:
         argv += ["--effort", sh_quote(spec.effort)]
+    # Unquoted, like `--session-id`, and for the same reason: it is validated
+    # against a closed set above, so the token emitted here is always one of six
+    # fixed literals and can never be assembled from caller text.
+    if permission_flag(spec):
+        argv += ["--permission-mode", spec.permission_mode]
     title = sanitize_title(spec.title or "")
     if title:
         argv += ["-n", sh_quote(title)]
@@ -246,6 +286,8 @@ def build_bg_argv(spec: LaunchSpec, claude: str | None = None) -> list[str]:
         argv += ["--model", spec.model]
     if spec.effort:
         argv += ["--effort", spec.effort]
+    if permission_flag(spec):
+        argv += ["--permission-mode", spec.permission_mode]
     title = sanitize_title(spec.title or "")
     if title:
         argv += ["-n", title]

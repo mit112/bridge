@@ -1,0 +1,104 @@
+[
+  {
+    "name": "drop the off-catalog prepend, so a suggestion the catalog lacks vanishes and the band silently offers a different model",
+    "file": "src/bridge/cards.py",
+    "old": "    if suggested and suggested not in [m.value for m in catalog]:\n        return [ModelChoice(suggested, suggested), *catalog]\n    return list(catalog)",
+    "new": "    return list(catalog)",
+    "tests": [
+      "tests/test_cards.py::test_an_off_catalog_suggestion_is_prepended_labelled_as_itself",
+      "tests/test_api.py::test_a_suggestion_the_config_does_not_list_is_still_preselected"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "return the caller's catalog by reference, so a card build can mutate the Config's list",
+    "file": "src/bridge/cards.py",
+    "old": "    return list(catalog)",
+    "new": "    return catalog",
+    "tests": [
+      "tests/test_cards.py::test_model_options_does_not_alias_the_caller_s_catalog"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "hand the raw config catalog to the card, bypassing model_options entirely",
+    "file": "src/bridge/cards.py",
+    "old": "                launch_models=model_options(\n                    cfg.models, (handoff or {}).get(\"suggested_model\")\n                ),",
+    "new": "                launch_models=list(cfg.models),",
+    "tests": [
+      "tests/test_api.py::test_a_suggestion_the_config_does_not_list_is_still_preselected"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "emit the label as the option value, so `--model \"Opus 4.8\"` reaches the CLI and the launch fails",
+    "file": "src/bridge/templates/_card.html",
+    "old": "        <option value=\"{{ m.value }}\"{% if m.value == sm or (not sm and loop.first) %} selected{% endif %}>{{ m.label }}</option>",
+    "new": "        <option value=\"{{ m.label }}\"{% if m.value == sm or (not sm and loop.first) %} selected{% endif %}>{{ m.label }}</option>",
+    "tests": [
+      "tests/test_api.py::test_both_launch_selects_are_labelled_and_preselect_the_suggestion",
+      "tests/test_api.py::test_with_no_suggestion_the_first_catalog_entry_is_selected"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "drop `loop.first`, so nothing is selected and the browser's implicit first-option choice becomes invisible",
+    "file": "src/bridge/templates/_card.html",
+    "old": "        <option value=\"{{ m.value }}\"{% if m.value == sm or (not sm and loop.first) %} selected{% endif %}>{{ m.label }}</option>",
+    "new": "        <option value=\"{{ m.value }}\"{% if m.value == sm %} selected{% endif %}>{{ m.label }}</option>",
+    "tests": [
+      "tests/test_api.py::test_with_no_suggestion_the_first_catalog_entry_is_selected"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "emit the value as the option text, so the selector stops naming versions and reads as raw ids",
+    "file": "src/bridge/templates/_card.html",
+    "old": "        <option value=\"{{ m.value }}\"{% if m.value == sm or (not sm and loop.first) %} selected{% endif %}>{{ m.label }}</option>",
+    "new": "        <option value=\"{{ m.value }}\"{% if m.value == sm or (not sm and loop.first) %} selected{% endif %}>{{ m.value }}</option>",
+    "tests": [
+      "tests/test_api.py::test_both_launch_selects_are_labelled_and_preselect_the_suggestion"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "default the catalog to a pinned version, freezing every ad-hoc launch on a model that ages out",
+    "file": "src/bridge/config.py",
+    "old": "    ModelChoice(\"opus\", \"opus — latest (Opus 5)\"),\n    ModelChoice(\"claude-opus-5\", \"Opus 5\"),",
+    "new": "    ModelChoice(\"claude-opus-5\", \"Opus 5\"),\n    ModelChoice(\"opus\", \"opus — latest (Opus 5)\"),",
+    "tests": [
+      "tests/test_config.py::test_the_catalog_default_is_an_alias_not_a_pin"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "relabel a pinned version so the selector no longer names it the way a human would",
+    "file": "src/bridge/config.py",
+    "old": "    ModelChoice(\"claude-opus-4-8\", \"Opus 4.8\"),",
+    "new": "    ModelChoice(\"claude-opus-4-8\", \"claude-opus-4-8\"),",
+    "tests": [
+      "tests/test_config.py::test_the_model_catalog_offers_pinned_versions_and_latest_aliases"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "drop the alias's version gloss, so \"opus\" no longer says what it currently means",
+    "file": "src/bridge/config.py",
+    "old": "    ModelChoice(\"opus\", \"opus — latest (Opus 5)\"),",
+    "new": "    ModelChoice(\"opus\", \"opus\"),",
+    "tests": [
+      "tests/test_config.py::test_the_model_catalog_offers_pinned_versions_and_latest_aliases"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "duplicate a catalog value, so one id renders twice under two different labels",
+    "file": "src/bridge/config.py",
+    "old": "    ModelChoice(\"claude-sonnet-5\", \"Sonnet 5\"),",
+    "new": "    ModelChoice(\"claude-sonnet-5\", \"Sonnet 5\"),\n    ModelChoice(\"claude-opus-5\", \"Opus 5 again\"),",
+    "tests": [
+      "tests/test_config.py::test_every_catalog_value_is_unique"
+    ],
+    "expect_count": 1
+  }
+]

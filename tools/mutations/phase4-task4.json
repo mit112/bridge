@@ -1,0 +1,104 @@
+[
+  {
+    "name": "delete the fallback branch, so a card whose git state is known still says \"git unavailable\"",
+    "file": "src/bridge/cards.py",
+    "old": "        elif git.status == \"unavailable\":",
+    "new": "        elif False:",
+    "tests": [
+      "tests/test_cards.py::test_a_timed_out_probe_shows_the_last_good_state_with_its_age"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "cache unconditionally, so the first timeout overwrites the good state and the fallback can never work again (the subtle one)",
+    "file": "src/bridge/cards.py",
+    "old": "        if git.status == \"ok\":\n            store.put_git_cache(row[\"id\"], git, now)",
+    "new": "        store.put_git_cache(row[\"id\"], git, now)\n        if False:\n            pass",
+    "tests": [
+      "tests/test_cards.py::test_an_unavailable_probe_never_overwrites_the_cache",
+      "tests/test_cards.py::test_not_a_repo_does_not_overwrite_a_good_cached_state"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "treat not_a_repo as transient too, so a deleted repo shows a fossil branch forever",
+    "file": "src/bridge/cards.py",
+    "old": "        elif git.status == \"unavailable\":",
+    "new": "        elif git.status in (\"unavailable\", \"not_a_repo\"):",
+    "tests": [
+      "tests/test_cards.py::test_not_a_repo_is_reported_not_papered_over"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "stamp cached_at on a live state, so a fresh probe renders as a fossil",
+    "file": "src/bridge/cards.py",
+    "old": "        if git.status == \"ok\":\n            store.put_git_cache(row[\"id\"], git, now)",
+    "new": "        if git.status == \"ok\":\n            store.put_git_cache(row[\"id\"], git, now)\n            git = replace(git, cached_at=now)",
+    "tests": [
+      "tests/test_cards.py::test_a_live_ok_state_is_never_labelled_as_cached"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "drop the cached_at stamp on a cache hit, so the age never renders and a fossil is indistinguishable from a live probe",
+    "file": "src/bridge/cards.py",
+    "old": "                git = replace(git, cached_at=probed_at)",
+    "new": "                pass",
+    "tests": [
+      "tests/test_cards.py::test_a_timed_out_probe_shows_the_last_good_state_with_its_age"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "construct GitState from the raw payload, so a schema change turns every cache hit into a TypeError and takes the dashboard down",
+    "file": "src/bridge/store.py",
+    "old": "        known = {f.name for f in dataclasses.fields(GitState)}\n        return (\n            GitState(**{k: v for k, v in payload.items() if k in known}),\n            row[\"probed_at\"],\n        )",
+    "new": "        return GitState(**payload), row[\"probed_at\"]",
+    "tests": [
+      "tests/test_cards.py::test_a_cache_payload_from_another_version_does_not_crash"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "return a default GitState instead of None when nothing was cached, so an unavailable probe claims a branch it never saw",
+    "file": "src/bridge/store.py",
+    "old": "        if row is None:\n            return None\n        try:\n            payload = json.loads(row[\"payload_json\"])",
+    "new": "        if row is None:\n            return GitState(status=\"ok\"), 0\n        try:\n            payload = json.loads(row[\"payload_json\"])",
+    "tests": [
+      "tests/test_cards.py::test_no_cache_and_an_unavailable_probe_stays_unavailable",
+      "tests/test_cards.py::test_get_git_cache_is_none_when_nothing_was_ever_written"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "persist only the branch, so the fallback renders a state that never existed",
+    "file": "src/bridge/store.py",
+    "old": "                (project_id, json.dumps(dataclasses.asdict(git)), probed_at),",
+    "new": "                (project_id, json.dumps({\"status\": git.status, \"branch\": git.branch}), probed_at),",
+    "tests": [
+      "tests/test_cards.py::test_the_cache_round_trips_every_field_of_git_state"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "drop the ON CONFLICT clause, so the cache never updates after its first write",
+    "file": "src/bridge/store.py",
+    "old": "                \"ON CONFLICT(project_id) DO UPDATE SET \"\n                \"payload_json=excluded.payload_json, probed_at=excluded.probed_at\",",
+    "new": "                \"ON CONFLICT(project_id) DO NOTHING\",",
+    "tests": [
+      "tests/test_cards.py::test_a_later_good_probe_replaces_the_cached_state"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "render the cached age with `ago` instead of `ago_epoch`, the filter that takes an ISO string",
+    "file": "src/bridge/templates/_card.html",
+    "old": "          \u00b7 as of {{ card.git.cached_at | ago_epoch }} ago",
+    "new": "          \u00b7 as of {{ card.git.cached_at | ago }} ago",
+    "tests": [
+      "tests/test_api.py::test_a_stale_git_probe_renders_the_last_good_state_and_its_age"
+    ],
+    "expect_count": 1
+  }
+]

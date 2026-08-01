@@ -2,8 +2,8 @@
   {
     "name": "drop the handoff term from the card sort key",
     "file": "src/bridge/cards.py",
-    "old": "    if card.handoff:\n        rank = RANK_HANDOFF\n    elif card.is_stale:",
-    "new": "    if card.is_stale:",
+    "old": "    if card.handoff:\n        rank = RANK_HANDOFF\n    elif card.live is not None:",
+    "new": "    if card.live is not None:",
     "tests": [
       "tests/test_cards.py::test_a_queued_handoff_sorts_above_a_dirty_and_stale_project"
     ]

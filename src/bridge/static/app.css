@@ -178,6 +178,24 @@ main { padding: 1.5rem; }
   border: 1px solid var(--field-line);
   border-radius: 5px;
 }
+/* The permission select reads as an ordinary control until it is actually
+   armed, and only then goes conspicuous. Styling it as dangerous at all times
+   would make the warning furniture, which is the failure mode the risk band was
+   already designed against -- so this reuses `--risk-*` rather than minting a
+   colour, and the pair is already held to AA by tests/test_contrast.py.
+   `:has()` keys off the selected option, so the affordance follows the value
+   rather than needing JS to toggle a class. Colour is never the only signal:
+   the option's own text says SKIP ALL CHECKS. */
+.launch__field--perm:has(.launch__option--danger:checked) .launch__select {
+  color: var(--risk-fg);
+  background: var(--risk-bg);
+  border-color: var(--risk-fg);
+  font-weight: 600;
+}
+.launch__field--perm:has(.launch__option--danger:checked) .launch__label {
+  color: var(--risk-fg);
+  font-weight: 600;
+}
 .launch__status { font-size: .8rem; color: var(--fg); }
 
 /* The launch history table shares the handoff table's shape: same page, same

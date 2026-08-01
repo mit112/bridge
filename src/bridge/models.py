@@ -1,4 +1,9 @@
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # `config` imports nothing from here, so this is cycle-free;
+    # it stays behind the guard only to keep `models` importable on its own.
+    from bridge.config import ModelChoice, PermissionChoice
 
 
 @dataclass
@@ -38,6 +43,56 @@ class GitState:
     last_commit_summary: str | None = None
     last_commit_at: int | None = None
     oldest_uncommitted_at: int | None = None
+    # Set ONLY on a cache hit; None means this state came from a live probe.
+    # It is the discriminator the template keys off to render "as of … ago".
+    cached_at: int | None = None
+
+
+@dataclass(frozen=True)
+class LiveSession:
+    """One session the liveness sensor can see, right now.
+
+    `status` is a plain `str` and is NEVER validated against a closed set. The
+    two record shapes disagree about what it is called and what it contains --
+    interactive sessions carry `status` (idle|busy), background ones carry
+    `state` (working|blocked|done|failed) -- and a future value must render as
+    itself rather than be coerced into a wrong one. `raw` keeps the payload the
+    projection came from, so an unrecognised shape is still inspectable.
+    """
+
+    session_id: str
+    cwd: str
+    kind: str                 # interactive | background
+    status: str               # see above: open vocabulary, never a closed set
+    name: str | None = None
+    started_at: int = 0       # epoch SECONDS, converted at the boundary
+    pid: int | None = None
+    version: str | None = None
+    entrypoint: str | None = None
+    # Epoch SECONDS. The staleness input the hysteresis in `cards` needs; the
+    # subprocess view does not carry it, which is one reason the registry is
+    # the primary sensor.
+    status_updated_at: int | None = None
+    updated_at: int | None = None
+    raw: dict = field(default_factory=dict, compare=False, repr=False)
+
+
+@dataclass(frozen=True)
+class AgentsState:
+    """status is the discriminator: ok | unavailable.
+
+    `unavailable` and "nothing is running" must never be the same value: an
+    empty list would render "no live sessions", asserting something the sensor
+    did not learn.
+    """
+
+    status: str
+    sessions: list[LiveSession] = field(default_factory=list)
+    # Which sensor answered, and what `claude` version it reported. Task 7's
+    # diagnostics reads both: when the schema next drifts, this is the
+    # difference between a diagnosis and a bisect.
+    source: str = "registry"
+    version: str | None = None
 
 
 @dataclass
@@ -97,6 +152,11 @@ class Card:
     tokens_5h: int
     spark: list[int] = field(default_factory=list)
     is_stale: bool = False
+    # The live session on this project, most recently started first if several.
+    live: LiveSession | None = None
+    # The sensor failed, as distinct from `live is None` meaning nothing is
+    # running. Collapsing the two asserts quiescence from a broken read.
+    live_unavailable: bool = False
     # The queued handoff, as a plain dict. A card carries at most one: the store
     # supersedes the rest, so "what next" is never ambiguous.
     handoff: dict | None = None
@@ -104,5 +164,6 @@ class Card:
     # live on the card because the launch band renders per card and the template
     # only ever sees the card, so this is what keeps the configured vocabulary
     # out of the template as a literal.
-    launch_models: list[str] = field(default_factory=list)
+    launch_models: list["ModelChoice"] = field(default_factory=list)
     launch_efforts: list[str] = field(default_factory=list)
+    launch_permission_modes: list["PermissionChoice"] = field(default_factory=list)

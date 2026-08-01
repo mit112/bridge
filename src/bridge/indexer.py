@@ -5,6 +5,8 @@ shrank was rewritten and is re-scanned from offset zero. One bad file never
 aborts a run.
 """
 
+import dataclasses
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -12,7 +14,7 @@ from typing import Callable
 from bridge.config import Config
 from bridge.models import SessionRecord
 from bridge.registry import display_name, transcript_files
-from bridge.store import Store
+from bridge.store import Store, now_epoch
 from bridge.transcripts import scan
 
 
@@ -29,6 +31,7 @@ class IndexStats:
 def reindex(
     store: Store, cfg: Config, progress: Callable[[int, int], None] | None = None
 ) -> IndexStats:
+    started = time.monotonic()
     stats = IndexStats()
     files = transcript_files(cfg.claude_projects_dir)
     total = len(files)
@@ -57,6 +60,19 @@ def reindex(
 
     # Last, because it can only match sessions this run has already written.
     stats.launches_linked = _link_background_launches(store)
+
+    # Diagnostics is a reader of indexing, never a risk to it: a failure here
+    # must not lose a scan that already succeeded. Indexing is the one thing
+    # that must always work.
+    try:
+        store.record_index_run(
+            dataclasses.asdict(stats),
+            ran_at=now_epoch(),
+            duration_ms=int((time.monotonic() - started) * 1000),
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
     return stats
 
 

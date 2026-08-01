@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from bridge.config import Config, load
+from bridge.config import Config, ModelChoice, load
 
 
 def test_load_returns_defaults():
@@ -52,3 +52,44 @@ def test_vanditzeel_is_archived_because_it_has_no_alias_target():
     assert load().archived_paths == (
         f"{Path.home()}/Documents/Vandit & Zeel/VANDITZEEL",
     )
+
+
+# --- Phase 4 Task 1: the model catalog ---------------------------------------
+
+
+def test_the_model_catalog_offers_pinned_versions_and_latest_aliases():
+    """`value` reaches the wire, so it is what the assertions pin.
+
+    An alias alone cannot express "pin me to 4.8": it floats to whatever is
+    newest, which is the right default and the wrong record.
+    """
+    cfg = load()
+    values = [m.value for m in cfg.models]
+    assert "opus" in values           # latest-tracking alias
+    assert "claude-opus-5" in values  # pinned
+    assert "claude-opus-4-8" in values
+    labels = {m.value: m.label for m in cfg.models}
+    assert labels["claude-opus-4-8"] == "Opus 4.8"
+    assert "Opus 5" in labels["opus"]  # the alias says what it currently means
+
+
+def test_every_catalog_value_is_unique():
+    values = [m.value for m in load().models]
+    assert len(values) == len(set(values))
+
+
+def test_the_catalog_default_is_an_alias_not_a_pin():
+    """The first entry is what an unsuggested launch selects.
+
+    Defaulting to a pinned version would quietly freeze every ad-hoc launch on
+    a model that ages out, which is the opposite of what the alias is for.
+    """
+    assert load().models[0].value == "opus"
+
+
+def test_a_model_choice_is_immutable():
+    try:
+        ModelChoice("opus", "Opus").value = "sonnet"
+    except Exception:
+        return
+    raise AssertionError("ModelChoice must be frozen")

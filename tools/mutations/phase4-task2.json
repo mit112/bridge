@@ -1,0 +1,147 @@
+[
+  {
+    "name": "default the permission mode to bypassPermissions, so every launch is silently bypassed (the highest-value mutation in the phase)",
+    "file": "src/bridge/launcher.py",
+    "old": "    permission_mode: str | None = None",
+    "new": "    permission_mode: str | None = \"bypassPermissions\"",
+    "tests": [
+      "tests/test_launcher.py::test_terminal_mode_omits_the_permission_flag_by_default",
+      "tests/test_launcher.py::test_background_mode_omits_the_permission_flag_by_default"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "treat an empty permission mode as a real one, so `--permission-mode ''` reaches the CLI",
+    "file": "src/bridge/launcher.py",
+    "old": "    mode = spec.permission_mode\n    if not mode:\n        return False",
+    "new": "    mode = spec.permission_mode\n    if mode is None:\n        return False",
+    "tests": [
+      "tests/test_launcher.py::test_an_empty_permission_mode_is_the_same_as_none"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "forward an unrecognised permission mode instead of refusing it, so a typo launches under the CLI's default while the panel shows something else",
+    "file": "src/bridge/launcher.py",
+    "old": "    if mode not in PERMISSION_MODES:\n        raise LaunchError(\n            f\"permission mode {mode!r} is not one of \"\n            f\"{', '.join(sorted(PERMISSION_MODES))}\"\n        )\n    return True",
+    "new": "    return True",
+    "tests": [
+      "tests/test_launcher.py::test_an_unrecognised_permission_mode_is_refused_not_forwarded",
+      "tests/test_launcher.py::test_the_emitted_mode_is_a_member_of_a_closed_set_not_caller_text"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "admit `default` to the closed set, the value that belongs to settings.json rather than to this flag",
+    "file": "src/bridge/launcher.py",
+    "old": "PERMISSION_MODES = frozenset(\n    {\"acceptEdits\", \"auto\", \"bypassPermissions\", \"manual\", \"dontAsk\", \"plan\"}\n)",
+    "new": "PERMISSION_MODES = frozenset(\n    {\"acceptEdits\", \"auto\", \"bypassPermissions\", \"manual\", \"dontAsk\", \"plan\",\n     \"default\"}\n)",
+    "tests": [
+      "tests/test_launcher.py::test_the_emitted_mode_is_a_member_of_a_closed_set_not_caller_text"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "substitute the allow- variant in terminal mode, producing a launch that looks bypassed and is not",
+    "file": "src/bridge/launcher.py",
+    "old": "    if permission_flag(spec):\n        argv += [\"--permission-mode\", spec.permission_mode]\n    title = sanitize_title(spec.title or \"\")\n    if title:\n        argv += [\"-n\", sh_quote(title)]",
+    "new": "    if permission_flag(spec):\n        argv += [\"--allow-dangerously-skip-permissions\"]\n    title = sanitize_title(spec.title or \"\")\n    if title:\n        argv += [\"-n\", sh_quote(title)]",
+    "tests": [
+      "tests/test_launcher.py::test_the_bypass_mode_is_never_the_allow_variant",
+      "tests/test_launcher.py::test_every_mode_the_cli_accepts_is_emitted_verbatim"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "append the permission flag AFTER the prompt in background mode, so `claude` reads it as part of the prompt",
+    "file": "src/bridge/launcher.py",
+    "old": "    if permission_flag(spec):\n        argv += [\"--permission-mode\", spec.permission_mode]\n    title = sanitize_title(spec.title or \"\")\n    if title:\n        argv += [\"-n\", title]\n    argv.append(spec.prompt)  # exactly one element, verbatim",
+    "new": "    title = sanitize_title(spec.title or \"\")\n    if title:\n        argv += [\"-n\", title]\n    argv.append(spec.prompt)  # exactly one element, verbatim\n    if permission_flag(spec):\n        argv += [\"--permission-mode\", spec.permission_mode]",
+    "tests": [
+      "tests/test_launcher.py::test_background_mode_passes_the_mode_as_its_own_argv_element"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "drop the API validator, so an unknown mode reaches the launcher instead of being refused at the edge",
+    "file": "src/bridge/api.py",
+    "old": "        if value and value not in launcher.PERMISSION_MODES:\n            raise ValueError(\n                f\"permission_mode must be one of \"\n                f\"{sorted(launcher.PERMISSION_MODES)}\"\n            )\n        return value",
+    "new": "        return value",
+    "tests": [
+      "tests/test_api.py::test_an_unknown_permission_mode_is_refused_before_anything_is_launched"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "never pass the requested mode into the LaunchSpec, so the whole control is decorative",
+    "file": "src/bridge/api.py",
+    "old": "            permission_mode=body.permission_mode,",
+    "new": "            permission_mode=None,",
+    "tests": [
+      "tests/test_api.py::test_the_requested_permission_mode_reaches_the_spec_verbatim"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "pre-select the dangerous option in the template, arming a bypass on every card",
+    "file": "src/bridge/templates/_card.html",
+    "old": "        <option value=\"{{ p.value }}\"{% if p.danger %} class=\"launch__option--danger\"{% endif %}{% if loop.first %} selected{% endif %}>{{ p.label }}</option>",
+    "new": "        <option value=\"{{ p.value }}\"{% if p.danger %} class=\"launch__option--danger\"{% endif %}{% if p.danger %} selected{% endif %}>{{ p.label }}</option>",
+    "tests": [
+      "tests/test_api.py::test_no_handoff_field_can_arm_a_permission_mode",
+      "tests/test_api.py::test_both_launch_selects_are_labelled_and_preselect_the_suggestion"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "drop permission_mode from the launch.js request body, so the select looks armed and launches unarmed",
+    "file": "src/bridge/static/launch.js",
+    "old": "    permission_mode: perm ? perm.value : null,",
+    "new": "",
+    "tests": [
+      "tests/test_static_js.py::test_launch_js_sends_the_selected_permission_mode",
+      "tests/test_static_js.py::test_launch_js_sends_the_empty_default_rather_than_omitting_it"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "hardcode the bypass into the launch.js body, ignoring the select entirely",
+    "file": "src/bridge/static/launch.js",
+    "old": "    permission_mode: perm ? perm.value : null,",
+    "new": "    permission_mode: \"bypassPermissions\",",
+    "tests": [
+      "tests/test_static_js.py::test_launch_js_sends_the_empty_default_rather_than_omitting_it"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "make the CLI alias resolve to nothing, so --dangerously-skip-permissions is silently a no-op",
+    "file": "src/bridge/cli.py",
+    "old": "        permission_mode = \"bypassPermissions\"",
+    "new": "        pass",
+    "tests": [
+      "tests/test_cli.py::test_the_dangerous_alias_resolves_to_the_one_mode_it_means"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "let the CLI silently resolve a contradiction instead of refusing it",
+    "file": "src/bridge/cli.py",
+    "old": "        if permission_mode and permission_mode != \"bypassPermissions\":\n            print(\n                \"bridge launch: --dangerously-skip-permissions contradicts \"\n                f\"--permission-mode {permission_mode}; pick one\",\n                file=sys.stderr,\n            )\n            return 2",
+    "new": "        pass",
+    "tests": [
+      "tests/test_cli.py::test_asking_for_two_contradictory_permission_modes_launches_nothing"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "widen the CLI's choices to include `default`, letting a value the binary rejects reach the server",
+    "file": "src/bridge/cli.py",
+    "old": "    la.add_argument(\"--permission-mode\",\n                    choices=(\"acceptEdits\", \"auto\", \"bypassPermissions\",\n                             \"manual\", \"dontAsk\", \"plan\"))",
+    "new": "    la.add_argument(\"--permission-mode\")",
+    "tests": [
+      "tests/test_cli.py::test_the_cli_refuses_a_mode_the_binary_does_not_accept"
+    ],
+    "expect_count": 1
+  }
+]

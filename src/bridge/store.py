@@ -6,12 +6,14 @@ display, once as an epoch int so range queries stay index-friendly.
 """
 
 import contextlib
+import dataclasses
+import json
 import sqlite3
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
-from bridge.models import Handoff, Launch, SessionRecord
+from bridge.models import GitState, Handoff, Launch, SessionRecord
 
 SCHEMA = [
     """
@@ -109,6 +111,18 @@ SCHEMA = [
     "CREATE INDEX IF NOT EXISTS idx_launches_project "
     "ON launches(project_id, launched_at)",
     "CREATE INDEX IF NOT EXISTS idx_launches_session ON launches(session_id)",
+    """
+    CREATE TABLE IF NOT EXISTS index_runs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ran_at INTEGER NOT NULL,
+        files_seen INTEGER,
+        files_scanned INTEGER,
+        lines_parsed INTEGER,
+        parse_errors INTEGER,
+        sessions_upserted INTEGER,
+        duration_ms INTEGER
+    )
+    """,
     """
     CREATE TABLE IF NOT EXISTS git_cache (
         project_id INTEGER PRIMARY KEY REFERENCES projects(id),
@@ -400,6 +414,15 @@ class Store:
                 "SELECT COUNT(*) AS n FROM handoffs"
             ).fetchone()["n"]
 
+    def queued_handoff_count(self) -> int:
+        """Only the ones still waiting. `handoff_count` counts history too, and
+        diagnostics reporting every handoff ever written as a backlog would be
+        the same mistake as counting drained spool files as depth."""
+        with self._lock:
+            return self.conn.execute(
+                "SELECT COUNT(*) AS n FROM handoffs WHERE status='queued'"
+            ).fetchone()["n"]
+
     # --- launches: what Bridge spawned. The row is written before the spawn, so
     # --- a failed launch is still a fact the panel can show.
 
@@ -468,6 +491,107 @@ class Store:
                 "parsed_offset=excluded.parsed_offset, session_id=excluded.session_id",
                 (path, size, mtime, offset, session_id),
             )
+
+    # --- index_runs ---------------------------------------------------------
+    #
+    # `record_index_run` takes the stats dict the indexer already returns, so
+    # the indexer's return shape stays the contract and nothing new is invented
+    # for diagnostics to read.
+
+    _RUN_FIELDS = ("files_seen", "files_scanned", "lines_parsed",
+                   "parse_errors", "sessions_upserted")
+
+    def record_index_run(self, stats: dict, ran_at: int, duration_ms: int) -> None:
+        with self._lock:
+            self.conn.execute(
+                "INSERT INTO index_runs (ran_at, files_seen, files_scanned, "
+                "lines_parsed, parse_errors, sessions_upserted, duration_ms) "
+                "VALUES (?,?,?,?,?,?,?)",
+                (ran_at, *(int(stats.get(f) or 0) for f in self._RUN_FIELDS),
+                 duration_ms),
+            )
+
+    def latest_index_run(self):
+        with self._lock:
+            return self.conn.execute(
+                "SELECT * FROM index_runs ORDER BY ran_at DESC, id DESC LIMIT 1"
+            ).fetchone()
+
+    # --- git_cache ----------------------------------------------------------
+    #
+    # The table has existed since Phase 1 and nothing ever read or wrote it.
+    # Only `status == "ok"` is written and only `status == "unavailable"` reads
+    # it back: `unavailable` is the one genuinely transient outcome (timeout,
+    # disk asleep), while `not_a_repo` is stable truth and must be allowed to
+    # say so rather than showing a fossil.
+
+    def put_git_cache(self, project_id: int, git: GitState, probed_at: int) -> None:
+        with self._lock:
+            self.conn.execute(
+                "INSERT INTO git_cache (project_id, payload_json, probed_at) "
+                "VALUES (?, ?, ?) "
+                "ON CONFLICT(project_id) DO UPDATE SET "
+                "payload_json=excluded.payload_json, probed_at=excluded.probed_at",
+                (project_id, json.dumps(dataclasses.asdict(git)), probed_at),
+            )
+
+    def get_git_cache(self, project_id: int) -> tuple[GitState, int] | None:
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT payload_json, probed_at FROM git_cache WHERE project_id=?",
+                (project_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        try:
+            payload = json.loads(row["payload_json"])
+        except (TypeError, ValueError):
+            return None
+        if not isinstance(payload, dict):
+            return None
+        # Filtered to fields `GitState` actually has. The cache is a JSON blob
+        # that outlives any one version of the dataclass, so a field added or
+        # removed between writes must degrade rather than raise -- a bare
+        # `GitState(**payload)` would turn every cache hit into a TypeError and
+        # take the whole dashboard down.
+        known = {f.name for f in dataclasses.fields(GitState)}
+        return (
+            GitState(**{k: v for k, v in payload.items() if k in known}),
+            row["probed_at"],
+        )
+
+    def token_series(self, project_id: int, days: int, now: int) -> list[int]:
+        """Daily token totals, oldest first, exactly `days` long.
+
+        Gaps are filled with zeros: a sparkline whose x-axis skips idle days
+        compresses time and misrepresents the shape.
+
+        Sums `tokens_in + tokens_out` and NOT the cache columns, matching
+        `token_totals` exactly. The sparkline renders inches from that method's
+        "23k today", so a broader definition here would draw a line whose
+        magnitude visibly disagrees with the number beside it. If the definition
+        of burn ever changes, both must change together.
+        """
+        start = now - days * 86400
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT (ended_epoch - ?) / 86400 AS bucket, "
+                "COALESCE(SUM(tokens_in + tokens_out),0) AS total "
+                "FROM sessions WHERE project_id=? AND ended_epoch >= ? "
+                "GROUP BY bucket",
+                (start, project_id, start),
+            ).fetchall()
+        series = [0] * days
+        for row in rows:
+            # The WHERE clause is the only thing keeping `bucket` non-negative,
+            # and a negative index would silently write from the END of the
+            # list rather than raise. The upper bound is still checked here
+            # because `now` can sit mid-day, putting today's rows in bucket
+            # `days` exactly.
+            bucket = int(row["bucket"])
+            if bucket < days:
+                series[bucket] = int(row["total"] or 0)
+        return series
 
     def token_totals(self, project_id: int, since_epoch: int) -> int:
         with self._lock:

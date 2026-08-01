@@ -1,0 +1,166 @@
+[
+  {
+    "name": "rank a running session above a queued handoff, burying the card that is actually waiting on you and inverting the panel's whole purpose",
+    "file": "src/bridge/cards.py",
+    "old": "RANK_HANDOFF = -1\nRANK_RUNNING = 0",
+    "new": "RANK_HANDOFF = 0\nRANK_RUNNING = -1",
+    "tests": [
+      "tests/test_cards.py::test_a_running_project_sorts_above_stale_but_below_a_queued_handoff",
+      "tests/test_cards.py::test_the_rank_ladder_keeps_handoff_above_running_above_the_rest"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "drop the running branch from sort_key, so a live project sinks back among the idle ones",
+    "file": "src/bridge/cards.py",
+    "old": "    elif card.live is not None:\n        rank = RANK_RUNNING",
+    "new": "    elif False:\n        rank = RANK_RUNNING",
+    "tests": [
+      "tests/test_cards.py::test_a_running_project_sorts_above_stale_but_below_a_queued_handoff"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "remove every card when the sensor fails, emptying the dashboard whenever the registry is unreadable",
+    "file": "src/bridge/cards.py",
+    "old": "    live_unavailable = live_state.status == \"unavailable\"",
+    "new": "    live_unavailable = False",
+    "tests": [
+      "tests/test_cards.py::test_a_failed_liveness_probe_leaves_cards_intact_and_says_unavailable",
+      "tests/test_cards.py::test_a_raising_liveness_probe_cannot_take_down_the_dashboard"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "let a raising sensor propagate, so one broken probe takes down the whole dashboard",
+    "file": "src/bridge/cards.py",
+    "old": "    except Exception:  # noqa: BLE001\n        live_state = AgentsState(status=\"unavailable\", sessions=[], source=\"none\")",
+    "new": "    except Exception:  # noqa: BLE001\n        raise",
+    "tests": [
+      "tests/test_cards.py::test_a_raising_liveness_probe_cannot_take_down_the_dashboard"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "probe liveness inside the card loop, turning one read per page into N",
+    "file": "src/bridge/cards.py",
+    "old": "    try:\n        live_state = agents_fn()\n    except Exception:  # noqa: BLE001\n        live_state = AgentsState(status=\"unavailable\", sessions=[], source=\"none\")",
+    "new": "    try:\n        live_state = agents_fn()\n        for _ in store.projects():\n            live_state = agents_fn()\n    except Exception:  # noqa: BLE001\n        live_state = AgentsState(status=\"unavailable\", sessions=[], source=\"none\")",
+    "tests": [
+      "tests/test_cards.py::test_the_liveness_probe_runs_once_for_the_whole_dashboard"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "collapse live_unavailable into `live is None`, asserting \"nothing running\" from a failed read",
+    "file": "src/bridge/cards.py",
+    "old": "                live_unavailable=live_unavailable,",
+    "new": "                live_unavailable=False,",
+    "tests": [
+      "tests/test_cards.py::test_a_failed_liveness_probe_leaves_cards_intact_and_says_unavailable"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "hold the busy->idle transition forever, so a finished session never stops claiming to run",
+    "file": "src/bridge/cards.py",
+    "old": "            if now - quiet_since < self._hold:",
+    "new": "            if True:",
+    "tests": [
+      "tests/test_cards.py::test_busy_to_idle_is_held_for_about_a_second_and_a_half"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "drop the hysteresis entirely, so one quiet sample flips the card and it flickers",
+    "file": "src/bridge/cards.py",
+    "old": "        if reported == \"idle\" and shown == \"busy\":",
+    "new": "        if False:",
+    "tests": [
+      "tests/test_cards.py::test_busy_to_idle_is_held_for_about_a_second_and_a_half"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "return the idle session from inside the hold, emitting the very value the branch exists to withhold",
+    "file": "src/bridge/cards.py",
+    "old": "                self._shown[sid] = \"busy\"\n                return replace(session, status=\"busy\")",
+    "new": "                self._shown[sid] = \"busy\"\n                return session",
+    "tests": [
+      "tests/test_cards.py::test_busy_to_idle_is_held_for_about_a_second_and_a_half"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "damp becoming busy as well, delaying every sign of work by the hold",
+    "file": "src/bridge/cards.py",
+    "old": "        if reported == \"idle\" and shown == \"busy\":",
+    "new": "        if shown is not None and reported != shown:",
+    "tests": [
+      "tests/test_cards.py::test_becoming_busy_is_adopted_instantly",
+      "tests/test_cards.py::test_a_non_idle_status_is_never_damped"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "never clear the quiet timer, so a flap back to busy leaves a stale hold that expires immediately",
+    "file": "src/bridge/cards.py",
+    "old": "        self._quiet_since.pop(sid, None)\n        self._shown[sid] = reported",
+    "new": "        self._shown[sid] = reported",
+    "tests": [
+      "tests/test_cards.py::test_a_flap_back_to_busy_resets_the_hold"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "leak debouncer state for every session ever seen",
+    "file": "src/bridge/cards.py",
+    "old": "        for gone in set(self._shown) - live_ids:\n            self._shown.pop(gone, None)\n            self._quiet_since.pop(gone, None)",
+    "new": "        pass",
+    "tests": [
+      "tests/test_cards.py::test_the_debouncer_forgets_sessions_that_are_gone"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "rank unknown above idle, breaking muxara's deliberate collision so equal rows reshuffle on every poll",
+    "file": "src/bridge/cards.py",
+    "old": "LIVE_PRIORITY_DEFAULT = 3   # unknown ranks WITH idle, not above it",
+    "new": "LIVE_PRIORITY_DEFAULT = 2",
+    "tests": [
+      "tests/test_cards.py::test_unknown_ranks_with_idle_not_above_it"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "put a blocked agent below a working one, so the session waiting on you sorts last",
+    "file": "src/bridge/cards.py",
+    "old": "    \"needs_input\": 0,\n    \"blocked\": 0,   # a background agent waiting on something is the same call",
+    "new": "    \"needs_input\": 0,\n    \"blocked\": 3,",
+    "tests": [
+      "tests/test_cards.py::test_the_attention_ladder_puts_blocked_above_working_above_idle"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "pass only the project's own path as registered, so a session in a subdirectory never lands on its card",
+    "file": "src/bridge/cards.py",
+    "old": "    live_by_path = agents.by_project(\n        live_state, store.alias_map(), [row[\"path\"] for row in project_rows]\n    )",
+    "new": "    live_by_path = agents.by_project(live_state, store.alias_map(), [])",
+    "tests": [
+      "tests/test_cards.py::test_a_busy_session_lands_on_its_project_card",
+      "tests/test_cards.py::test_a_session_in_a_subdirectory_still_lands_on_the_project_card"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "put the unattributed bucket on a card, so a session in no registered project appears on an unrelated project",
+    "file": "src/bridge/cards.py",
+    "old": "                live=(live_by_path.get(row[\"path\"]) or [None])[0],",
+    "new": "                live=(list(live_by_path.values()) or [[None]])[0][0],",
+    "tests": [
+      "tests/test_cards.py::test_a_session_in_no_registered_project_does_not_appear_on_a_card"
+    ],
+    "expect_count": 1
+  }
+]

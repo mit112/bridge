@@ -53,8 +53,8 @@
   {
     "name": "drop the selected attribute, so the suggestion is not preselected",
     "file": "src/bridge/templates/_card.html",
-    "old": "        <option value=\"{{ m }}\"{% if m == sm or (not sm and loop.first) %} selected{% endif %}>{{ m }}</option>",
-    "new": "        <option value=\"{{ m }}\">{{ m }}</option>",
+    "old": "        <option value=\"{{ m.value }}\"{% if m.value == sm or (not sm and loop.first) %} selected{% endif %}>{{ m.label }}</option>",
+    "new": "        <option value=\"{{ m.value }}\">{{ m.label }}</option>",
     "tests": [
       "tests/test_api.py::test_both_launch_selects_are_labelled_and_preselect_the_suggestion",
       "tests/test_api.py::test_a_suggestion_the_config_does_not_list_is_still_preselected"
@@ -64,7 +64,7 @@
   {
     "name": "stop passing the configured option lists onto the card",
     "file": "src/bridge/cards.py",
-    "old": "                launch_models=list(cfg.models),",
+    "old": "                launch_models=model_options(\n                    cfg.models, (handoff or {}).get(\"suggested_model\")\n                ),",
     "new": "                launch_models=[],",
     "tests": [
       "tests/test_cards.py::test_a_card_carries_the_configured_launch_options"

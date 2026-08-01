@@ -372,3 +372,69 @@ def test_the_cli_never_loads_a_database_module():
     assert proc.stdout.strip() == "False False False", (
         f"the CLI loaded a database or launcher module: {proc.stdout.strip()}"
     )
+
+
+# --- Phase 4 Task 2: permission modes ----------------------------------------
+
+
+def test_launch_posts_no_permission_mode_by_default(monkeypatch, tmp_path,
+                                                    fake_server):
+    """The default must be absent, not a benign-looking value."""
+    fake_server["code"] = 200
+    fake_server["post_body"] = started()
+    code, _ = run_launch(monkeypatch, tmp_path, fake_server["port"], argv=[
+        "launch", "--project", DEMO,
+    ])
+    assert code == 0
+    assert fake_server["posts"][0]["permission_mode"] is None
+
+
+def test_launch_posts_the_requested_permission_mode(monkeypatch, tmp_path,
+                                                    fake_server):
+    fake_server["code"] = 200
+    fake_server["post_body"] = started()
+    code, _ = run_launch(monkeypatch, tmp_path, fake_server["port"], argv=[
+        "launch", "--project", DEMO, "--permission-mode", "plan",
+    ])
+    assert code == 0
+    assert fake_server["posts"][0]["permission_mode"] == "plan"
+
+
+def test_the_dangerous_alias_resolves_to_the_one_mode_it_means(monkeypatch,
+                                                               tmp_path,
+                                                               fake_server):
+    """Spelled the way `claude` spells it so muscle memory transfers, but the
+    wire carries the enum value -- there is no second code path for it."""
+    fake_server["code"] = 200
+    fake_server["post_body"] = started()
+    code, _ = run_launch(monkeypatch, tmp_path, fake_server["port"], argv=[
+        "launch", "--project", DEMO, "--dangerously-skip-permissions",
+    ])
+    assert code == 0
+    assert fake_server["posts"][0]["permission_mode"] == "bypassPermissions"
+
+
+def test_asking_for_two_contradictory_permission_modes_launches_nothing(
+        monkeypatch, tmp_path, fake_server):
+    """Silently picking a winner would run a session under a mode the user did
+    not unambiguously ask for. Refuse instead, before anything is posted."""
+    fake_server["code"] = 200
+    fake_server["post_body"] = started()
+    code, _ = run_launch(monkeypatch, tmp_path, fake_server["port"], argv=[
+        "launch", "--project", DEMO, "--permission-mode", "plan",
+        "--dangerously-skip-permissions",
+    ])
+    assert code == 2
+    assert fake_server["posts"] == [], "a contradictory launch still posted"
+
+
+def test_the_cli_refuses_a_mode_the_binary_does_not_accept(monkeypatch, tmp_path,
+                                                           fake_server):
+    """argparse rejects it locally, so `default` -- which belongs to
+    settings.json's `permissions.defaultMode`, not to this flag -- cannot reach
+    the server and fail the spawn."""
+    code, _ = run_launch(monkeypatch, tmp_path, fake_server["port"], argv=[
+        "launch", "--project", DEMO, "--permission-mode", "default",
+    ])
+    assert code != 0
+    assert fake_server["posts"] == []
