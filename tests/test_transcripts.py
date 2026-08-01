@@ -215,3 +215,95 @@ def test_incremental_totals_match_full_scan(write_transcript):
     assert full.record.tokens_in == 11
     assert full.record.tokens_out == 22
     assert incremental.lines_parsed == 3
+
+
+# --- One API response, several JSONL entries -------------------------------
+#
+# Claude writes one API response as several assistant entries (thinking, text,
+# tool_use), each repeating that response's `usage` snapshot verbatim. Summing
+# them inflates every token total. Measured across 60 real transcripts before
+# this was written: 1052 multi-entry requestIds, every one contiguous, every one
+# carrying byte-identical usage, and naive summation ran 199% high.
+
+SID = "22222222-2222-2222-2222-222222222222"
+
+
+def _assistant(*, req=None, tin=0, tout=0, sidechain=False, ts="2026-07-30T10:00:01.000Z"):
+    kw = dict(
+        type="assistant", sessionId=SID, isSidechain=sidechain, timestamp=ts,
+        cwd="/Users/mitsheth/dev/demo",
+        message={"role": "assistant", "model": "claude-opus-5",
+                 "usage": {"input_tokens": tin, "output_tokens": tout}},
+    )
+    if req is not None:
+        kw["requestId"] = req
+    return jline(**kw)
+
+
+def test_one_response_split_across_entries_counts_its_usage_once(write_transcript):
+    """The thinking/text/tool_use entries of one response repeat one usage."""
+    p = write_transcript("s.jsonl", [
+        _assistant(req="req_A", tin=100, tout=50),
+        _assistant(req="req_A", tin=100, tout=50),
+        _assistant(req="req_A", tin=100, tout=50),
+    ])
+    rec = scan(p).record
+    assert (rec.tokens_in, rec.tokens_out) == (100, 50)
+
+
+def test_distinct_request_ids_are_each_counted(write_transcript):
+    """Dedup must not collapse genuinely separate API responses."""
+    p = write_transcript("s.jsonl", [
+        _assistant(req="req_A", tin=100, tout=50),
+        _assistant(req="req_B", tin=7, tout=3),
+    ])
+    rec = scan(p).record
+    assert (rec.tokens_in, rec.tokens_out) == (107, 53)
+
+
+def test_entries_with_no_request_id_are_each_counted(write_transcript):
+    """Older transcripts have no requestId; those must still sum individually."""
+    p = write_transcript("s.jsonl", [
+        _assistant(tin=10, tout=5),
+        _assistant(tin=10, tout=5),
+    ])
+    rec = scan(p).record
+    assert (rec.tokens_in, rec.tokens_out) == (20, 10)
+
+
+def test_an_entry_without_usage_does_not_claim_the_request_id(write_transcript):
+    """Otherwise the no-usage entry consumes the id and the real usage is dropped."""
+    no_usage = jline(type="assistant", sessionId=SID, isSidechain=False,
+                     requestId="req_A", timestamp="2026-07-30T10:00:01.000Z",
+                     message={"role": "assistant", "model": "claude-opus-5"})
+    p = write_transcript("s.jsonl", [no_usage, _assistant(req="req_A", tin=100, tout=50)])
+    rec = scan(p).record
+    assert (rec.tokens_in, rec.tokens_out) == (100, 50)
+
+
+def test_sidechain_usage_is_deduped_too(write_transcript):
+    """Sidechain tokens are the same defect in the same function."""
+    p = write_transcript("s.jsonl", [
+        _assistant(req="req_S", tin=10, tout=5, sidechain=True),
+        _assistant(req="req_S", tin=10, tout=5, sidechain=True),
+    ])
+    rec = scan(p).record
+    assert rec.sidechain_tokens == 15
+
+
+def test_dedup_survives_an_incremental_scan_boundary(write_transcript):
+    """The boundary can land mid-response: a live transcript is rescanned often.
+
+    Without persisted dedup state this is exactly where the triple-count
+    reappears, and only for actively-running sessions -- the ones on the card.
+    """
+    p = write_transcript("s.jsonl", [_assistant(req="req_A", tin=100, tout=50)])
+    first = scan(p)
+    assert first.record.tokens_in == 100
+
+    with p.open("a") as f:
+        f.write(_assistant(req="req_A", tin=100, tout=50))
+
+    incremental = scan(p, start_offset=first.new_offset, prev=first.record)
+    assert (incremental.record.tokens_in, incremental.record.tokens_out) == (100, 50)
+    assert incremental.record.tokens_in == scan(p).record.tokens_in

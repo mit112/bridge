@@ -92,18 +92,43 @@ def _apply(rec: SessionRecord | None, obj: dict, path: str) -> SessionRecord | N
     elif kind == "assistant":
         msg = obj.get("message") or {}
         usage = msg.get("usage") or {}
+        # One API response is written as several assistant entries (thinking,
+        # text, tool_use), each repeating that response's `usage` verbatim, so
+        # summing them counts it two or three times over. Measured across 60
+        # real transcripts: 1,052 multi-entry requestIds, every one contiguous
+        # and every one byte-identical, with naive summation running 199% high.
+        #
+        # Contiguity is why remembering only the LAST counted id is enough. It
+        # also keeps the state a single string, which is what lets it survive an
+        # incremental scan whose boundary lands mid-response. Were entries ever
+        # to interleave, this would undercount nothing and recount one response
+        # -- today's behaviour -- rather than fail.
+        request_id = obj.get("requestId")
+        already_counted = bool(usage) and bool(request_id) and (
+            request_id == rec.last_usage_request_id
+        )
+        # Guarded on `usage`: an entry for the same response that carries none
+        # must not claim the id, or the entry that does carry it is dropped.
+        if usage and request_id:
+            rec.last_usage_request_id = request_id
+
         if sidechain:
-            rec.sidechain_tokens += int(usage.get("input_tokens") or 0) + int(
-                usage.get("output_tokens") or 0
-            )
+            if not already_counted:
+                rec.sidechain_tokens += int(usage.get("input_tokens") or 0) + int(
+                    usage.get("output_tokens") or 0
+                )
             return rec
+        # Deliberately NOT deduped: this counts transcript entries, and every
+        # existing test and card reads it that way. Changing its meaning is a
+        # separate decision from fixing the token arithmetic.
         rec.assistant_msgs += 1
         if msg.get("model"):
             rec.model = msg["model"]
         if obj.get("effort"):
             rec.effort = obj["effort"]
-        rec.tokens_in += int(usage.get("input_tokens") or 0)
-        rec.tokens_out += int(usage.get("output_tokens") or 0)
-        rec.tokens_cache_create += int(usage.get("cache_creation_input_tokens") or 0)
-        rec.tokens_cache_read += int(usage.get("cache_read_input_tokens") or 0)
+        if not already_counted:
+            rec.tokens_in += int(usage.get("input_tokens") or 0)
+            rec.tokens_out += int(usage.get("output_tokens") or 0)
+            rec.tokens_cache_create += int(usage.get("cache_creation_input_tokens") or 0)
+            rec.tokens_cache_read += int(usage.get("cache_read_input_tokens") or 0)
     return rec

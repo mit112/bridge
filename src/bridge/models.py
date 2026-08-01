@@ -21,6 +21,9 @@ class SessionRecord:
     tokens_cache_read: int = 0
     sidechain_tokens: int = 0
     interrupted: bool = False
+    # The last requestId whose usage was counted. Persisted, because an
+    # incremental scan boundary can land between two entries of one response.
+    last_usage_request_id: str | None = None
 
 
 @dataclass

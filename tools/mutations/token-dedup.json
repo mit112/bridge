@@ -1,0 +1,63 @@
+[
+  {
+    "name": "count every entry's usage, restoring the ~3x inflation",
+    "file": "src/bridge/transcripts.py",
+    "old": "        already_counted = bool(usage) and bool(request_id) and (\n            request_id == rec.last_usage_request_id\n        )",
+    "new": "        already_counted = False",
+    "tests": [
+      "tests/test_transcripts.py::test_one_response_split_across_entries_counts_its_usage_once",
+      "tests/test_transcripts.py::test_sidechain_usage_is_deduped_too"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "dedup on request_id alone, collapsing genuinely separate responses",
+    "file": "src/bridge/transcripts.py",
+    "old": "        already_counted = bool(usage) and bool(request_id) and (\n            request_id == rec.last_usage_request_id\n        )",
+    "new": "        already_counted = bool(usage) and bool(request_id)",
+    "tests": [
+      "tests/test_transcripts.py::test_distinct_request_ids_are_each_counted"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "treat a missing requestId as a match, collapsing older transcripts to one entry",
+    "file": "src/bridge/transcripts.py",
+    "old": "        already_counted = bool(usage) and bool(request_id) and (\n            request_id == rec.last_usage_request_id\n        )",
+    "new": "        already_counted = bool(usage) and (request_id == rec.last_usage_request_id)",
+    "tests": [
+      "tests/test_transcripts.py::test_entries_with_no_request_id_are_each_counted"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "let a usage-less entry claim the id, dropping the usage that follows it",
+    "file": "src/bridge/transcripts.py",
+    "old": "        if usage and request_id:\n            rec.last_usage_request_id = request_id",
+    "new": "        if request_id:\n            rec.last_usage_request_id = request_id",
+    "tests": [
+      "tests/test_transcripts.py::test_an_entry_without_usage_does_not_claim_the_request_id"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "forget the dedup marker when rehydrating, recounting across the scan boundary",
+    "file": "src/bridge/indexer.py",
+    "old": "        last_usage_request_id=row[\"last_usage_request_id\"],",
+    "new": "        last_usage_request_id=None,",
+    "tests": [
+      "tests/test_indexer.py::test_usage_dedup_state_survives_across_index_runs"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "never persist the dedup marker, so every index run starts blind",
+    "file": "src/bridge/store.py",
+    "old": "                    rec.sidechain_tokens, int(rec.interrupted), rec.transcript_path,\n                    rec.last_usage_request_id,",
+    "new": "                    rec.sidechain_tokens, int(rec.interrupted), rec.transcript_path,\n                    None,",
+    "tests": [
+      "tests/test_indexer.py::test_usage_dedup_state_survives_across_index_runs"
+    ],
+    "expect_count": 1
+  }
+]

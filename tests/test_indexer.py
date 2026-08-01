@@ -482,3 +482,37 @@ def test_against_the_real_corpus_no_launch_joins_a_session_it_did_not_launch(tmp
               f"({half} terminal, {len(indexed) - half} background, 1 unmatched)")
     finally:
         store.close()
+
+
+def test_usage_dedup_state_survives_across_index_runs(env):
+    """The dedup marker must round-trip through the sessions row.
+
+    A live transcript is indexed repeatedly while it grows, so the boundary
+    routinely lands between two entries of one response. If the marker is not
+    persisted and rehydrated, that response is counted twice -- and only for
+    running sessions, which are exactly the ones on a card.
+    """
+    cfg, store, projects = env
+    entry = jline(type="assistant", sessionId=SID, isSidechain=False,
+                  requestId="req_A", timestamp="2026-07-30T10:05:00.000Z",
+                  cwd="/Users/mitsheth/dev/demo",
+                  message={"role": "assistant", "model": "claude-opus-5",
+                           "usage": {"input_tokens": 100, "output_tokens": 50}})
+    p = write(projects, "s.jsonl", [
+        jline(type="user", sessionId=SID, isSidechain=False,
+              timestamp="2026-07-30T10:00:00.000Z", cwd="/Users/mitsheth/dev/demo",
+              message={"role": "user", "content": "go"}),
+        entry,
+    ])
+    reindex(store, cfg)
+    pid = store.projects()[0]["id"]
+    assert store.latest_session(pid)["tokens_in"] == 100
+    assert store.latest_session(pid)["last_usage_request_id"] == "req_A"
+
+    # The same response's next entry arrives after the offset.
+    with p.open("a") as f:
+        f.write(entry)
+    reindex(store, cfg)
+
+    row = store.latest_session(pid)
+    assert (row["tokens_in"], row["tokens_out"]) == (100, 50)

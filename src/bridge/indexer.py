@@ -180,4 +180,7 @@ def _rehydrate(store: Store, session_id: str | None, path: str) -> SessionRecord
         tokens_cache_read=row["tokens_cache_read"],
         sidechain_tokens=row["sidechain_tokens"],
         interrupted=bool(row["interrupted"]),
+        # Without this the resumed scan has forgotten which response it already
+        # counted, and recounts the one straddling the boundary.
+        last_usage_request_id=row["last_usage_request_id"],
     )
