@@ -255,7 +255,13 @@ def test_the_subprocess_reads_the_real_recorded_payload():
 
 
 def test_a_nonzero_exit_is_unavailable_not_empty():
-    state = agents.probe_subprocess(claude="/bin/claude", run=fake_run(1, ""))
+    """The payload is deliberately VALID JSON.
+
+    With empty stdout the JSON parse fails anyway, so the test would pass with
+    no returncode check at all -- and a `claude` that exits nonzero while still
+    printing a plausible list would be believed.
+    """
+    state = agents.probe_subprocess(claude="/bin/claude", run=fake_run(1, REAL_PAYLOAD))
     assert state.status == "unavailable"
     assert state.sessions == []
 
