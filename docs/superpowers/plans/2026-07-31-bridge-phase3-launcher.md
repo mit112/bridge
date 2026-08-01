@@ -1,5 +1,14 @@
 # Bridge Phase 3 — Launcher Implementation Plan
 
+> **STATUS 2026-08-01: Phase 3 shipped and is merged.** All seven tasks below are
+> implemented. Merged to `main` at `bc74b21` with 297 tests and the mutations in
+> `tools/mutations/phase3-task1.json` … `phase3-task7.json`, all caught. The
+> checkboxes are ticked to match.
+>
+> Two of those mutation specs were re-anchored afterwards (`332e9b4`, and again in
+> the sweep at `72ff20f`) because later branches moved the source text they quoted;
+> the behaviour they pin is unchanged.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or
 > superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`)
 > syntax for tracking.
@@ -237,41 +246,41 @@ test `tests/test_store.py`, `tests/test_spool.py`
   know its session id until after the spawn.
 
 **Steps:**
-- [ ] Append the table and both indexes to `SCHEMA`. `handoff_id` is nullable — a launch may carry
+- [x] Append the table and both indexes to `SCHEMA`. `handoff_id` is nullable — a launch may carry
       an ad-hoc prompt with no handoff behind it.
-- [ ] `session_id` is **nullable**, and this is forced rather than chosen. `claude --bg` *ignores*
+- [x] `session_id` is **nullable**, and this is forced rather than chosen. `claude --bg` *ignores*
       `--session-id` and mints its own (see the section below), so a background launch has no session
       id at the moment its row is written. `short_id` holds the 8-hex handle `--bg` prints, which is
       exactly `session_id[:8]`, and `set_launch_session` fills both in once they are known. A
       `NOT NULL session_id` would force a placeholder, and a placeholder in a correlation key is how
       you get a launch that joins to the wrong session.
-- [ ] `spool.journal_status` writes through the same `_atomic_write` temp-file-plus-`os.replace`
+- [x] `spool.journal_status` writes through the same `_atomic_write` temp-file-plus-`os.replace`
       path as `journal`, into `drained/`, under a name that cannot collide with a handoff record
       (`<handoff-id>.<epoch>.status.json`).
-- [ ] `rebuild_if_empty` loads creation records and status records separately, applies every
+- [x] `rebuild_if_empty` loads creation records and status records separately, applies every
       creation, then applies status records ordered by their `at`, so a superseded-then-consumed
       history replays to the same end state it had before the loss.
-- [ ] Add `# --- Phase 3: the launcher ---` banners to the touched test modules, matching the
+- [x] Add `# --- Phase 3: the launcher ---` banners to the touched test modules, matching the
       existing `# --- Phase 2: handoff routes ---` convention.
 
 **Tests (each requires an observed failure from a mutation):**
-- [ ] `create_launch` then `set_launch_outcome('started')` round-trips, and `launch_by_session`
+- [x] `create_launch` then `set_launch_outcome('started')` round-trips, and `launch_by_session`
       finds the row by its pre-assigned session id.
       *Mutation: drop the `WHERE session_id=?` clause → the wrong row returns.*
-- [ ] A launch with `handoff_id=None` inserts.
+- [x] A launch with `handoff_id=None` inserts.
       *Mutation: declare the column `NOT NULL` → the insert raises.*
-- [ ] A launch referencing a handoff that does not exist is refused by the foreign key.
+- [x] A launch referencing a handoff that does not exist is refused by the foreign key.
       *Mutation: remove `REFERENCES handoffs(id)` → the bad insert succeeds.*
-- [ ] After `create_handoff` plus `journal_status(id, 'consumed')`, wiping the table and calling
+- [x] After `create_handoff` plus `journal_status(id, 'consumed')`, wiping the table and calling
       `rebuild_if_empty` yields that handoff as **consumed**, and `queued_handoff` returns `None`.
       *Mutation: skip the status-replay loop → the handoff comes back queued.* This is the exact
       regression the task exists to prevent; it is the one mutation that must not survive.
-- [ ] Status records replay in `at` order — queued → superseded → consumed ends consumed — even when
+- [x] Status records replay in `at` order — queued → superseded → consumed ends consumed — even when
       the files are globbed out of order.
       *Mutation: drop the sort → the end state becomes filesystem-dependent.*
-- [ ] `rebuild_if_empty` is still skipped on a non-empty table with status records present.
+- [x] `rebuild_if_empty` is still skipped on a non-empty table with status records present.
       *Mutation: remove the `handoff_count() > 0` guard → a routine index rewrites live statuses.*
-- [ ] A corrupt status record lands in `bad/` and does not block the rest of the replay.
+- [x] A corrupt status record lands in `bad/` and does not block the rest of the replay.
 
 ---
 
@@ -294,57 +303,57 @@ makes the mutations below cheap to run.
   `title`, `mode`; `launcher.LaunchError`; `launcher.MAX_PROMPT_BYTES`.
 
 **Steps:**
-- [ ] `sh_quote` is applied to the project path, the resolved `claude` path, the prompt-file path,
+- [x] `sh_quote` is applied to the project path, the resolved `claude` path, the prompt-file path,
       the title, the model, and the effort. Model and effort are passed through unvalidated per the
       spec — the CLI is the authority on what is accepted — which is exactly why they must be quoted.
-- [ ] `as_quote` escapes backslash **before** double quote. The other order double-escapes and is the
+- [x] `as_quote` escapes backslash **before** double quote. The other order double-escapes and is the
       classic way to get this wrong. `$`, backtick and `!` are not special to AppleScript and must
       not be touched; they are handled by the shell layer's single quotes.
-- [ ] `build_shell_command` emits the `[ -r … ] || { …; exit 1; }` guard first, then
+- [x] `build_shell_command` emits the `[ -r … ] || { …; exit 1; }` guard first, then
       `cd`, then `--session-id`, `--model`, `--effort`, `-n`, and finally
       `"$(/bin/cat '<path>')"`. `--model`, `--effort` and `-n` are omitted entirely when their value
       is `None`, never passed as an empty string.
-- [ ] `build_bg_argv` **omits `--session-id` entirely.** `--bg` ignores it and warns, so passing it
+- [x] `build_bg_argv` **omits `--session-id` entirely.** `--bg` ignores it and warns, so passing it
       is noise that also implies a correlation the code does not have. Keep `-n/--name`: it survives
       into both the stdout line and `claude agents --json`, and is the best human-readable tie-back.
-- [ ] The title defaults to the handoff summary's first line, truncated, falling back to the project
+- [x] The title defaults to the handoff summary's first line, truncated, falling back to the project
       name. It is authored text, so it goes through `sh_quote` like everything else — and because
       `claude` applies no validation and injects it into the terminal-title escape sequence, control
       characters and newlines are stripped from it first.
-- [ ] Session UUIDs are generated **lowercase**. `claude`'s format check is case-insensitive and does
+- [x] Session UUIDs are generated **lowercase**. `claude`'s format check is case-insensitive and does
       not normalise, and APFS is case-insensitive, so an uppercase id would collide with a lowercase
       transcript while the recorded id and the filename disagreed.
-- [ ] Reject a prompt containing NUL, and a prompt over `MAX_PROMPT_BYTES`, with a `LaunchError`
+- [x] Reject a prompt containing NUL, and a prompt over `MAX_PROMPT_BYTES`, with a `LaunchError`
       naming the size and the limit. Set the cap at 800 KiB: 900 KiB was measured working and
       1024 KiB measured failing with `argument list too long`, so this leaves real headroom.
 
 **Tests (falsification required):**
-- [ ] `build_shell_command` does **not** contain the prompt text, for a prompt containing
+- [x] `build_shell_command` does **not** contain the prompt text, for a prompt containing
       `$(echo nope)`. `assert prompt_fragment not in command`.
       *Mutation: interpolate the prompt directly → the assertion fires.* This is Phase 2's
       `--summary` bug in its Phase 3 form and the single most important test in the phase.
-- [ ] `sh_quote` round-trips through a real shell: `/bin/sh -c "printf %s " + sh_quote(s)` returns
+- [x] `sh_quote` round-trips through a real shell: `/bin/sh -c "printf %s " + sh_quote(s)` returns
       `s` byte for byte. Table-driven over quote, double quote, backtick, `$(...)`, `${HOME}`,
       backslash, newline, `;`, `!`, `!!`, emoji, CJK, and the empty string.
       *Mutation: use the naive `s.replace("'", "\\'")` → the round trip breaks.*
-- [ ] `as_quote` escapes both `\` and `"`, does not double-escape, and leaves `$`/backtick/`!`
+- [x] `as_quote` escapes both `\` and `"`, does not double-escape, and leaves `$`/backtick/`!`
       untouched. *Mutation: swap the two replacement lines → the backslash is escaped twice.*
-- [ ] `as_quote` raises on a project path containing a newline rather than silently stripping it.
-- [ ] The command contains the `[ -r` guard. *Mutation: drop the guard → the assertion fires*, and
+- [x] `as_quote` raises on a project path containing a newline rather than silently stripping it.
+- [x] The command contains the `[ -r` guard. *Mutation: drop the guard → the assertion fires*, and
       Task 3's empty-prompt test then also goes red, which is the pair that makes this real.
-- [ ] `build_bg_argv` puts the prompt in exactly one element and includes `--bg`.
+- [x] `build_bg_argv` puts the prompt in exactly one element and includes `--bg`.
       *Mutation: join the argv into a single string → the element-count assertion fires.*
-- [ ] `build_bg_argv` contains **no** `--session-id`. `assert "--session-id" not in argv`.
+- [x] `build_bg_argv` contains **no** `--session-id`. `assert "--session-id" not in argv`.
       *Mutation: add it → the assertion fires.* Without this test the flag gets added back by anyone
       who reads the spec's pre-assignment paragraph and not this plan.
-- [ ] Generated session ids are lowercase and match `claude`'s 8-4-4-4-12 hex validator.
+- [x] Generated session ids are lowercase and match `claude`'s 8-4-4-4-12 hex validator.
       *Mutation: emit `str(uuid4()).upper()` → the lowercase assertion fires.*
-- [ ] A title containing a newline, a `\x1b`, and a `\x07` is sanitised before quoting.
+- [x] A title containing a newline, a `\x1b`, and a `\x07` is sanitised before quoting.
       *Mutation: skip the sanitiser → the raw control bytes appear in the command.*
-- [ ] `--model` and `--effort` are absent from argv when `None`, not present-and-empty.
+- [x] `--model` and `--effort` are absent from argv when `None`, not present-and-empty.
       *Mutation: always emit them → an empty `--model ''` appears.*
-- [ ] `resolve_claude` raises `LaunchError` when the injected `which` returns `None`.
-- [ ] A prompt over the cap, and a prompt containing NUL, each raise before anything is constructed.
+- [x] `resolve_claude` raises `LaunchError` when the injected `which` returns `None`.
+- [x] A prompt over the cap, and a prompt containing NUL, each raise before anything is constructed.
 
 ---
 
@@ -358,72 +367,76 @@ carrying `session_id`, `launch_id`, `outcome`, and `error: str | None`. Consumes
 methods and Task 2's pure builders.
 
 **Steps:**
-- [ ] The order is fixed and load-bearing: resolve `claude` → write the prompt file → insert the
+- [x] The order is fixed and load-bearing: resolve `claude` → write the prompt file → insert the
       `launches` row with `outcome='pending'` → spawn → record the outcome. Anything failing before
       the row exists fails with no side effects; anything after it is correlatable.
-- [ ] The prompt file is `cfg.launches_dir / f"{session_id}.prompt"`, written through the same atomic
+- [x] The prompt file is `cfg.launches_dir / f"{session_id}.prompt"`, written through the same atomic
       temp-file-plus-`os.replace` idiom `spool` uses, directory `0700` and file `0600`, with the
       prompt `rstrip("\n")`-normalised so terminal and background modes agree byte for byte.
-- [ ] Terminal mode runs `["/usr/bin/osascript", "-e", script]` as an argv list — the script is one
+- [x] Terminal mode runs `["/usr/bin/osascript", "-e", script]` as an argv list — the script is one
       element, never a shell string. Background mode runs `build_bg_argv` with no shell.
-- [ ] The prompt file is retained after a successful launch. It is provenance, it is literally what
+- [x] The prompt file is retained after a successful launch. It is provenance, it is literally what
       ran, and deleting it eagerly is a race against the new shell's `cat`. Add age-based GC, not
       launch-time deletion.
-- [ ] Terminal mode pre-assigns the session id, and a `Session ID … is already in use.` exit is a
+      **[2026-08-01: half true.** Retention shipped and is correct. `launcher.gc_prompt_files` was
+      written and is unit-tested, but **nothing in production ever calls it** — not `api.py`,
+      `cli.py`, `__main__.py` or `indexer.py` — so `~/.bridge/launches/*.prompt` currently grows
+      without bound. The function exists; the GC does not run.]
+- [x] Terminal mode pre-assigns the session id, and a `Session ID … is already in use.` exit is a
       **retry with a fresh UUID**, bounded to a small number of attempts, not a launch failure. The
       check is per-project-dir, so a collision is rare but entirely possible.
-- [ ] Background mode writes its row with `session_id=NULL`, then parses the spawn's stdout for
+- [x] Background mode writes its row with `session_id=NULL`, then parses the spawn's stdout for
       `backgrounded · <short>`, **stripping ANSI first**, and calls `set_launch_session`. Resolving
       `short` to the full UUID via `claude agents --json --all` is best-effort: if it fails, keep
       `short_id` alone and let Task 7's glob close the loop later. A background launch whose handle
       could not be parsed is still `started` — it did start — with both ids null and a note.
-- [ ] On success, `outcome='started'` and, when a `handoff_id` was supplied, the handoff is marked
+- [x] On success, `outcome='started'` and, when a `handoff_id` was supplied, the handoff is marked
       `consumed` **and** that status is journalled via Task 1.
-- [ ] On failure, `outcome='failed'`, the error text lands on the result, and the handoff is left
+- [x] On failure, `outcome='failed'`, the error text lands on the result, and the handoff is left
       `queued`. The launcher's contract is only that it does not consume; the clipboard fallback
       belongs to the caller.
-- [ ] `Config` gains `launches_dir`, defaulting to `~/.bridge/launches` and overridable exactly like
+- [x] `Config` gains `launches_dir`, defaulting to `~/.bridge/launches` and overridable exactly like
       `spool_dir`. `tests/conftest.py`'s autouse guard grows to cover it: a launch writes files, and
       a fixture that forgets the override would litter the real directory. Extend the existing
       `never_touch_the_real_bridge_dir` guard rather than adding a second one — it already raises
       `RealBridgeDirTouched(BaseException)` so no catch-all can swallow it.
 
 **Tests (falsification required):**
-- [ ] Background mode against a **fake `claude` on `PATH`** that dumps its argv: the prompt arrives
+- [x] Background mode against a **fake `claude` on `PATH`** that dumps its argv: the prompt arrives
       byte for byte including quotes, backticks, `$(...)`, newlines, emoji and CJK. There is no
       existing fake-executable fixture in this suite, so this is new ground — write the shim, `chmod`
       it `0o755`, and prepend its directory to `PATH` the way `test_handoff_command.py` prepends the
       venv's `bin`. *Mutation: pass the prompt through `shlex.quote` as well → the bytes differ.*
-- [ ] The shell layer of terminal mode, run through `/bin/sh -c` with the same fake `claude` — no
+- [x] The shell layer of terminal mode, run through `/bin/sh -c` with the same fake `claude` — no
       AppleScript, no Terminal window. Prompt matches byte for byte after the `rstrip` normalisation,
       and `$(echo nope)` arrives literal.
       *Mutation: drop the double quotes around `$(/bin/cat …)` → word splitting shatters the prompt
       into many argv elements.*
-- [ ] A **missing prompt file** produces a non-zero shell exit and **no `claude` invocation at all**
+- [x] A **missing prompt file** produces a non-zero shell exit and **no `claude` invocation at all**
       — assert the fake recorded nothing. *Mutation: remove the `[ -r … ]` guard → `claude` runs
       with an empty prompt, which is the observed silent-success failure this guard exists for.*
-- [ ] A failed spawn records `outcome='failed'` and leaves the handoff `queued`.
+- [x] A failed spawn records `outcome='failed'` and leaves the handoff `queued`.
       *Mutation: consume the handoff before checking the spawn result → the prompt is lost on
       failure, the worst outcome available in this phase.*
-- [ ] A `launches` row exists even when the spawn fails.
+- [x] A `launches` row exists even when the spawn fails.
       *Mutation: move the insert after the spawn → no row exists.*
-- [ ] The prompt file still exists after a successful launch.
+- [x] The prompt file still exists after a successful launch.
       *Mutation: unlink it after spawning → the assertion fires.*
-- [ ] A successful launch marks the handoff `consumed`, stamps `consumed_at`, and leaves a status
+- [x] A successful launch marks the handoff `consumed`, stamps `consumed_at`, and leaves a status
       record in `drained/`.
-- [ ] A background launch whose fake `claude` prints `backgrounded · \x1b[36mdeadbeef\x1b[0m` yields
+- [x] A background launch whose fake `claude` prints `backgrounded · \x1b[36mdeadbeef\x1b[0m` yields
       `short_id='deadbeef'`. *Mutation: skip the ANSI strip → the handle keeps its escape bytes and
       no glob or lookup will ever match it.*
-- [ ] A background launch whose stdout is unparseable is still `outcome='started'` with both ids
+- [x] A background launch whose stdout is unparseable is still `outcome='started'` with both ids
       null. *Mutation: mark it `failed` → the handoff is left queued for a session that is running.*
-- [ ] A terminal launch that collides on session id retries with a fresh UUID and succeeds; the retry
+- [x] A terminal launch that collides on session id retries with a fresh UUID and succeeds; the retry
       is bounded. *Mutation: treat the collision as fatal → the launch fails for a recoverable
       reason.*
-- [ ] `resolve_claude` genuinely consults `PATH`: point the injected `which` at a directory with no
+- [x] `resolve_claude` genuinely consults `PATH`: point the injected `which` at a directory with no
       `claude` and assert `LaunchError`.
       *Mutation: hardcode `/Users/mitsheth/.local/bin/claude` → the fake-on-PATH tests above pass
       vacuously while testing nothing.* This mutation is the reason the constraint exists.
-- [ ] The conftest guard fires when a launcher test omits the `launches_dir` override.
+- [x] The conftest guard fires when a launcher test omits the `launches_dir` override.
 
 ---
 
@@ -436,28 +449,28 @@ methods and Task 2's pure builders.
 `PATCH /api/handoff/{id}` to accept `next_prompt` alongside `status`.
 
 **Steps:**
-- [ ] The route resolves `project_path` through the alias table exactly as `POST /api/handoff` does,
+- [x] The route resolves `project_path` through the alias table exactly as `POST /api/handoff` does,
       so a launch from an old `~/Documents/...` path attaches to the canonical project.
-- [ ] A launch failure is **not** an HTTP error. It returns `200` with `outcome='failed'` and an
+- [x] A launch failure is **not** an HTTP error. It returns `200` with `outcome='failed'` and an
       `error` string, because the UI needs the error text and the prompt in the same response to
       offer the clipboard fallback. A 500 would give it neither.
-- [ ] `PATCH` accepts `next_prompt`, `status`, or both. A `next_prompt` change updates the row and
+- [x] `PATCH` accepts `next_prompt`, `status`, or both. A `next_prompt` change updates the row and
       re-journals the handoff so the journal's text stays current; a `status` change journals the
       status via Task 1. A `PATCH` with neither field is `422`, not a silent no-op.
-- [ ] The launcher is injected into `create_app` with a default, so a test can substitute a recording
+- [x] The launcher is injected into `create_app` with a default, so a test can substitute a recording
       double without monkeypatching a module global — and so no test can spawn anything by accident.
 
 **Tests (falsification required):**
-- [ ] A launch from an alias path attaches to the canonical project.
+- [x] A launch from an alias path attaches to the canonical project.
       *Mutation: skip the alias resolution → it attaches to the old path and splits history again.*
-- [ ] A failed launch returns `200` with `outcome='failed'` and a non-empty `error`.
+- [x] A failed launch returns `200` with `outcome='failed'` and a non-empty `error`.
       *Mutation: raise `HTTPException(500)` → the response body carries no prompt to copy.*
-- [ ] `PATCH next_prompt` changes what `GET /api/handoff` returns and leaves the status `queued`.
+- [x] `PATCH next_prompt` changes what `GET /api/handoff` returns and leaves the status `queued`.
       *Mutation: ignore `next_prompt` → the old text comes back.*
-- [ ] A prompt with quotes, backticks, `$(...)`, newlines and a 40 KB body round-trips byte for byte
+- [x] A prompt with quotes, backticks, `$(...)`, newlines and a 40 KB body round-trips byte for byte
       through `PATCH` → DB → `GET`, mirroring the Phase 2 assertion for `POST`.
-- [ ] `PATCH` with an empty body is `422`.
-- [ ] A successful launch consumes the handoff, so the next `GET /api/handoff` for that project is
+- [x] `PATCH` with an empty body is `422`.
+- [x] A successful launch consumes the handoff, so the next `GET /api/handoff` for that project is
       `204`. *Mutation: leave the status queued → the card keeps offering a prompt already running.*
 
 ---
@@ -473,26 +486,26 @@ bridge launch [--project P] [--mode terminal|background] [--model M] [--effort E
 ```
 
 **Steps:**
-- [ ] With no `--prompt-file`, the CLI sends no prompt and the **server** uses the queued handoff, so
+- [x] With no `--prompt-file`, the CLI sends no prompt and the **server** uses the queued handoff, so
       the prompt is never round-tripped through the client for no reason. `--mode` defaults to
       `terminal`.
-- [ ] Panel down, timeout, or 5xx → a clear stderr message and **exit 1**. No spooling. Unlike
+- [x] Panel down, timeout, or 5xx → a clear stderr message and **exit 1**. No spooling. Unlike
       `handoff`, nothing is lost, and a launch that fires at an unpredictable later time is worse
       than one that never fires. State this asymmetry in the docstring, because it reads like an
       inconsistency until you see the reason.
-- [ ] Nothing queued and no `--prompt-file` → exit 1 with a message, matching `bridge next`.
-- [ ] The CLI still imports no database module, and still does not import `launcher` — the server
+- [x] Nothing queued and no `--prompt-file` → exit 1 with a message, matching `bridge next`.
+- [x] The CLI still imports no database module, and still does not import `launcher` — the server
       spawns, not the client.
 
 **Tests (falsification required):**
-- [ ] Against a genuinely closed port (`closed_port()`, verified with `connect_ex`, as
+- [x] Against a genuinely closed port (`closed_port()`, verified with `connect_ex`, as
       `test_cli.py` already does), `bridge launch` exits **1** — the opposite of `bridge handoff`.
       *Mutation: return 0 → a silent non-launch reports success.*
-- [ ] It writes no spool file. *Mutation: spool on failure → a stray journal file appears.*
-- [ ] Against the existing `fake_server` fixture, the POST body carries the right project, mode,
+- [x] It writes no spool file. *Mutation: spool on failure → a stray journal file appears.*
+- [x] Against the existing `fake_server` fixture, the POST body carries the right project, mode,
       model and effort.
-- [ ] `--prompt-file -` overrides the queued handoff.
-- [ ] `test_the_cli_never_loads_a_database_module` is extended to assert `bridge.launcher` is absent
+- [x] `--prompt-file -` overrides the queued handoff.
+- [x] `test_the_cli_never_loads_a_database_module` is extended to assert `bridge.launcher` is absent
       from `sys.modules` too, using the same subprocess-observation idiom.
 
 ---
@@ -512,59 +525,59 @@ This is the first form UI in the codebase. `app.css` contains no `select`, `inpu
 tokens below are new work rather than reuse.
 
 **Steps:**
-- [ ] The launch band renders **outside** the `{% if card.handoff %}` guard, between the handoff
+- [x] The launch band renders **outside** the `{% if card.handoff %}` guard, between the handoff
       section and `card__burn` — a project with nothing queued is still launchable. Consequence:
       element ids must be prefixed from `card.project_id`, not from Phase 2's
       `hid = "handoff-" ~ card.handoff.id`, which does not exist on a card with no handoff. Getting
       this wrong collides ids across cards and silently breaks every `<label for>` and
       `aria-labelledby`.
-- [ ] The two selects default from `card.handoff.suggested_model` and `.suggested_effort`, which
+- [x] The two selects default from `card.handoff.suggested_model` and `.suggested_effort`, which
       `cards._handoff` already passes to the template as a plain dict and which nothing currently
       reads. No backend change is needed for the defaults. Fall back to the first configured value.
-- [ ] `config.DEFAULT_EFFORTS` grows `xhigh` and `max`, because `claude --effort` accepts
+- [x] `config.DEFAULT_EFFORTS` grows `xhigh` and `max`, because `claude --effort` accepts
       `low, medium, high, xhigh, max` and Phase 3 is the first phase to surface the list. The spec's
       `~/.bridge/config.toml` stays out of scope; the defaults stay in code.
-- [ ] The prompt becomes a `<textarea>` with an accessible name, saved by `PATCH` on blur only when
+- [x] The prompt becomes a `<textarea>` with an accessible name, saved by `PATCH` on blur only when
       the text changed. Inherit `.handoff__prompt`'s `--mono`, `.78rem`, `1.45` line-height,
       `var(--card)` background and `4px` radius, so the editable field reads as the same object as
       the `<pre>` it replaces.
-- [ ] **Fix `copy.js` while swapping the `<pre>` for a `<textarea>`.** It reads
+- [x] **Fix `copy.js` while swapping the `<pre>` for a `<textarea>`.** It reads
       `source.textContent`, which on a textarea returns the server-rendered text and *not* the user's
       edits, so Copy would silently hand over a stale prompt. Read `.value` when present, and prefer
       `select()` over `createRange()` in the fallback for a form control.
-- [ ] The launch status uses a `role="status"` live region with a **distinct** `data-*` key from the
+- [x] The launch status uses a `role="status"` live region with a **distinct** `data-*` key from the
       copy status. `copy.js` targets `[data-copy-status="${id}"]`; reusing the id would let the two
       overwrite each other's messages.
-- [ ] On failure the message is glyph **plus** words and the prompt is copied automatically — e.g.
+- [x] On failure the message is glyph **plus** words and the prompt is copied automatically — e.g.
       `⚠ Launch failed — prompt copied, paste it in your terminal`. Never a red border alone. This
       is what satisfies the spec's "surface error **and** copy prompt to clipboard".
-- [ ] `launch.js` reuses `copy.js`'s clipboard helper rather than re-implementing it; extract the
+- [x] `launch.js` reuses `copy.js`'s clipboard helper rather than re-implementing it; extract the
       shared function if that means editing `copy.js`.
-- [ ] Add a `--field-line` colour token for form-control borders. **`--line` cannot be reused**: it
+- [x] Add a `--field-line` colour token for form-control borders. **`--line` cannot be reused**: it
       measures 1.34:1 light and 1.28:1 dark against `--card`, and WCAG 1.4.11 requires 3:1 for a
       control's visible boundary. Define it as **6-digit lowercase hex** — `test_contrast.py` parses
       with `(--[a-z-]+):\s*(#[0-9a-fA-F]{6})`, so an `oklch()`, `#abc`, or `rgb()` value is
       silently invisible to the contrast suite and would ship unchecked.
-- [ ] Add a `.btn:disabled` state — none exists — for the in-flight ▶, and give an icon-only button
+- [x] Add a `.btn:disabled` state — none exists — for the in-flight ▶, and give an icon-only button
       an explicit `min-width` to hold the 24×24 target `min-height: 1.75rem` already guards.
-- [ ] The project detail page lists launch history: mode, model, effort, outcome, and the linked
+- [x] The project detail page lists launch history: mode, model, effort, outcome, and the linked
       session when one exists.
 
 **Tests (falsification required):**
-- [ ] The rendered textarea is HTML-escaped: a prompt containing `</textarea><script>` appears as
+- [x] The rendered textarea is HTML-escaped: a prompt containing `</textarea><script>` appears as
       text. *Mutation: mark it safe in the template → the literal-string assertion fails.* A
       textarea escapes differently from a `<pre>`, so Phase 2's equivalent test does not cover it.
-- [ ] Both selects carry an accessible name, and the suggested value is pre-selected.
+- [x] Both selects carry an accessible name, and the suggested value is pre-selected.
       *Mutation: drop the `selected` attribute → the assertion fires.*
-- [ ] Two cards on one dashboard produce no duplicate element id.
+- [x] Two cards on one dashboard produce no duplicate element id.
       *Mutation: key the ids off the handoff id → a card with no handoff emits a bare prefix and the
       ids collide.*
-- [ ] A card with no queued handoff still renders a launch band, and renders no empty prompt block.
-- [ ] `--field-line` clears 3:1 against `--card` in **both** themes, by adding a row to
+- [x] A card with no queued handoff still renders a launch band, and renders no empty prompt block.
+- [x] `--field-line` clears 3:1 against `--card` in **both** themes, by adding a row to
       `test_contrast.py`'s `PAIRS` table rather than writing a second checker. The Phase 2 border
       token failed at 2.18:1 dark and 2.9:1 light and was recomputed; the new token gets the same
       treatment, not an eyeball.
-- [ ] Keyboard operability asserted structurally: no `tabindex="-1"` on any new control, and every
+- [x] Keyboard operability asserted structurally: no `tabindex="-1"` on any new control, and every
       new control has a `<label for>` or an `aria-label`.
 
 ---
@@ -575,33 +588,33 @@ tokens below are new work rather than reuse.
 test `tests/test_indexer.py`
 
 **Steps:**
-- [ ] For **terminal** launches there is no new parsing and no indexer change. The link is
+- [x] For **terminal** launches there is no new parsing and no indexer change. The link is
       `launches.session_id = sessions.id`, and it exists the moment the indexer writes the session,
       because the UUID was pre-assigned. The work is asserting that, not building it.
-- [ ] For **background** launches, add a backfill step to the index run: for any launch with
+- [x] For **background** launches, add a backfill step to the index run: for any launch with
       `short_id` set and `session_id` still null, match a session whose id starts with that
       `short_id` and fill it in. Eight hex characters is 2^32, and the candidate set is one project's
       sessions, so require a **unique** prefix match and leave it null on ambiguity rather than
       guessing. This is the only place Phase 3 touches `indexer.py`.
-- [ ] After indexing a transcript whose filename and `sessionId` are a launched UUID,
+- [x] After indexing a transcript whose filename and `sessionId` are a launched UUID,
       `launch_by_session` joins to a real session row and the detail page shows the launch and the
       session as one thing.
-- [ ] A launch whose session never appears — a spawn that started nothing, or a session quit before
+- [x] A launch whose session never appears — a spawn that started nothing, or a session quit before
       it wrote a transcript — stays visible as `started` with no session. Not an error; the panel
       shows what it knows.
 
 **Tests (falsification required):**
-- [ ] Index a fixture transcript whose session id equals a launched `session_id`; assert the join
+- [x] Index a fixture transcript whose session id equals a launched `session_id`; assert the join
       finds it and the project attribution matches.
       *Mutation: have the launcher mint a fresh UUID at spawn time instead of using the pre-assigned
       one → the join finds nothing.* That is the spec requirement "the indexer links the launch to
       its transcript on the next scan" failing outright.
-- [ ] A background launch with only `short_id` set resolves to its full `session_id` on the next
+- [x] A background launch with only `short_id` set resolves to its full `session_id` on the next
       index. *Mutation: match on `LIKE short || '%'` without the uniqueness check → an ambiguous
       prefix silently binds the launch to the wrong session.*
-- [ ] Two sessions sharing a `short_id` prefix leave `session_id` null rather than picking one.
-- [ ] A launch with no matching session renders the detail page without error.
-- [ ] Run against the **real** corpus once: index, then assert no launch row joins to a session it
+- [x] Two sessions sharing a `short_id` prefix leave `session_id` null rather than picking one.
+- [x] A launch with no matching session renders the detail page without error.
+- [x] Run against the **real** corpus once: index, then assert no launch row joins to a session it
       did not launch.
 
 ---
@@ -636,22 +649,22 @@ real bugs that session were found only by falsification, never by writing a test
 
 ## Success criteria
 
-- [ ] ▶ on a card with a queued handoff opens a Terminal window running that prompt with the chosen
+- [x] ▶ on a card with a queued handoff opens a Terminal window running that prompt with the chosen
       model and effort, and the session appears on the project's card after the next index.
-- [ ] The same launch in background mode starts a session that appears in `claude agents --json`, and
+- [x] The same launch in background mode starts a session that appears in `claude agents --json`, and
       its `short_id` resolves to a full `session_id` on the next index.
-- [ ] A prompt containing quotes, backticks, `$(...)`, newlines and emoji launches with its text
+- [x] A prompt containing quotes, backticks, `$(...)`, newlines and emoji launches with its text
       intact and nothing executed, byte for byte, in both modes.
-- [ ] A missing prompt file never launches an empty session.
-- [ ] A failed launch leaves the handoff queued, shows the error, and puts the prompt on the
+- [x] A missing prompt file never launches an empty session.
+- [x] A failed launch leaves the handoff queued, shows the error, and puts the prompt on the
       clipboard.
-- [ ] Editing a queued prompt in the panel persists, and Copy hands over the edited text, not the
+- [x] Editing a queued prompt in the panel persists, and Copy hands over the edited text, not the
       text the server rendered.
-- [ ] Launch a handoff, then `rm ~/.bridge/bridge.db && bridge index`: it comes back **consumed**,
+- [x] Launch a handoff, then `rm ~/.bridge/bridge.db && bridge index`: it comes back **consumed**,
       not queued.
-- [ ] No test spawns a real Claude session.
-- [ ] Every load-bearing test has a recorded mutation and pasted failure output.
-- [ ] This plan's successor is captured by `/handoff`, launched with ▶, and the launched session is
+- [x] No test spawns a real Claude session.
+- [x] Every load-bearing test has a recorded mutation and pasted failure output.
+- [x] This plan's successor is captured by `/handoff`, launched with ▶, and the launched session is
       linked back to its transcript. That round trip is the acceptance test for the phase.
 
 ---

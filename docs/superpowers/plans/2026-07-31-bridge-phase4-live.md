@@ -1,5 +1,23 @@
 # Bridge Phase 4 — Live Implementation Plan
 
+> **STATUS 2026-08-01: Phase 4 shipped and is merged.** All eight tasks below are
+> implemented, plus Task 0 and Task 9 from the amendments. Merged to `main` at
+> `7095704` — 485 tests, 108 Phase 4 mutations, all caught; a later full sweep of
+> all 24 specs reports 230 caught, 0 survived. The checkboxes are ticked to match.
+>
+> **Read `2026-07-31-bridge-phase4-amendments.md` alongside this file.** It
+> changes Tasks 2, 3, 5, 7 and 8 substantially and adds Tasks 0 and 9; where the
+> two disagree, it wins. The code follows the amendments, so a checkbox here may
+> be ticked for a shipped behaviour the amendment redefined — Task 2 and Task 3
+> are the two where the difference is large.
+>
+> **Five statements below were overtaken by work that landed after the merge**
+> (`a60cd3d`…`688f3c9`). Each is annotated in place with a dated note rather than
+> rewritten, because each was a real decision: Decision 2 (bypass checkbox),
+> Decision 3 and the "Out of scope" entry for `~/.bridge/config.toml`, Decision 7
+> (window meter), and the Self-Review's note that `PATCH /api/projects/{id}` is
+> unimplemented.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or
 > superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`)
 > syntax for tracking.
@@ -83,6 +101,36 @@ instruction to state an assumption and keep moving; each is cheap to reverse.
 | 6 | Sparkline accessibility | **`aria-hidden="true"` on the SVG**, with the existing `23k today / 20k last 5h` text left as the accessible representation | The numbers are already there in text. A `role="img"` with a prose `<title>` would duplicate them for screen-reader users, and a 7-point polyline has no detail the text lacks | One attribute |
 | 7 | Window meter (spec's Phase 4 bullet) | **Deferred.** Not in this plan | The 5h number is already on the card as text. A *meter* implies a denominator, and the enterprise plan's 5h window has no published token cap to divide by, so the bar would be decorative | n/a |
 
+**Amendments to the table, 2026-08-01.** Three of these rows were overtaken after the
+phase merged. The rows above are left as written — each was a real decision, taken for
+reasons that still read correctly — and what actually happened is recorded here.
+
+- **Decision 2 was superseded before it shipped, by the amendments' Task 2.** There is no
+  `bypass_permissions` boolean and no checkbox anywhere in the code. What landed is the
+  full enum: a `permission_mode` **select** in the launch band offering a no-flag default
+  ("Ask as usual") plus the six values `claude` 2.1.220 actually accepts — `plan`,
+  `acceptEdits`, `dontAsk`, `auto`, `manual`, `bypassPermissions`
+  (`config.DEFAULT_PERMISSION_MODES`, validated against `launcher.PERMISSION_MODES`).
+  Everything the row says about the *danger* still holds and now applies to one enum
+  value. `--dangerously-skip-permissions` survives on the CLI as an alias for
+  `--permission-mode bypassPermissions`, and the two conflict-check against each other.
+- **Decision 3 still stands, but its premise no longer does: `~/.bridge/config.toml`
+  exists.** `a60cd3d` created it and `config.py` parses it — `config_path()`,
+  `_read_config_file()`, `ConfigError` — for `[aliases]` and `[archived] paths`. The model
+  catalog, the effort list and the permission modes deliberately did **not** move; they are
+  facts about the `claude` CLI rather than about the user, so the decision's *conclusion*
+  is intact and only "there is no such file" is out of date. `stale_hours` followed in
+  `4ed2243` (spec line 366) under a `[stale] hours` table, with precedence
+  `defaults < config.toml < overrides`.
+- **Decision 7 is now closed rather than deferred, and closed on its own reasoning.**
+  `094c590` completed the topbar with burn rate (tokens/hour over the 5h window), the
+  running-session count, the queued-handoff count and the last index time — **with no gauge
+  and no percentage**, because the denominator the row rules out still does not exist. The
+  unit is written out (`/h`) for the same reason. There is also deliberately **no intraday
+  sparkline**: `ended_epoch` is a session's last-activity instant carrying that session's
+  whole cumulative burn, so sub-daily buckets would draw spikes where the session happened
+  to end rather than the shape of the day. Mutations in `tools/mutations/topbar-window.json`.
+
 ---
 
 ## Global Constraints
@@ -106,7 +154,7 @@ phase introduces:
   a committed spec. Task 3 therefore *imports* these from `launcher`; it does not move them. If a
   future phase does move them, update the spec in the same commit.
 - **The SSE generator must never hold the store lock across a sleep.** `Store` is a single
-  `sqlite3` connection guarded by one `RLock` (`store.py:151`). A stream that holds it while waiting
+  `sqlite3` connection guarded by one `RLock` (`store.py:170`). A stream that holds it while waiting
   freezes every other request in the panel. Acquire per poll, release before sleeping.
 - **The handoff `<textarea>` is never re-rendered by a live update.** It is the only
   non-regenerable state in the system.
@@ -161,7 +209,7 @@ Config.efforts: list[str]             # UNCHANGED — effort has no versions to 
 
 **Steps:**
 
-- [ ] **Step 1: Write the failing test.** The catalog's values are what reach the wire, so assert on
+- [x] **Step 1: Write the failing test.** The catalog's values are what reach the wire, so assert on
       values, and assert the labels name versions:
 
 ```python
@@ -181,10 +229,10 @@ def test_every_catalog_value_is_unique():
     assert len(values) == len(set(values))
 ```
 
-- [ ] **Step 2: Run it and watch it fail.** `pytest tests/test_cards.py -k catalog -v` →
+- [x] **Step 2: Run it and watch it fail.** `pytest tests/test_cards.py -k catalog -v` →
       `AttributeError: 'str' object has no attribute 'value'`.
 
-- [ ] **Step 3: Implement.** In `config.py`, replacing `DEFAULT_MODELS = ["opus", "sonnet", "haiku"]`.
+- [x] **Step 3: Implement.** In `config.py`, replacing `DEFAULT_MODELS = ["opus", "sonnet", "haiku"]`.
       Every id below was extracted from the installed CLI binary, not guessed:
 
 ```python
@@ -219,7 +267,7 @@ DEFAULT_MODELS = [
 ]
 ```
 
-- [ ] **Step 4: Update the template.** The suggested-model prepend logic currently compares a string
+- [x] **Step 4: Update the template.** The suggested-model prepend logic currently compares a string
       against a list of strings and must now compare against values. A suggestion the catalog does not
       contain is still prepended rather than dropped — that behaviour is already tested and must
       survive:
@@ -253,13 +301,13 @@ def model_options(catalog: list[ModelChoice], suggested: str | None) -> list[Mod
       and set `launch_models=model_options(cfg.models, (handoff or {}).get("suggested_model"))` so the
       template only loops. The template's `{% set model_options = ... %}` block disappears entirely.
 
-- [ ] **Step 5: Run the suite.** `pytest -q`. Expect failures in any test asserting
+- [x] **Step 5: Run the suite.** `pytest -q`. Expect failures in any test asserting
       `cfg.models == ["opus", ...]` or scraping `<option>opus</option>`; update them to the new shape.
       `tests/test_contrast.py` renders the template, so a Jinja error surfaces there too.
 
-- [ ] **Step 6: Write the mutation spec** `tools/mutations/phase4-task1.json` and run it.
+- [x] **Step 6: Write the mutation spec** `tools/mutations/phase4-task1.json` and run it.
 
-- [ ] **Step 7: Commit.**
+- [x] **Step 7: Commit.**
 
 ```bash
 git add src/bridge/config.py src/bridge/models.py src/bridge/cards.py \
@@ -268,16 +316,29 @@ git commit -m "Name model versions in the launch band's selector"
 ```
 
 **Tests (falsification required):**
-- [ ] An off-catalog `suggested_model` is prepended and selected. *Mutation: drop the prepend branch →
+- [x] An off-catalog `suggested_model` is prepended and selected. *Mutation: drop the prepend branch →
       the suggestion vanishes and the band silently offers a different model.*
-- [ ] With no suggestion, the first catalog entry is selected. *Mutation: remove `loop.first` →
+- [x] With no suggestion, the first catalog entry is selected. *Mutation: remove `loop.first` →
       nothing is selected and the browser's implicit first-option choice becomes invisible.*
-- [ ] `<option value>` carries `value` while the text carries `label`. *Mutation: emit `m.label` as
+- [x] `<option value>` carries `value` while the text carries `label`. *Mutation: emit `m.label` as
       the value → `--model "Opus 4.8"` reaches the CLI and the launch fails.*
 
 ---
 
 ### Task 2: Bypass-permissions launches
+
+> **2026-08-01 — shipped, but as the enum, not the boolean.** The amendments' "Task 2 —
+> Permission mode, not a bypass boolean" widened this before it was built, so the interfaces,
+> the test bodies and the template snippet below describe code that does not exist: there is no
+> `bypass_permissions`, no `BYPASS_FLAG`, and no checkbox anywhere in `src/`. What landed is a
+> `permission_mode` select (`_card.html`, `data-launch-perm`) over
+> `config.DEFAULT_PERMISSION_MODES`, validated against `launcher.PERMISSION_MODES`, emitting
+> `--permission-mode <mode>` from both argv builders. The CLI keeps
+> `--dangerously-skip-permissions` as an alias that maps to `bypassPermissions` and
+> conflict-checks against `--permission-mode`. Every property below still holds, applied to one
+> enum value: default off, never sticky, never armed by a handoff, emitted as a fixed literal.
+> The checkboxes are ticked on that basis. **Step 6 is the exception and is left unticked** —
+> see the note there.
 
 **Files:** modify `src/bridge/launcher.py`, `src/bridge/api.py`, `src/bridge/cli.py`,
 `src/bridge/templates/_card.html`, `src/bridge/static/launch.js`; test `tests/test_launcher.py`,
@@ -292,7 +353,7 @@ BYPASS_FLAG = "--dangerously-skip-permissions"
 
 **Steps:**
 
-- [ ] **Step 1: Write the failing tests.** Both modes, and — most importantly — the default:
+- [x] **Step 1: Write the failing tests.** Both modes, and — most importantly — the default:
 
 ```python
 def test_terminal_mode_omits_the_bypass_flag_by_default():
@@ -327,10 +388,10 @@ def test_the_bypass_flag_is_never_the_allow_variant():
     assert "--allow-dangerously-skip-permissions" not in argv
 ```
 
-- [ ] **Step 2: Run them and watch them fail.** `TypeError: unexpected keyword argument
+- [x] **Step 2: Run them and watch them fail.** `TypeError: unexpected keyword argument
       'bypass_permissions'`.
 
-- [ ] **Step 3: Implement.** Add the field to `LaunchSpec`, then in `build_shell_command` after the
+- [x] **Step 3: Implement.** Add the field to `LaunchSpec`, then in `build_shell_command` after the
       effort branch and before `-n`:
 
 ```python
@@ -342,12 +403,12 @@ def test_the_bypass_flag_is_never_the_allow_variant():
 
       and the identical branch in `build_bg_argv` (`argv.append(BYPASS_FLAG)`).
 
-- [ ] **Step 4: Thread it through the API and CLI.** `LaunchIn.bypass_permissions: bool = False`,
+- [x] **Step 4: Thread it through the API and CLI.** `LaunchIn.bypass_permissions: bool = False`,
       passed into the `LaunchSpec` in `post_launch`. On the CLI,
       `--dangerously-skip-permissions` as `action="store_true"`, sent in the JSON body. Name the CLI
       flag exactly as `claude` spells it so muscle memory transfers.
 
-- [ ] **Step 5: The checkbox.** In the launch band, after the effort field. Unchecked always — it is
+- [x] **Step 5: The checkbox.** In the launch band, after the effort field. Unchecked always — it is
       never pre-checked from a suggestion, because no handoff should be able to arm it:
 
 ```jinja
@@ -373,20 +434,26 @@ def test_the_bypass_flag_is_never_the_allow_variant():
       word "Skip permissions", never colour alone. `tests/test_contrast.py` already enforces contrast
       ratios; add the new class to whatever it iterates so AA is checked rather than assumed.
 
-- [ ] **Step 7: Run the suite, write** `tools/mutations/phase4-task2.json`**, run it, commit.**
+      > **2026-08-01: left unticked — half of this did not ship.** The styling exists in the
+      > enum's form (`.launch__field--perm:has(.launch__option--danger:checked)` in `app.css`,
+      > and the option's own text says `SKIP ALL CHECKS`, so it is never colour alone). But the
+      > second sentence was never done: `tests/test_contrast.py`'s `PAIRS` has no entry for the
+      > permission affordance, so its colours are asserted by eye rather than by the suite.
+
+- [x] **Step 7: Run the suite, write** `tools/mutations/phase4-task2.json`**, run it, commit.**
 
 ```bash
 git commit -m "Offer an opt-in bypass-permissions launch"
 ```
 
 **Tests (falsification required):**
-- [ ] Default off in both modes. *Mutation: default `bypass_permissions=True` → every launch silently
+- [x] Default off in both modes. *Mutation: default `bypass_permissions=True` → every launch silently
       becomes a bypassed one. This is the mutation that matters most in the whole phase.*
-- [ ] The flag appears exactly once when asked. *Mutation: append unconditionally → the checkbox stops
+- [x] The flag appears exactly once when asked. *Mutation: append unconditionally → the checkbox stops
       meaning anything.*
-- [ ] The prompt is still the last argv element in background mode. *Mutation: append the flag after
+- [x] The prompt is still the last argv element in background mode. *Mutation: append the flag after
       the prompt → `claude` reads the flag as part of the prompt.*
-- [ ] `tests/test_static_js.py` asserts `launch.js` sends `bypass_permissions`, executing the file
+- [x] `tests/test_static_js.py` asserts `launch.js` sends `bypass_permissions`, executing the file
       with **node resolved by absolute path**. *Mutation: drop the body key → the server always
       defaults to false and the checkbox is decorative.*
 
@@ -419,7 +486,7 @@ def by_project(state: AgentsState, alias_map: dict[str, str]) -> dict[str, list[
 
 **Steps:**
 
-- [ ] **Step 1: Write the failing tests** against the real recorded payload. Paste the measured JSON
+- [x] **Step 1: Write the failing tests** against the real recorded payload. Paste the measured JSON
       verbatim as a fixture — a hand-simplified one would drift from reality, which is precisely how
       the spec got this wrong:
 
@@ -483,9 +550,9 @@ def test_by_project_maps_an_aliased_cwd_to_its_canonical_project():
     assert "/Users/mitsheth/dev/projectX" in grouped
 ```
 
-- [ ] **Step 2: Run them and watch them fail.** `ModuleNotFoundError: bridge.agents`.
+- [x] **Step 2: Run them and watch them fail.** `ModuleNotFoundError: bridge.agents`.
 
-- [ ] **Step 3: Implement.** Reuse `launcher`'s shape-tolerant iterator and ANSI stripper rather than
+- [x] **Step 3: Implement.** Reuse `launcher`'s shape-tolerant iterator and ANSI stripper rather than
       re-deriving them — and note *why* the import points that way:
 
 ```python
@@ -544,24 +611,24 @@ def probe(claude=None, run=subprocess.run, timeout: float = 2.0) -> AgentsState:
       make a `null` payload look like `ok` with no sessions. Reject a non-list, non-dict payload
       explicitly so `null` is `unavailable`.
 
-- [ ] **Step 4: `by_project`.** Map each `cwd` through the alias table, then group. A `cwd` with no
+- [x] **Step 4: `by_project`.** Map each `cwd` through the alias table, then group. A `cwd` with no
       alias maps to itself.
 
-- [ ] **Step 5: Run, write** `tools/mutations/phase4-task3.json`**, run it, commit.**
+- [x] **Step 5: Run, write** `tools/mutations/phase4-task3.json`**, run it, commit.**
 
 ```bash
 git commit -m "Probe claude agents for live sessions"
 ```
 
 **Tests (falsification required):**
-- [ ] ms→s conversion. *Mutation: drop `// 1000` → every live session claims to have started 56,000
+- [x] ms→s conversion. *Mutation: drop `// 1000` → every live session claims to have started 56,000
       years in the future and "running for" arithmetic goes negative.*
-- [ ] Non-zero exit is `unavailable`, not empty. *Mutation: return `AgentsState("ok", [])` → the panel
+- [x] Non-zero exit is `unavailable`, not empty. *Mutation: return `AgentsState("ok", [])` → the panel
       asserts "nothing is running" on the strength of a failed probe.*
-- [ ] `null` payload is `unavailable`. *Mutation: accept any parse → same false claim.*
-- [ ] An entry with no `sessionId` is skipped, not fatal. *Mutation: drop the regex guard → one junk
+- [x] `null` payload is `unavailable`. *Mutation: accept any parse → same false claim.*
+- [x] An entry with no `sessionId` is skipped, not fatal. *Mutation: drop the regex guard → one junk
       entry makes the whole probe unavailable.*
-- [ ] Reads `sessionId`, not `session_id`. *Mutation: read `session_id` → the probe silently returns
+- [x] Reads `sessionId`, not `session_id`. *Mutation: read `session_id` → the probe silently returns
       zero sessions against real output, which is the exact bug the spec would have caused.*
 
 ---
@@ -580,7 +647,7 @@ Store.get_git_cache(project_id: int) -> tuple[GitState, int] | None   # (state, 
 
 **Steps:**
 
-- [ ] **Step 1: Write the failing tests.** The behaviour is a fallback, so the test is a sequence:
+- [x] **Step 1: Write the failing tests.** The behaviour is a fallback, so the test is a sequence:
 
 ```python
 def test_a_timed_out_probe_shows_the_last_good_state_with_its_age(store, cfg):
@@ -626,9 +693,9 @@ def test_no_cache_and_an_unavailable_probe_stays_unavailable(store, cfg):
     assert card.git.cached_at is None
 ```
 
-- [ ] **Step 2: Run and watch fail.** `AttributeError: 'Store' has no attribute 'put_git_cache'`.
+- [x] **Step 2: Run and watch fail.** `AttributeError: 'Store' has no attribute 'put_git_cache'`.
 
-- [ ] **Step 3: Implement the store pair.** The table already exists in `SCHEMA` — Phase 1 created it
+- [x] **Step 3: Implement the store pair.** The table already exists in `SCHEMA` — Phase 1 created it
       and nothing ever read or wrote it, which is what this task fixes:
 
 ```python
@@ -658,7 +725,7 @@ def test_no_cache_and_an_unavailable_probe_stays_unavailable(store, cfg):
         return GitState(**{k: v for k, v in payload.items() if k in known}), row["probed_at"]
 ```
 
-- [ ] **Step 4: Wire the fallback into `build_cards`,** replacing the bare `git = probe_fn(...)`:
+- [x] **Step 4: Wire the fallback into `build_cards`,** replacing the bare `git = probe_fn(...)`:
 
 ```python
         if git.status == "ok":
@@ -676,7 +743,7 @@ def test_no_cache_and_an_unavailable_probe_stays_unavailable(store, cfg):
       as `None`, which round-trips correctly, so no special case is needed. Confirm that with the
       version-drift test above.
 
-- [ ] **Step 5: Render the age.** In the git line of `_card.html`, only when `cached_at` is set:
+- [x] **Step 5: Render the age.** In the git line of `_card.html`, only when `cached_at` is set:
 
 ```jinja
       {% if card.git.cached_at %}
@@ -686,25 +753,25 @@ def test_no_cache_and_an_unavailable_probe_stays_unavailable(store, cfg):
       {% endif %}
 ```
 
-      **`ago_epoch`, not `ago`.** `api.py:119-120` registers both: `ago` takes an ISO-8601 string
+      **`ago_epoch`, not `ago`.** `api.py:155-158` registers both: `ago` takes an ISO-8601 string
       (`card.session.ended_at`), `ago_epoch` takes an epoch int. `cached_at` is an epoch int, and
       passing it to `ago` would either raise or render nonsense. Both filters emit a bare duration,
       so the word "ago" is supplied by the template — as every existing call site does.
 
-- [ ] **Step 6: Run, write** `tools/mutations/phase4-task4.json`**, run it, commit.**
+- [x] **Step 6: Run, write** `tools/mutations/phase4-task4.json`**, run it, commit.**
 
 ```bash
 git commit -m "Show the last good git state with its age when a probe fails"
 ```
 
 **Tests (falsification required):**
-- [ ] The fallback fires. *Mutation: delete the `elif` branch → back to today's behaviour, "git
+- [x] The fallback fires. *Mutation: delete the `elif` branch → back to today's behaviour, "git
       unavailable" on a card whose state is known.*
-- [ ] `unavailable` never overwrites. *Mutation: cache unconditionally → the first timeout overwrites
+- [x] `unavailable` never overwrites. *Mutation: cache unconditionally → the first timeout overwrites
       the good state with the failure, so the fallback can never work again. This is the subtle one.*
-- [ ] `not_a_repo` passes through. *Mutation: treat it as transient → a deleted repo shows a fossil
+- [x] `not_a_repo` passes through. *Mutation: treat it as transient → a deleted repo shows a fossil
       branch forever.*
-- [ ] Unknown payload fields are filtered. *Mutation: `GitState(**payload)` → a schema change turns
+- [x] Unknown payload fields are filtered. *Mutation: `GitState(**payload)` → a schema change turns
       every cache hit into a `TypeError` and takes the whole dashboard down.*
 
 ---
@@ -729,7 +796,7 @@ RANK_OTHER  = 3     # was 2
 
 **Steps:**
 
-- [ ] **Step 1: Write the failing tests.** The ordering is the spec's, and it is not the obvious one —
+- [x] **Step 1: Write the failing tests.** The ordering is the spec's, and it is not the obvious one —
       a queued handoff outranks a running session:
 
 ```python
@@ -769,9 +836,9 @@ def test_the_agents_probe_runs_once_for_the_whole_dashboard(store, cfg):
     assert len(calls) == 1
 ```
 
-- [ ] **Step 2: Run and watch fail.** `TypeError: unexpected keyword argument 'agents_fn'`.
+- [x] **Step 2: Run and watch fail.** `TypeError: unexpected keyword argument 'agents_fn'`.
 
-- [ ] **Step 3: Implement.** One probe for the whole build, grouped by project path before the loop —
+- [x] **Step 3: Implement.** One probe for the whole build, grouped by project path before the loop —
       the per-card alternative would fork a subprocess per project:
 
 ```python
@@ -788,7 +855,7 @@ def test_the_agents_probe_runs_once_for_the_whole_dashboard(store, cfg):
       first if several — and `live_unavailable = live_state.status == "unavailable"`. Renumber the
       ranks and add the `RANK_RUNNING` branch to `sort_key`, keeping the handoff branch first.
 
-- [ ] **Step 4: Render the band.** Above the git line, colour plus a word — never colour alone:
+- [x] **Step 4: Render the band.** Above the git line, colour plus a word — never colour alone:
 
 ```jinja
   {% if card.live %}
@@ -806,24 +873,30 @@ def test_the_agents_probe_runs_once_for_the_whole_dashboard(store, cfg):
   {% endif %}
 ```
 
-- [ ] **Step 5: Update the `cards.py` docstring.** It currently promises "Phase 4 will add running
+      > **2026-08-01: the markup shipped as written; the colour half of "colour plus a word" did
+      > not.** `app.css` has no rules for `.live`, `.live--busy`, `.live--idle`,
+      > `.live--needs_input`, `.live--unknown` or `.live__dot`. The word is there and carries the
+      > whole meaning, so nothing is conveyed by colour alone and no AA pair is violated — but the
+      > band is currently unstyled rather than deliberately styled.
+
+- [x] **Step 5: Update the `cards.py` docstring.** It currently promises "Phase 4 will add running
       sessions above rank 0 by shifting these values". Phase 4 is now, so state what happened instead
       of what will.
 
-- [ ] **Step 6: Run, write** `tools/mutations/phase4-task5.json`**, run it, commit.**
+- [x] **Step 6: Run, write** `tools/mutations/phase4-task5.json`**, run it, commit.**
 
 ```bash
 git commit -m "Show live sessions on the card and rank them"
 ```
 
 **Tests (falsification required):**
-- [ ] Handoff still outranks running. *Mutation: `RANK_RUNNING = -2` → a running session buries the
+- [x] Handoff still outranks running. *Mutation: `RANK_RUNNING = -2` → a running session buries the
       card that is actually waiting on you, inverting the panel's whole purpose.*
-- [ ] A failed probe keeps every card. *Mutation: `continue` on unavailable → the dashboard empties
+- [x] A failed probe keeps every card. *Mutation: `continue` on unavailable → the dashboard empties
       when `claude` is missing.*
-- [ ] `live_unavailable` is distinct from `live is None`. *Mutation: collapse the two → "nothing
+- [x] `live_unavailable` is distinct from `live is None`. *Mutation: collapse the two → "nothing
       running" is asserted from a failed probe.*
-- [ ] One probe per build. *Mutation: move the probe inside the loop → N subprocesses per page load;
+- [x] One probe per build. *Mutation: move the probe inside the loop → N subprocesses per page load;
       the test counts calls, so this is caught rather than merely slow.*
 
 ---
@@ -841,7 +914,7 @@ cards.spark_points(values: list[int], width: int = 72, height: int = 20) -> str 
 
 **Steps:**
 
-- [ ] **Step 1: Write the failing tests.** The geometry is pure, so it is cheap to pin exactly — and
+- [x] **Step 1: Write the failing tests.** The geometry is pure, so it is cheap to pin exactly — and
       the degenerate cases are where sparklines actually break:
 
 ```python
@@ -889,9 +962,9 @@ def test_the_series_uses_the_same_token_definition_as_the_burn_text(store):
     assert store.token_series(pid, days=1, now=NOW)[-1] == store.token_totals(pid, NOW - 86400)
 ```
 
-- [ ] **Step 2: Run and watch fail.** `AttributeError: no attribute 'token_series'`.
+- [x] **Step 2: Run and watch fail.** `AttributeError: no attribute 'token_series'`.
 
-- [ ] **Step 3: Implement the query.** Bucket by day in SQL, then fill gaps in Python — a missing day
+- [x] **Step 3: Implement the query.** Bucket by day in SQL, then fill gaps in Python — a missing day
       must be a zero, not an absent point, or the sparkline lies about its x-axis:
 
 ```python
@@ -922,7 +995,7 @@ def test_the_series_uses_the_same_token_definition_as_the_burn_text(store):
         return series
 ```
 
-- [ ] **Step 4: Implement the geometry** as a pure function in `cards.py`:
+- [x] **Step 4: Implement the geometry** as a pure function in `cards.py`:
 
 ```python
 def spark_points(values: list[int], width: int = 72, height: int = 20) -> str:
@@ -944,7 +1017,7 @@ def spark_points(values: list[int], width: int = 72, height: int = 20) -> str:
     return " ".join(out)
 ```
 
-- [ ] **Step 5: Populate and render.** `spark=store.token_series(row["id"], 7, now)` in
+- [x] **Step 5: Populate and render.** `spark=store.token_series(row["id"], 7, now)` in
       `build_cards`, and in the burn line:
 
 ```jinja
@@ -962,21 +1035,21 @@ def spark_points(values: list[int], width: int = 72, height: int = 20) -> str:
 
       Register `spark_points` as a Jinja filter next to the existing `kilo`.
 
-- [ ] **Step 6: Run, write** `tools/mutations/phase4-task6.json`**, run it, commit.**
+- [x] **Step 6: Run, write** `tools/mutations/phase4-task6.json`**, run it, commit.**
 
 ```bash
 git commit -m "Draw a seven-day token sparkline on each card"
 ```
 
 **Tests (falsification required):**
-- [ ] All-zero is flat at the baseline. *Mutation: drop the `if span else height` guard →
+- [x] All-zero is flat at the baseline. *Mutation: drop the `if span else height` guard →
       `ZeroDivisionError` on every idle card, which is most of them.*
-- [ ] Missing days are zeros. *Mutation: return only the rows found → a project active on two days
+- [x] Missing days are zeros. *Mutation: return only the rows found → a project active on two days
       renders a 2-point line labelled as a week.*
-- [ ] Oldest-first ordering. *Mutation: reverse the series → the trend reads backwards, so a project
+- [x] Oldest-first ordering. *Mutation: reverse the series → the trend reads backwards, so a project
       winding down looks like one ramping up.*
-- [ ] y is inverted. *Mutation: `y = (v - lo) / span * height` → every sparkline is upside down.*
-- [ ] The series matches `token_totals`'s definition. *Mutation: add the cache columns to the SUM →
+- [x] y is inverted. *Mutation: `y = (v - lo) / span * height` → every sparkline is upside down.*
+- [x] The series matches `token_totals`'s definition. *Mutation: add the cache columns to the SUM →
       the line's magnitude silently contradicts the burn text beside it.*
 
 ---
@@ -1004,7 +1077,7 @@ GET /diagnostics      -> HTML
 
 **Steps:**
 
-- [ ] **Step 1: Write the failing tests.**
+- [x] **Step 1: Write the failing tests.**
 
 ```python
 def test_an_index_run_is_recorded_so_diagnostics_has_something_to_read(store, tmp_path):
@@ -1043,41 +1116,56 @@ def test_diagnostics_survives_never_having_indexed(client):
     assert client.get("/api/diagnostics").status_code == 200
 ```
 
-- [ ] **Step 2: Run and watch fail.** `404` on `/api/diagnostics`.
+- [x] **Step 2: Run and watch fail.** `404` on `/api/diagnostics`.
 
-- [ ] **Step 3: Add the table and the store pair.** Append the `CREATE TABLE IF NOT EXISTS` to
+- [x] **Step 3: Add the table and the store pair.** Append the `CREATE TABLE IF NOT EXISTS` to
       `SCHEMA`. `record_index_run` takes the stats dict `indexer.index` already returns, so the
       indexer's return shape stays the contract and nothing new is invented.
 
-- [ ] **Step 4: Record from the indexer.** At the end of `index()`, time the run and call
+- [x] **Step 4: Record from the indexer.** At the end of `index()`, time the run and call
       `record_index_run`. It must not be able to fail the scan: wrap it so a diagnostics write
       cannot lose an index. Keep returning the same dict — `bridge index` prints it and
       `tests/test_indexer.py` asserts on it.
 
-- [ ] **Step 5: Add both routes.** `/api/diagnostics` assembles the numbers; `probe_failures` and
+- [x] **Step 5: Add both routes.** `/api/diagnostics` assembles the numbers; `probe_failures` and
       `live` come from building cards, which is already what `/` does. `/diagnostics` renders them in
       a plain table. In `base.html`, show the affordance only when `parse_errors > 0` or the spool is
       non-empty — a permanent "diagnostics" link would train the eye to ignore it.
 
-- [ ] **Step 6: Run, write** `tools/mutations/phase4-task7.json`**, run it, commit.**
+- [x] **Step 6: Run, write** `tools/mutations/phase4-task7.json`**, run it, commit.**
 
 ```bash
 git commit -m "Record index runs and expose a diagnostics view"
 ```
 
 **Tests (falsification required):**
-- [ ] Drained files are excluded from depth. *Mutation: count the directory recursively → depth grows
+- [x] Drained files are excluded from depth. *Mutation: count the directory recursively → depth grows
       forever and permanently claims a backlog that was drained.*
-- [ ] The header affordance is conditional. *Mutation: always show it → the one signal that something
+- [x] The header affordance is conditional. *Mutation: always show it → the one signal that something
       is wrong becomes furniture.*
-- [ ] A failed diagnostics write cannot fail an index. *Mutation: remove the guard → a diagnostics bug
+- [x] A failed diagnostics write cannot fail an index. *Mutation: remove the guard → a diagnostics bug
       takes out indexing, the one thing that must always work.*
-- [ ] The route answers before any index has run. *Mutation: index `[0]` of the runs → 500 on a fresh
+- [x] The route answers before any index has run. *Mutation: index `[0]` of the runs → 500 on a fresh
       install.*
 
 ---
 
 ### Task 8: SSE
+
+> **2026-08-01 — shipped, with the amendments' wire rather than this one.** Three named events
+> (`snapshot` on connect, `delta` after, `refresh` on lag) instead of the bare `data:` frames
+> below, so the Step 1 test's `body.startswith("data: ")` is not what the suite asserts; plus
+> tombstones (`removed`), emit-only-on-change, and a 300 s cap. `Last-Event-ID` was deleted, as
+> the amendments direct.
+>
+> **One later correction, `688f3c9`.** The payload shape below is keyed by *project path*, which
+> silently excluded every live session whose cwd matches no project row — and the topbar's
+> running count included them, so the count and the cards disagreed with nothing on the page to
+> explain the difference. Those sessions are now keyed by **their own cwd**, carried in a
+> parallel `unattributed` list, and rendered in a "Running outside any project" section under
+> the cards using the same `data-live-path` hook, so `live.js` patches them without knowing they
+> are not projects. The `\x00unattributed` sentinel itself never reaches the wire. This
+> supersedes any reading of the payload below as project-paths-only.
 
 **Files:** modify `src/bridge/api.py`, `src/bridge/templates/base.html`; create
 `src/bridge/static/live.js`; test `tests/test_api.py`, `tests/test_static_js.py`
@@ -1092,7 +1180,7 @@ GET /events   ->   text/event-stream
 
 **Steps:**
 
-- [ ] **Step 1: Write the failing tests.** The two risks are a frozen panel and a destroyed edit, so
+- [x] **Step 1: Write the failing tests.** The two risks are a frozen panel and a destroyed edit, so
       test those rather than the happy path. Timing is injected — no test sleeps:
 
 ```python
@@ -1132,9 +1220,9 @@ def test_live_js_never_touches_the_prompt_textarea():
     assert "location.reload" not in source
 ```
 
-- [ ] **Step 2: Run and watch fail.** `404` on `/events`.
+- [x] **Step 2: Run and watch fail.** `404` on `/events`.
 
-- [ ] **Step 3: Implement the endpoint** with `StreamingResponse` and a plain generator. No new
+- [x] **Step 3: Implement the endpoint** with `StreamingResponse` and a plain generator. No new
       dependency: `sse-starlette` would add one for framing that is three lines of string
       formatting, and `pyproject.toml` gaining a dependency means everyone re-runs
       `uv tool install --editable --force`.
@@ -1163,7 +1251,7 @@ def test_live_js_never_touches_the_prompt_textarea():
                                           "X-Accel-Buffering": "no"})
 ```
 
-- [ ] **Step 4: Write `live.js`** to patch only the live band, the burn text, and the sparkline. It
+- [x] **Step 4: Write `live.js`** to patch only the live band, the burn text, and the sparkline. It
       must not touch the handoff textarea, must not `innerHTML` a card, and must not reload:
 
 ```js
@@ -1192,24 +1280,24 @@ source.addEventListener("message", (event) => {
       `EventSource` reconnects on its own, so there is no retry logic to write. Add
       `data-live-path="{{ card.path }}"` to the band from Task 5, and the `<script>` to `base.html`.
 
-- [ ] **Step 5: Confirm the sole-writer architecture is intact.** `/events` reads; it must not index,
+- [x] **Step 5: Confirm the sole-writer architecture is intact.** `/events` reads; it must not index,
       launch, or write. Add an assertion that a tick performs no writes if the suite has an idiom for
       it; otherwise state it in the docstring and keep the generator's calls read-only.
 
-- [ ] **Step 6: Run, write** `tools/mutations/phase4-task8.json`**, run it, commit.**
+- [x] **Step 6: Run, write** `tools/mutations/phase4-task8.json`**, run it, commit.**
 
 ```bash
 git commit -m "Push live updates over SSE"
 ```
 
 **Tests (falsification required):**
-- [ ] An open stream does not block other requests. *Mutation: hold the store lock across the sleep →
+- [x] An open stream does not block other requests. *Mutation: hold the store lock across the sleep →
       the whole panel hangs while a tab is open. The single worst regression available in this phase.*
-- [ ] Frames end with a blank line. *Mutation: single `\n` → the browser buffers forever and no event
+- [x] Frames end with a blank line. *Mutation: single `\n` → the browser buffers forever and no event
       ever fires, with no error anywhere.*
-- [ ] A malformed frame is skipped, not fatal. *Mutation: drop the try/catch → one bad payload kills
+- [x] A malformed frame is skipped, not fatal. *Mutation: drop the try/catch → one bad payload kills
       live updates for the session.*
-- [ ] `live.js` never references the prompt field or `innerHTML`. *Mutation: patch the card by
+- [x] `live.js` never references the prompt field or `innerHTML`. *Mutation: patch the card by
       `innerHTML` → a live tick silently discards whatever the user was typing.*
 
 ---
@@ -1220,11 +1308,22 @@ Carried forward from the Phase 3 handoff and not addressed here:
 
 - **`~/.bridge/config.toml`.** Decision 3. The model catalog changes shape in Task 1; changing where
   it *lives* at the same time would conflate two things.
+  **[2026-08-01: the file was created after this phase merged, in `a60cd3d`.** It carries
+  `[aliases]` and `[archived] paths`, read by `config.config_path()` / `_read_config_file()`
+  with a loud `ConfigError` on a malformed file. The model catalog, the effort list and the
+  permission modes stayed in `config.py` as this entry intended, so the *catalog* is still
+  out of scope; the file is not. `stale_hours` followed it into the file in `4ed2243`.]
 - **Incremental rescan at ~0.22s against the spec's 200ms.** 10% over a round number, on a path that
   is not user-visible. SSE makes scan *frequency* matter, so revisit if a tick ever feels slow —
   Task 7's `duration_ms` is recorded precisely so that becomes a measurement rather than a guess.
 - **The window meter.** Decision 7: no published denominator for the 5h window, so the bar would be
   decorative.
+  **[2026-08-01: closed in `094c590`, and closed *without* a gauge.** The topbar now carries
+  burn rate as a rate (`tokens/hour` over the 5h window), the running-session count, the
+  queued-handoff count and the last index time. No percentage and no bar, because the
+  denominator this entry rules out still does not exist — and no intraday sparkline either,
+  because `ended_epoch` is a session's last-activity instant holding its whole cumulative
+  burn, so sub-daily buckets would draw spikes rather than a shape.]
 - **Killing or signalling a session from the panel.** `agents` gives us `pid`, which makes this look
   trivial. It violates the standing constraint that Bridge launches but never supervises, and it
   belongs to a phase that can think about confirmation semantics.
@@ -1245,6 +1344,18 @@ all covered; **window meter deliberately deferred** with a reason. Mit's two req
 Gap accepted: the spec's `PATCH /api/projects/{id}` (pin/archive/hide) is still unimplemented from
 Phase 1 and is not in this plan. It is unrelated to liveness and does not block anything here.
 
+> **2026-08-01: mostly closed.** `3de9a29` shipped `PATCH /api/projects/{id}` taking a required
+> `status` ∈ `active` \| `hidden` \| `archived` (`ProjectPatch`; an empty body is a 422, an
+> unknown id a 404), a Hide control on each card, and a restore list at the foot of the
+> dashboard that is rendered even when empty so hiding the *first* project has somewhere to
+> put it. Mutations in `tools/mutations/project-status.json`.
+>
+> **`pin` is the remaining piece and is not on `main` yet.** The `projects.pinned` column has
+> been in `SCHEMA` since Phase 1 with no reader or writer. The behaviour is now decided: **a
+> pinned project sorts above everything, including a queued handoff** — i.e. above
+> `RANK_HANDOFF`, which is the one rank this plan's Task 5 treats as the ceiling. Update this
+> note when it lands.
+
 **2. Placeholder scan.** No TBDs. Every code step carries real code; every model id was extracted
 from the installed binary; the `agents` fixture is the literal recorded payload. One step
 deliberately defers to the codebase rather than inventing: the contrast-test iteration in Task 2
@@ -1264,11 +1375,11 @@ trusting the draft:
 1. Task 5's live band read `card.live.model`, which does not exist — `claude agents --json` has no
    `model` field. It now reads `card.session.model`, with a comment saying why so the next person
    does not "fix" it back.
-2. Tasks 4 and 5 piped epoch integers through the `ago` filter. `api.py:119-120` registers **two**
-   filters — `ago` for ISO-8601 strings, `ago_epoch` for epoch ints — and `cached_at` and
+2. Tasks 4 and 5 piped epoch integers through the `ago` filter. `api.py:155-158` registers **two**
+   age filters — `ago` for ISO-8601 strings, `ago_epoch` for epoch ints — and `cached_at` and
    `started_at` are both ints. Corrected to `ago_epoch`, and both now supply the trailing "ago" the
    way every existing call site does.
-3. Task 6's `token_series` summed all four token columns while `token_totals` (`store.py:464`) sums
+3. Task 6's `token_series` summed all four token columns while `token_totals` (`store.py:596`) sums
    only `tokens_in + tokens_out`. The sparkline renders beside that method's output, so the two
    definitions must agree; the query was narrowed and a test now pins the two together, because
    nothing else would ever catch the drift.

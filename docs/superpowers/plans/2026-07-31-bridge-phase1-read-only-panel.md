@@ -1,5 +1,15 @@
 # Bridge Phase 1 — Read-Only Panel Implementation Plan
 
+> **STATUS 2026-08-01: Phase 1 shipped and is merged.** All ten tasks below are
+> implemented. `phase1-read-only-panel` merged to `main` at `08d5eab` — 93 tests
+> passing, 35 project cards from 421,480 parsed lines, 0 parse errors — and the
+> branch is deleted. Path aliasing (`bed0b3a`) landed with it. The checkboxes are
+> ticked to match.
+>
+> Falsification was still done by hand in this phase; `tools/falsify.py` and the
+> recorded `tools/mutations/*.json` specs arrive in Phase 2, so nothing here has a
+> committed mutation spec.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** A local web dashboard that indexes the existing 9,229 Claude Code transcripts and renders one card per project showing what the last session did, git state, and token burn.
@@ -13,7 +23,7 @@
 ## Global Constraints
 
 - Python **3.13**, pinned via `uv`. `/usr/bin/python3` is 3.9.6 and must never be used. Every command is `uv run …`.
-- Runtime dependencies limited to: `fastapi`, `uvicorn[standard]`, `jinja2`. Dev: `pytest`. Nothing else without a stated reason.
+- Runtime dependencies limited to: `fastapi`, `uvicorn[standard]`, `jinja2`. Dev: `pytest`. Nothing else without a stated reason. **[2026-08-01: the runtime three held exactly. Dev gained one, `httpx2>=2.9.1`, and the reason was never written down — it is what `fastapi.testclient.TestClient` needs, and this plan mandates `TestClient` from Task 9 onward. Recorded here so it stops looking like drift.]**
 - **Bridge never writes to a user project repo.** Its only writes are its own SQLite DB under `~/.bridge/`.
 - **All git invocations are read-only**, use the absolute path `/usr/bin/git`, and carry a **2.0 second** timeout.
 - **Bind to `127.0.0.1:8787` only.** No authentication, no `0.0.0.0`.
@@ -36,7 +46,7 @@
 - Consumes: nothing.
 - Produces: `bridge.config.Config` dataclass with fields `claude_projects_dir: Path`, `db_path: Path`, `dev_dir: Path`, `stale_hours: int`, `models: list[str]`, `efforts: list[str]`, `port: int`. Function `bridge.config.load(overrides: dict | None = None) -> Config`.
 
-- [ ] **Step 1: Create the Python pin and project metadata**
+- [x] **Step 1: Create the Python pin and project metadata**
 
 `.python-version`:
 ```
@@ -65,12 +75,12 @@ packages = ["src/bridge"]
 testpaths = ["tests"]
 ```
 
-- [ ] **Step 2: Sync the environment**
+- [x] **Step 2: Sync the environment**
 
 Run: `cd ~/dev/bridge && uv sync --extra dev`
 Expected: creates `.venv` with Python 3.13.x, installs fastapi/uvicorn/jinja2/pytest.
 
-- [ ] **Step 3: Write the failing test**
+- [x] **Step 3: Write the failing test**
 
 `tests/test_config.py`:
 ```python
@@ -106,12 +116,12 @@ def test_config_is_frozen():
     raise AssertionError("Config must be immutable")
 ```
 
-- [ ] **Step 4: Run test to verify it fails**
+- [x] **Step 4: Run test to verify it fails**
 
 Run: `uv run pytest tests/test_config.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'bridge.config'`
 
-- [ ] **Step 5: Write minimal implementation**
+- [x] **Step 5: Write minimal implementation**
 
 `src/bridge/__init__.py`:
 ```python
@@ -156,12 +166,12 @@ def load(overrides: dict | None = None) -> Config:
     return cfg
 ```
 
-- [ ] **Step 6: Run tests to verify they pass**
+- [x] **Step 6: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_config.py -v`
 Expected: 3 passed
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 cd ~/dev/bridge
@@ -185,7 +195,7 @@ git commit -m "Add project scaffold and configuration"
   - `bridge.transcripts.ScanResult` dataclass: `record: SessionRecord | None`, `new_offset: int`, `lines_parsed: int`, `parse_errors: int`.
   - `bridge.transcripts.scan(path: Path, start_offset: int = 0, prev: SessionRecord | None = None) -> ScanResult`
 
-- [ ] **Step 1: Write the fixture builder**
+- [x] **Step 1: Write the fixture builder**
 
 `tests/conftest.py`:
 ```python
@@ -241,7 +251,7 @@ def normal_session():
     ]
 ```
 
-- [ ] **Step 2: Write the failing tests**
+- [x] **Step 2: Write the failing tests**
 
 `tests/test_transcripts.py`:
 ```python
@@ -356,12 +366,12 @@ def test_interrupted_session_flagged(write_transcript):
     assert scan(p).record.interrupted is True
 ```
 
-- [ ] **Step 3: Run tests to verify they fail**
+- [x] **Step 3: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_transcripts.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'bridge.transcripts'`
 
-- [ ] **Step 4: Write the implementation**
+- [x] **Step 4: Write the implementation**
 
 `src/bridge/models.py`:
 ```python
@@ -531,12 +541,12 @@ def _apply(rec: SessionRecord | None, obj: dict, path: str) -> SessionRecord | N
     return rec
 ```
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [x] **Step 5: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_transcripts.py -v`
 Expected: 10 passed
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 cd ~/dev/bridge
@@ -558,7 +568,7 @@ git commit -m "Add tolerant streaming transcript parser"
 
 Rationale: a wall-clock assertion would pass on a fast machine even if the indexer secretly re-read all 3.5 GB. Asserting *how many lines were parsed* catches the actual regression.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `tests/test_transcripts.py`:
 ```python
@@ -637,12 +647,12 @@ def test_incremental_totals_match_full_scan(write_transcript):
     assert incremental.lines_parsed == 3
 ```
 
-- [ ] **Step 2: Run tests**
+- [x] **Step 2: Run tests**
 
 Run: `uv run pytest tests/test_transcripts.py -v`
 Expected: 15 passed. The Task 2 implementation already satisfies these; if any fail, the accumulation logic in `scan`/`_apply` is wrong and must be fixed here rather than in a later task.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 cd ~/dev/bridge
@@ -673,7 +683,7 @@ git commit -m "Assert incremental rescan reads only appended lines"
   - `.token_totals(project_id: int, since_epoch: int) -> int`
   - `.close() -> None`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `tests/test_store.py`:
 ```python
@@ -805,12 +815,12 @@ def test_additive_migration_preserves_data(tmp_path):
     s2.close()
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_store.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'bridge.store'`
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 `src/bridge/store.py`:
 ```python
@@ -1003,12 +1013,12 @@ class Store:
         return row["t"]
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_store.py -v`
 Expected: 10 passed
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd ~/dev/bridge
@@ -1033,7 +1043,7 @@ git commit -m "Add SQLite store with WAL and additive schema"
 - `"not_a_repo"` — **the ~43% common case.** No warning treatment applies; the card shows a neutral note.
 - `"unavailable"` — git timed out, is missing, or the path does not exist.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `tests/test_gitprobe.py`:
 ```python
@@ -1120,12 +1130,12 @@ def test_timeout_yields_unavailable(repo, monkeypatch):
     assert probe(repo).status == "unavailable"
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_gitprobe.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'bridge.gitprobe'`
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 `src/bridge/gitprobe.py`:
 ```python
@@ -1205,12 +1215,12 @@ def _oldest_mtime(root: Path, porcelain_lines: list[str]) -> int | None:
     return oldest
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_gitprobe.py -v`
 Expected: 7 passed
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd ~/dev/bridge
@@ -1235,7 +1245,7 @@ git commit -m "Add read-only git probe treating not-a-repo as a normal state"
 
 The critical rule: transcript directory names encode `/` as `-`, which is **lossy**. `-Users-mitsheth-dev-Job-apps` could decode to `Job apps` (the real directory) or `Job-apps`. Real paths come only from the `cwd` field inside a transcript, never from decoding a directory name.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `tests/test_registry.py`:
 ```python
@@ -1287,12 +1297,12 @@ def test_transcript_files_missing_dir_returns_empty(tmp_path):
     assert transcript_files(tmp_path / "nope") == []
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_registry.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'bridge.registry'`
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 `src/bridge/registry.py`:
 ```python
@@ -1334,12 +1344,12 @@ def transcript_files(projects_dir: Path) -> list[Path]:
     return out
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_registry.py -v`
 Expected: 6 passed
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd ~/dev/bridge
@@ -1363,7 +1373,7 @@ git commit -m "Add project registry with cwd-based path resolution"
 
 Skip rule: a file whose recorded `size` and `mtime` both match is not reopened at all. A file whose size **shrank** was rewritten and is re-scanned from offset 0.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `tests/test_indexer.py`:
 ```python
@@ -1493,12 +1503,12 @@ def test_two_projects_are_separated(env):
     assert {p["name"] for p in store.projects()} == {"demo", "other"}
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_indexer.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'bridge.indexer'`
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 `src/bridge/indexer.py`:
 ```python
@@ -1608,17 +1618,17 @@ def _rehydrate(store: Store, session_id: str | None, path: str) -> SessionRecord
 
 Note on `_rehydrate`: `project_path` is deliberately `None` so an incremental scan re-derives it from the appended `cwd` records. If the delta contains no `cwd`, the session keeps its existing project row and no re-attribution happens.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_indexer.py -v`
 Expected: 8 passed
 
-- [ ] **Step 5: Run the whole suite**
+- [x] **Step 5: Run the whole suite**
 
 Run: `uv run pytest -v`
 Expected: all tests from Tasks 1–7 pass (44 total)
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 cd ~/dev/bridge
@@ -1642,7 +1652,7 @@ git commit -m "Add incremental indexer orchestration"
 
 Sort order (spec: "sorted by actionability, not alphabetically"). Phase 1 has no handoffs or live sessions yet, so the implemented order is: **stale-and-dirty → recently active → everything else**, each tie-broken by most recent session. Phase 2 inserts queued handoffs above stale, Phase 4 inserts running sessions above that. `sort_key` returns a tuple whose first element is a rank int, so later phases prepend ranks without restructuring.
 
-- [ ] **Step 1: Write the failing card tests**
+- [x] **Step 1: Write the failing card tests**
 
 `tests/test_cards.py`:
 ```python
@@ -1740,12 +1750,12 @@ def test_sort_key_rank_is_first_element(store, tmp_path):
     assert isinstance(sort_key(card)[0], int)
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_cards.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'bridge.cards'`
 
-- [ ] **Step 3: Write the card implementation**
+- [x] **Step 3: Write the card implementation**
 
 `src/bridge/cards.py`:
 ```python
@@ -1836,17 +1846,17 @@ def sort_key(card: Card) -> tuple:
 The `to_epoch` import comes from `bridge.store`; update the import line at the
 top of the file to `from bridge.store import Store, now_epoch, to_epoch`.
 
-- [ ] **Step 4: Run card tests to verify they pass**
+- [x] **Step 4: Run card tests to verify they pass**
 
 Run: `uv run pytest tests/test_cards.py -v`
 Expected: 7 passed
 
-- [ ] **Step 5: Run the whole suite**
+- [x] **Step 5: Run the whole suite**
 
 Run: `uv run pytest`
 Expected: all green. Nothing red is committed.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 cd ~/dev/bridge
@@ -1880,7 +1890,7 @@ Presentation rules from the spec, restated because they are testable requirement
 - Single column; two columns at ≥1400px.
 - `not_a_repo` renders a neutral note, never a warning.
 
-- [ ] **Step 1: Write the failing API tests**
+- [x] **Step 1: Write the failing API tests**
 
 `tests/test_api.py`:
 ```python
@@ -1955,12 +1965,12 @@ def test_refresh_returns_stats(client):
     assert "files_seen" in r.json()
 ```
 
-- [ ] **Step 2: Run API tests to verify they fail**
+- [x] **Step 2: Run API tests to verify they fail**
 
 Run: `uv run pytest tests/test_api.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'bridge.api'`
 
-- [ ] **Step 3: Write the API implementation**
+- [x] **Step 3: Write the API implementation**
 
 `src/bridge/api.py`:
 ```python
@@ -2069,7 +2079,7 @@ def _kilo(n: int | None) -> str:
     return f"{n / 1_000_000:.1f}M"
 ```
 
-- [ ] **Step 4: Add the UI assertions to `tests/test_api.py`**
+- [x] **Step 4: Add the UI assertions to `tests/test_api.py`**
 
 ```python
 def test_stale_project_shows_warning_glyph_and_text(tmp_path):
@@ -2134,16 +2144,16 @@ def test_tokens_shown_as_absolute_not_percentage(client):
     assert "today" in text.lower()
 ```
 
-- [ ] **Step 5: Run to verify they fail**
+- [x] **Step 5: Run to verify they fail**
 
 Run: `uv run pytest tests/test_api.py -v`
 Expected: FAIL — templates directory does not exist yet.
 
-- [ ] **Step 6: Invoke design-guardrails**
+- [x] **Step 6: Invoke design-guardrails**
 
 Invoke the `design-guardrails` skill for a dense read-only status dashboard, then apply its rule cards to the CSS in Step 5.
 
-- [ ] **Step 7: Write the templates**
+- [x] **Step 7: Write the templates**
 
 `src/bridge/templates/base.html`:
 ```html
@@ -2256,7 +2266,7 @@ Invoke the `design-guardrails` skill for a dense read-only status dashboard, the
 {% endblock %}
 ```
 
-- [ ] **Step 8: Write the stylesheet**
+- [x] **Step 8: Write the stylesheet**
 
 `src/bridge/static/app.css`:
 ```css
@@ -2326,17 +2336,17 @@ main { padding: 1.5rem; }
 .sessions td { font-variant-numeric: tabular-nums; }
 ```
 
-- [ ] **Step 9: Run the API tests to verify they pass**
+- [x] **Step 9: Run the API tests to verify they pass**
 
 Run: `uv run pytest tests/test_api.py -v`
 Expected: 9 passed
 
-- [ ] **Step 10: Run the whole suite**
+- [x] **Step 10: Run the whole suite**
 
 Run: `uv run pytest`
 Expected: all passing (~60 tests)
 
-- [ ] **Step 11: Commit**
+- [x] **Step 11: Commit**
 
 ```bash
 cd ~/dev/bridge
@@ -2357,7 +2367,7 @@ git commit -m "Add dashboard and project detail UI"
 - Consumes: `config.load`, `store.Store`, `indexer.reindex`, `api.create_app`.
 - Produces: `bridge.__main__.main(argv: list[str] | None = None) -> int`. Subcommands `index` and `serve`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `tests/test_main.py`:
 ```python
@@ -2377,12 +2387,12 @@ def test_unknown_subcommand_is_an_error(tmp_path):
     assert main(["nonsense"]) == 2
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `uv run pytest tests/test_main.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'bridge.__main__'`
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 `src/bridge/__main__.py`:
 ```python
@@ -2442,17 +2452,17 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-- [ ] **Step 4: Run to verify it passes**
+- [x] **Step 4: Run to verify it passes**
 
 Run: `uv run pytest tests/test_main.py -v`
 Expected: 2 passed
 
-- [ ] **Step 5: Run the full suite one more time**
+- [x] **Step 5: Run the full suite one more time**
 
 Run: `uv run pytest`
 Expected: all passing
 
-- [ ] **Step 6: Index the real corpus**
+- [x] **Step 6: Index the real corpus**
 
 Run: `cd ~/dev/bridge && time uv run python -m bridge index`
 
@@ -2463,13 +2473,13 @@ Then prove the incremental path:
 Run: `time uv run python -m bridge index`
 Expected: `files_scanned` near 0, `lines_parsed` near 0, and **wall time under a second**. If the second run takes anywhere near the first, the offset skip logic is broken — fix it before continuing.
 
-- [ ] **Step 7: Look at it**
+- [x] **Step 7: Look at it**
 
 Run: `uv run python -m bridge serve` and open http://127.0.0.1:8787
 
 Confirm by eye: real project names, real session titles, `not a git repo` on the ~10 non-repo projects (`projectY`, `projectX`, `portfolio-website`, `longterm`, …), and no `⚠` on any of them.
 
-- [ ] **Step 8: Write the README**
+- [x] **Step 8: Write the README**
 
 `README.md`:
 ```markdown
@@ -2506,7 +2516,7 @@ Phases 2–4 (handoff capture, session launching, live updates) are planned in
 `docs/superpowers/plans/`.
 ```
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 cd ~/dev/bridge

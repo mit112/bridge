@@ -1,5 +1,12 @@
 # Bridge Phase 2 — Handoff Loop Implementation Plan
 
+> **STATUS 2026-08-01: Phase 2 shipped and is merged.** All six tasks below are
+> implemented, including the one marked droppable (Task 6, `bridge backfill`).
+> Merged to `main` at `0092a90` with 165 tests and 43 recorded mutations across
+> `tools/mutations/task1-store-and-spool.json` … `task6-backfill.json`, all
+> caught. `HANDOFF.md` was deleted in `9ebd3cb`, which closes the last success
+> criterion. The checkboxes are ticked to match.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or
 > superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`)
 > syntax for tracking.
@@ -49,6 +56,11 @@ Phase 1's constraints all carry forward. Restated where Phase 2 can violate them
 - **The CLI generates the handoff UUID**, not the server. This is what makes spool drain idempotent:
   a re-drained file collides on primary key and is ignored rather than duplicated.
 - The CLI opens no database. Its only dependency beyond stdlib is `httpx`.
+  **[2026-08-01: it ended up needing none.** `cli.py` uses stdlib `urllib`, and says why in its
+  own docstring: it keeps the end-of-session path free of import cost and means `bridge handoff`
+  cannot fail because a virtualenv is missing a package. Strictly fewer dependencies than the
+  constraint allowed. "Opens no database" is enforced structurally by
+  `tests/test_cli.py::test_the_cli_never_loads_a_database_module`.]
 - Migrations remain **additive only** — new tables and columns, never a rebuild. The database stays
   a derived cache for transcript-derived data, but **handoffs are NOT derived** — they are the first
   authored data Bridge stores, and `rm ~/.bridge/bridge.db` now destroys real user data. Task 1
@@ -92,26 +104,26 @@ deletes the spool file on successful drain forfeits this and must be rejected in
   `CREATE INDEX idx_handoffs_project ON handoffs(project_id, status, created_at)`.
 
 **Steps:**
-- [ ] Add the table to `SCHEMA` and the store methods. Supersede-and-insert happens inside one
+- [x] Add the table to `SCHEMA` and the store methods. Supersede-and-insert happens inside one
       `store.transaction()`, so a crash cannot leave a project with zero queued handoffs.
-- [ ] `spool.write` serializes to `~/.bridge/spool/<uuid>.json` with `os.replace` from a temp file
+- [x] `spool.write` serializes to `~/.bridge/spool/<uuid>.json` with `os.replace` from a temp file
       in the same directory, so a reader never sees a partial file.
-- [ ] `spool.drain` reads every `*.json`, inserts with the file's own id, and moves the file to
+- [x] `spool.drain` reads every `*.json`, inserts with the file's own id, and moves the file to
       `drained/`. A file that fails to parse moves to `spool/bad/` and never blocks the drain.
 
 **Tests (each requires an observed failure from a mutation):**
-- [ ] A second `create_handoff` for the same project supersedes the first: the old row's status is
+- [x] A second `create_handoff` for the same project supersedes the first: the old row's status is
       `superseded`, `queued_handoff` returns the new one, and both survive in `handoffs()`.
       *Mutation: drop the supersede UPDATE → the test must see two queued rows.*
-- [ ] Supersede is atomic: if the insert fails, the previous handoff is still `queued`.
+- [x] Supersede is atomic: if the insert fails, the previous handoff is still `queued`.
       *Mutation: move the insert outside the transaction.*
-- [ ] `drain` is idempotent: draining the same spool directory twice yields one row.
+- [x] `drain` is idempotent: draining the same spool directory twice yields one row.
       *Mutation: have the server mint its own id instead of using the file's → duplicates.*
-- [ ] A corrupt spool file lands in `bad/` and the valid files in the same run still drain.
+- [x] A corrupt spool file lands in `bad/` and the valid files in the same run still drain.
       *Mutation: let `json.JSONDecodeError` propagate.*
-- [ ] Drained files are retained, not deleted, and `rm bridge.db` + re-drain rebuilds the table.
+- [x] Drained files are retained, not deleted, and `rm bridge.db` + re-drain rebuilds the table.
       *Mutation: `unlink` after drain → the rebuild yields zero handoffs.*
-- [ ] `spool.write` never leaves a partial file: write a large prompt and assert the temp name is
+- [x] `spool.write` never leaves a partial file: write a large prompt and assert the temp name is
       gone and the JSON parses. *Mutation: write in place without `os.replace`.*
 
 ---
@@ -126,21 +138,21 @@ deletes the spool file on successful drain forfeits this and must be rejected in
 `PATCH /api/handoff/{id}` (body: `status`) → `200`.
 
 **Steps:**
-- [ ] `POST` resolves `project_path` through the **alias table** and then `upsert_project`, so a
+- [x] `POST` resolves `project_path` through the **alias table** and then `upsert_project`, so a
       handoff from an unindexed or moved project attaches correctly rather than 404ing.
-- [ ] `POST` is idempotent on `id` — a spool drain and a live POST of the same handoff cannot
+- [x] `POST` is idempotent on `id` — a spool drain and a live POST of the same handoff cannot
       both insert.
-- [ ] Drain the spool once at app startup, before serving. Startup must not fail if the spool is
+- [x] Drain the spool once at app startup, before serving. Startup must not fail if the spool is
       unreadable.
 
 **Tests (falsification required):**
-- [ ] POST from a path that only exists as an **alias** attaches to the canonical project.
+- [x] POST from a path that only exists as an **alias** attaches to the canonical project.
       *Mutation: skip the alias resolution → it attaches to the old path and splits history again.*
-- [ ] POST from a path with no project row creates one. *Mutation: 404 instead of upsert.*
-- [ ] POST with the same id twice yields one row and both calls return 2xx.
-- [ ] A prompt containing quotes, backticks, newlines, `$(...)`, and a 40 KB body round-trips byte
+- [x] POST from a path with no project row creates one. *Mutation: 404 instead of upsert.*
+- [x] POST with the same id twice yields one row and both calls return 2xx.
+- [x] A prompt containing quotes, backticks, newlines, `$(...)`, and a 40 KB body round-trips byte
       for byte through POST → DB → GET. *Mutation: truncate or shell-escape.*
-- [ ] Boot-time drain: put a file in the spool, create the app, assert the handoff is queued.
+- [x] Boot-time drain: put a file in the spool, create the app, assert the handoff is queued.
       *Mutation: remove the startup drain call.*
 
 ---
@@ -159,24 +171,24 @@ bridge open
 ```
 
 **Steps:**
-- [ ] `--project` defaults to `$PWD`. The CLI sends the raw path; the **server** resolves aliases.
-- [ ] `bridge next` prints the prompt and nothing else, so `claude "$(bridge next)"` works. Exit 1
+- [x] `--project` defaults to `$PWD`. The CLI sends the raw path; the **server** resolves aliases.
+- [x] `bridge next` prints the prompt and nothing else, so `claude "$(bridge next)"` works. Exit 1
       with an empty stdout and a stderr message when nothing is queued, so the shell substitution
       does not silently launch an empty prompt.
-- [ ] Connection refused, timeout (2s), or any 5xx → `spool.write`, print the spool path to stderr,
+- [x] Connection refused, timeout (2s), or any 5xx → `spool.write`, print the spool path to stderr,
       **exit 0**.
 
 **Tests (falsification required):**
-- [ ] With no server, `bridge handoff` exits **0** and a spool file exists with the right content.
+- [x] With no server, `bridge handoff` exits **0** and a spool file exists with the right content.
       *Mutation: let `httpx.ConnectError` propagate → non-zero exit.* This is the property the
       whole phase rests on; test it against a genuinely closed port, not a mock.
-- [ ] A 500 from the server also spools and exits 0. *Mutation: only catch connection errors.*
-- [ ] A 2xx does **not** spool. *Mutation: always spool → an unnecessary journal file appears.*
-- [ ] `bridge next` with nothing queued exits non-zero and prints nothing on stdout.
+- [x] A 500 from the server also spools and exits 0. *Mutation: only catch connection errors.*
+- [x] A 2xx does **not** spool. *Mutation: always spool → an unnecessary journal file appears.*
+- [x] `bridge next` with nothing queued exits non-zero and prints nothing on stdout.
       *Mutation: exit 0 → `claude "$(bridge next)"` launches an empty session.*
-- [ ] `bridge next` output is exactly the prompt: no trailing banner, no ANSI, no log line.
+- [x] `bridge next` output is exactly the prompt: no trailing banner, no ANSI, no log line.
       *Mutation: add a "Fetched from Bridge" line → byte comparison fails.*
-- [ ] The CLI imports no database module. Assert structurally, the way
+- [x] The CLI imports no database module. Assert structurally, the way
       `test_no_module_outside_store_touches_the_raw_connection` does.
 
 ---
@@ -188,17 +200,17 @@ installed by a documented copy step — Bridge must not write outside `~/.bridge
 outside it, so **installation is a manual step the README states**, never an automated write).
 
 **Steps:**
-- [ ] The command instructs Claude to compose a summary and a next-session prompt from the session,
+- [x] The command instructs Claude to compose a summary and a next-session prompt from the session,
       then invoke `bridge handoff --prompt-file -` with the prompt on stdin via a heredoc.
-- [ ] It passes `--session-id` from the session so the handoff links to the transcript that produced
+- [x] It passes `--session-id` from the session so the handoff links to the transcript that produced
       it, closing the loop the spec describes.
-- [ ] It states explicitly that a non-zero exit is a real failure but a spool message is success.
+- [x] It states explicitly that a non-zero exit is a real failure but a spool message is success.
 
 **Tests:**
-- [ ] Round-trip against a live `TestClient`-backed server on a real port: run the actual argv the
+- [x] Round-trip against a live `TestClient`-backed server on a real port: run the actual argv the
       command specifies, with a realistic multi-paragraph prompt on stdin, and assert the queued
       handoff matches byte for byte.
-- [ ] Manual verification, recorded in the ledger: run `/handoff` in this repo at the end of the
+- [x] Manual verification, recorded in the ledger: run `/handoff` in this repo at the end of the
       implementation session and confirm the card shows it. **The acceptance test for the phase is
       that this plan's own successor is captured by `/handoff` and not by writing a markdown file.**
 
@@ -210,21 +222,21 @@ outside it, so **installation is a manual step the README states**, never an aut
 `src/bridge/static/*.css`; test `tests/test_cards.py`, `tests/test_api.py`
 
 **Steps:**
-- [ ] `Card` gains `handoff: Handoff | None`. A queued handoff sorts the card to the top, ahead of
+- [x] `Card` gains `handoff: Handoff | None`. A queued handoff sorts the card to the top, ahead of
       Phase 1's dirty-and-stale ordering.
-- [ ] Card renders the summary, the prompt in a scrollable block, and a copy button.
-- [ ] Copy uses `navigator.clipboard` with a visible non-color-only confirmation. On the
+- [x] Card renders the summary, the prompt in a scrollable block, and a copy button.
+- [x] Copy uses `navigator.clipboard` with a visible non-color-only confirmation. On the
       `http://127.0.0.1` origin the Clipboard API is available; if it rejects, fall back to
       selecting the text so the affordance never dead-ends.
-- [ ] The project detail page lists past handoffs with their status.
+- [x] The project detail page lists past handoffs with their status.
 
 **Tests (falsification required):**
-- [ ] A project with a queued handoff sorts above a dirty-and-stale project with none.
+- [x] A project with a queued handoff sorts above a dirty-and-stale project with none.
       *Mutation: drop the handoff term from the sort key.*
-- [ ] The rendered prompt is HTML-escaped: a prompt containing `<script>` appears as text.
+- [x] The rendered prompt is HTML-escaped: a prompt containing `<script>` appears as text.
       *Mutation: mark it safe in the template → the assertion for the literal string fails.*
-- [ ] A card whose project has no handoff renders unchanged and shows no empty affordance.
-- [ ] Contrast check on the new button in both themes, as Phase 1 did.
+- [x] A card whose project has no handoff renders unchanged and shows no empty affordance.
+- [x] Contrast check on the new button in both themes, as Phase 1 did.
 
 ---
 
@@ -234,15 +246,15 @@ outside it, so **installation is a manual step the README states**, never an aut
 (`bridge backfill --dry-run`); test `tests/test_backfill.py`
 
 **Steps:**
-- [ ] Find `HANDOFF.md` / `NEXT-SESSION.md` in known project roots. Extract a next-prompt section
+- [x] Find `HANDOFF.md` / `NEXT-SESSION.md` in known project roots. Extract a next-prompt section
       when one is clearly delimited; otherwise store the whole file as the prompt and say so.
-- [ ] `--dry-run` is the default. Writing requires `--write`.
-- [ ] Idempotent: keyed on a hash of `(path, content)`, so re-running creates nothing new.
+- [x] `--dry-run` is the default. Writing requires `--write`.
+- [x] Idempotent: keyed on a hash of `(path, content)`, so re-running creates nothing new.
 
 **Tests:**
-- [ ] Re-running `--write` twice creates one handoff per file.
-- [ ] A file with no recognizable prompt section still produces a handoff, flagged as unstructured.
-- [ ] Run against the **real** files on this machine, including this repo's `HANDOFF.md`, and
+- [x] Re-running `--write` twice creates one handoff per file.
+- [x] A file with no recognizable prompt section still produces a handoff, flagged as unstructured.
+- [x] Run against the **real** files on this machine, including this repo's `HANDOFF.md`, and
       record what it produced in the ledger.
 
 ---
@@ -278,11 +290,17 @@ aliasing:
 
 ## Success criteria
 
-- [ ] `/handoff` at the end of a real session in any project puts the prompt on that project's card.
-- [ ] With the server stopped, the same `/handoff` exits zero, and the handoff appears when the
+- [x] `/handoff` at the end of a real session in any project puts the prompt on that project's card.
+- [x] With the server stopped, the same `/handoff` exits zero, and the handoff appears when the
       panel is next started.
-- [ ] `claude "$(bridge next)"` in a project with a queued handoff opens a session on that prompt.
-- [ ] `rm ~/.bridge/bridge.db && bridge index` loses no handoff.
-- [ ] A prompt with quotes, newlines, and `$(...)` survives the round trip byte for byte.
-- [ ] Every load-bearing test has a recorded mutation and pasted failure output.
-- [ ] `HANDOFF.md` is deleted, because its successor lives in Bridge.
+- [x] `claude "$(bridge next)"` in a project with a queued handoff opens a session on that prompt.
+- [x] `rm ~/.bridge/bridge.db && bridge index` loses no handoff.
+- [x] A prompt with quotes, newlines, and `$(...)` survives the round trip byte for byte.
+- [x] Every load-bearing test has a recorded mutation and pasted failure output.
+      **[2026-08-01: the mutations are recorded** — 43 of them, in
+      `tools/mutations/task1-store-and-spool.json` … `task6-backfill.json`, re-runnable via
+      `tools/falsify.py` and kept from drifting by `tests/test_mutation_specs.py`. **The pasted
+      failure output was never committed:** the specs carry only `{name, file, old, new, tests}`,
+      so the observed CAUGHT/SURVIVED text lives in session transcripts, not in the repo. The same
+      is true of Phase 3.]
+- [x] `HANDOFF.md` is deleted, because its successor lives in Bridge.
