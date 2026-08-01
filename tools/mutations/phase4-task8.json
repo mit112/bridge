@@ -76,7 +76,7 @@
     "old": "            if path == agents.UNATTRIBUTED or not sessions:",
     "new": "            if not sessions:",
     "tests": [
-      "tests/test_api.py::test_a_delta_carries_a_tombstone_when_a_session_ends"
+      "tests/test_api.py::test_the_wire_payload_excludes_unattributed_sessions"
     ],
     "expect_count": 1
   },

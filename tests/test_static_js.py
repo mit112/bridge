@@ -194,8 +194,8 @@ globalThis.EventSource = class {
   close() { closed += 1; }
 };
 globalThis.fetch = async () => ({ ok: true, json: async () => ({}) });
-let timers = 0;
-globalThis.setTimeout = (fn, ms) => { timers += 1; return 0; };
+const delays = [];
+globalThis.setTimeout = (fn, ms) => { delays.push(ms); return 0; };
 window.setTimeout = globalThis.setTimeout;
 
 const fs = require("fs");
@@ -212,6 +212,7 @@ result.bands = Object.fromEntries(
   Object.entries(bands).map(([k, v]) => [k, v.textContent]));
 result.closed = closed;
 result.constructed = constructed;
+result.delays = delays;
 console.log(JSON.stringify(result));
 """
 
@@ -266,11 +267,19 @@ def test_live_js_only_resets_its_backoff_once_a_connection_has_proved_healthy(tm
     reconnect after a `refresh` is scheduled with a delay rather than
     immediately.
     """
-    got = _run_live(tmp_path, """
-// No frames at all: nothing has proved healthy.
+    unhealthy = _run_live(tmp_path, """
+// No frames at all: the connection has proved nothing.
 listeners.refresh({ data: "{}" });
-result.timersAfterUnhealthy = timers;
 """)
-    assert got["closed"] == 1
-    # It reconnects via setTimeout rather than synchronously.
-    assert got["constructed"] == 1, "reconnected synchronously despite no proof"
+    assert unhealthy["closed"] == 1
+    # Scheduled with a real delay, not immediately.
+    assert unhealthy["delays"] == [1000], unhealthy["delays"]
+
+    healthy = _run_live(tmp_path, """
+// Two good frames is proof, so the reconnect is immediate.
+const frame = JSON.stringify({ live: {} });
+listeners.snapshot({ data: frame });
+listeners.delta({ data: frame });
+listeners.refresh({ data: "{}" });
+""")
+    assert healthy["delays"] == [0], healthy["delays"]

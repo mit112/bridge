@@ -1210,16 +1210,50 @@ def test_a_delta_carries_a_tombstone_when_a_session_ends(tmp_path, monkeypatch):
     assert frames[1][1]["removed"] == ["/p/gone"]
 
 
+def test_the_wire_payload_excludes_unattributed_sessions(tmp_path, monkeypatch):
+    """A session in no registered project has no card to patch. Putting it on
+    the wire keyed by its own cwd would make the client look for a band that
+    does not exist -- or, worse, find an unrelated one."""
+    from bridge import agents
+    from bridge.models import AgentsState, LiveSession
+
+    cfg = load({"db_path": tmp_path / "un.db", "spool_dir": tmp_path / "spool"})
+    store = Store(cfg.db_path)
+    store.upsert_project("/p/real", "real")
+    monkeypatch.setattr(agents, "probe", lambda *a, **k: AgentsState(
+        status="ok", sessions=[
+            LiveSession(session_id="aaaaaaaa-0000-0000-0000-000000000001",
+                        cwd="/p/real", kind="interactive", status="busy"),
+            LiveSession(session_id="aaaaaaaa-0000-0000-0000-000000000002",
+                        cwd="/somewhere/unregistered", kind="interactive",
+                        status="busy"),
+        ]))
+    c = TestClient(create_app(store, cfg))
+    with c.stream("GET", "/events?max_ticks=1&interval=0") as r:
+        payload = _frames("".join(r.iter_text()))[0][1]
+    store.close()
+
+    assert list(payload["live"]) == ["/p/real"]
+    assert agents.UNATTRIBUTED not in payload["live"]
+
+
 def test_an_open_stream_does_not_block_other_requests(client):
     """The store is ONE connection behind ONE lock. A stream that holds it
     across its sleep freezes the entire panel."""
     import time as _time
 
     c, _, _ = client
-    with c.stream("GET", "/events?max_ticks=3&interval=0.3"):
+    with c.stream("GET", "/events?max_ticks=3&interval=0.4") as response:
+        chunks = response.iter_text()
+        # Pull the first frame. Without this the generator is still parked on
+        # its opening yield and has not reached the sleep at all, so the
+        # assertion below passes even when the sleep holds the lock -- which is
+        # exactly how this test let that mutation survive.
+        next(chunks)
         start = _time.monotonic()
         assert c.get("/api/projects").status_code == 200
-        assert _time.monotonic() - start < 0.3
+        elapsed = _time.monotonic() - start
+    assert elapsed < 0.3, f"a request waited {elapsed:.2f}s behind the stream"
 
 
 def test_the_stream_never_writes(client):
