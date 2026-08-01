@@ -35,6 +35,10 @@ class Config:
     claude_projects_dir: Path
     db_path: Path
     spool_dir: Path
+    # Where a launch's prompt file is written, mode 0700. The prompt is taken off
+    # the command line entirely, so this directory is the only place it exists
+    # between `launch()` and the new shell's `cat`.
+    launches_dir: Path
     dev_dir: Path
     stale_hours: int
     models: list[str]
@@ -50,6 +54,7 @@ def load(overrides: dict | None = None) -> Config:
         claude_projects_dir=home / ".claude" / "projects",
         db_path=home / ".bridge" / "bridge.db",
         spool_dir=home / ".bridge" / "spool",
+        launches_dir=home / ".bridge" / "launches",
         dev_dir=home / "dev",
         stale_hours=12,
         models=list(DEFAULT_MODELS),

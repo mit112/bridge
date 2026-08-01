@@ -23,7 +23,7 @@ def jline(**kw) -> str:
 
 @pytest.fixture(autouse=True)
 def never_touch_the_real_bridge_dir(monkeypatch):
-    """Refuse any spool operation against the user's real `~/.bridge`.
+    """Refuse any spool or launcher operation against the user's real `~/.bridge`.
 
     `create_app` drains the spool on boot, and a drain MOVES files out of it. A
     fixture that overrides `db_path` but forgets `spool_dir` would therefore
@@ -31,18 +31,24 @@ def never_touch_the_real_bridge_dir(monkeypatch):
     Bridge that cannot be rebuilt from transcripts. Guarding here is what makes
     that a loud failure instead of a silent one, rather than trusting every
     present and future fixture to remember.
-    """
-    from bridge import spool
 
-    def guarded(name, orig):
+    Phase 3 adds `~/.bridge/launches`, and a launch WRITES there, so the same
+    guard covers the launcher's directory-taking entry points. Both modules are
+    guarded by one fixture on purpose: a second autouse guard would be one more
+    thing to forget to extend.
+    """
+    from bridge import launcher, spool
+
+    def guarded(module_name, name, orig, override):
         def wrapper(*args, **kwargs):
             for value in (*args, *kwargs.values()):
                 if isinstance(value, (str, Path)):
                     p = Path(value)
                     if p == REAL_BRIDGE_DIR or REAL_BRIDGE_DIR in p.parents:
                         raise RealBridgeDirTouched(
-                            f"spool.{name}() was called with the real path {p}. "
-                            "Pass spool_dir=tmp_path/'spool' in this test's Config."
+                            f"{module_name}.{name}() was called with the real path "
+                            f"{p}. Pass {override}=tmp_path/'{override.split('_')[0]}'"
+                            " in this test's Config."
                         )
             return orig(*args, **kwargs)
 
@@ -54,7 +60,18 @@ def never_touch_the_real_bridge_dir(monkeypatch):
     # test has already written to the real spool.
     for name in ("write", "journal", "journal_status", "drain", "rebuild_if_empty",
                  "pending", "pending_count"):
-        monkeypatch.setattr(spool, name, guarded(name, getattr(spool, name)))
+        monkeypatch.setattr(spool, name,
+                            guarded("spool", name, getattr(spool, name), "spool_dir"))
+
+    # The launcher's writers take `launches_dir` rather than a `Config` precisely
+    # so this guard can see the path: an argument-inspecting wrapper cannot look
+    # inside a dataclass. `launch()` calls both through the module global, so
+    # patching here intercepts the internal calls too.
+    for name in ("write_prompt_file", "gc_prompt_files"):
+        monkeypatch.setattr(
+            launcher, name,
+            guarded("launcher", name, getattr(launcher, name), "launches_dir"),
+        )
 
 
 @pytest.fixture

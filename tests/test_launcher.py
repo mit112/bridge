@@ -1,22 +1,34 @@
-"""Command construction, and every escaping decision in it.
+"""Command construction, every escaping decision in it, and the spawn.
 
 The central property is an ABSENCE: the prompt is not in the constructed shell
 command at all. `/handoff` shipped the presence-only version of this bug in
 Phase 2 -- a summary containing `$(...)` was executed -- so the assertions here
 are `not in` first and `in` second.
 
-No test in this module spawns `claude`. The only subprocesses are `/bin/sh` and
-`osascript`, both used to round-trip a quoted string back to Python so the
-escaping is checked against the real parsers rather than against a regex.
+**No test in this module starts a real Claude session or opens a real Terminal
+window.** The only executables any of it runs are `/bin/sh`, `/usr/bin/osascript`
+(only to round-trip a quoted string, never `do script`), and a fake `claude`
+shim written per-test that records its argv and exits. `launch()` takes its
+process runner by injection precisely so that stays true: the terminal-mode
+tests substitute `run`, so `osascript` is never invoked with a `do script`
+payload at all.
 """
 
+import json
+import os
+import shutil
+import stat
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
+from bridge import launcher
+from bridge.config import load
 from bridge.launcher import (
     MAX_PROMPT_BYTES,
+    MAX_SESSION_ID_ATTEMPTS,
     MODES,
     SESSION_ID_RE,
     LaunchError,
@@ -26,12 +38,19 @@ from bridge.launcher import (
     build_bg_argv,
     build_shell_command,
     default_title,
+    gc_prompt_files,
     new_session_id,
+    parse_bg_handle,
     resolve_claude,
     sanitize_title,
     sh_quote,
+    strip_ansi,
     validate_prompt,
 )
+from bridge.models import Handoff
+from bridge.registry import resolve_project
+from bridge.store import Store
+from tests.conftest import RealBridgeDirTouched
 
 # --- Phase 3: the launcher ---------------------------------------------------
 
@@ -403,3 +422,671 @@ def test_launch_spec_carries_the_two_modes_and_nothing_else_is_expected():
     assert MODES == ("terminal", "background")
     assert LaunchSpec(project_path="/p", prompt="hi").mode == "terminal"
     assert LaunchSpec(project_path="/p", prompt="hi").session_id is None
+
+
+# --- Task 3: the spawn, the prompt file, and the outcome ---------------------
+#
+# The suite had no fake-executable precedent before this, so the shim below is
+# it. Two properties make it meaningful rather than decorative:
+#   * `resolve_claude` consults PATH through an injected `which`, so putting the
+#     shim on PATH genuinely redirects the launch. `gitprobe`'s hardcoded
+#     `/usr/bin/git` is the trap this avoids -- hardcode `claude` the same way
+#     and every test here passes while testing nothing.
+#   * it records argv through `json.dumps(sys.argv[1:])`, which preserves the
+#     bytes exactly: newlines, trailing whitespace, emoji and CJK all survive
+#     the round trip back into the test.
+# PATH is set explicitly in the fixture, never inherited, because `tools/falsify.py`
+# runs pytest under `PATH=/usr/bin:/bin`.
+
+FAKE_CLAUDE_SOURCE = '''"""A `claude` that records its argv, then does what the env says.
+
+Never a real session: this shim is the entire verification surface for the
+launcher's spawn path.
+"""
+import json
+import os
+import sys
+
+with open(os.environ["FAKE_CLAUDE_LOG"], "a", encoding="utf-8") as f:
+    f.write(json.dumps(sys.argv[1:]) + "\\n")
+
+if sys.argv[1:2] == ["agents"]:
+    agents = os.environ.get("FAKE_CLAUDE_AGENTS", "")
+    sys.stdout.write(agents)
+    sys.exit(0 if agents else 1)
+
+sys.stdout.write(os.environ.get("FAKE_CLAUDE_STDOUT", ""))
+sys.stderr.write(os.environ.get("FAKE_CLAUDE_STDERR", ""))
+sys.exit(int(os.environ.get("FAKE_CLAUDE_RC", "0")))
+'''
+
+NORMALISED = HOSTILE_PROMPT.rstrip("\n")
+BG_SESSION_ID = "deadbeef-a2d0-4d3b-878b-e37f81284385"
+
+
+class FakeClaude:
+    """The shim, plus byte-exact access to every argv it saw."""
+
+    def __init__(self, path: Path, log: Path):
+        self.path = path
+        self.log = log
+
+    def calls(self) -> list[list[str]]:
+        if not self.log.exists():
+            return []
+        return [
+            json.loads(line)
+            for line in self.log.read_text(encoding="utf-8").splitlines()
+            if line
+        ]
+
+    def call_with(self, flag: str) -> list[str]:
+        matching = [c for c in self.calls() if flag in c]
+        assert matching, f"no fake-claude invocation carried {flag!r}: {self.calls()}"
+        return matching[-1]
+
+    def env(self) -> dict[str, str]:
+        """The environment a `/bin/sh` child needs to reach the shim's log."""
+        return dict(os.environ)
+
+
+@pytest.fixture
+def fake_claude(tmp_path, monkeypatch) -> FakeClaude:
+    bindir = tmp_path / "fakebin"
+    bindir.mkdir()
+    exe = bindir / "claude"
+    # The interpreter is absolute in the shebang, so the shim runs under the
+    # falsification harness's PATH=/usr/bin:/bin as well as under a normal one.
+    exe.write_text(f"#!{sys.executable}\n{FAKE_CLAUDE_SOURCE}")
+    exe.chmod(0o755)
+
+    log = tmp_path / "fake-claude-argv.jsonl"
+    monkeypatch.setenv("PATH", f"{bindir}:/usr/bin:/bin")
+    monkeypatch.setenv("FAKE_CLAUDE_LOG", str(log))
+    for name in ("FAKE_CLAUDE_STDOUT", "FAKE_CLAUDE_STDERR", "FAKE_CLAUDE_RC",
+                 "FAKE_CLAUDE_AGENTS"):
+        monkeypatch.delenv(name, raising=False)
+    return FakeClaude(exe, log)
+
+
+@pytest.fixture
+def cfg(tmp_path):
+    return load({
+        "db_path": tmp_path / "b.db",
+        "spool_dir": tmp_path / "spool",
+        "launches_dir": tmp_path / "launches",
+    })
+
+
+@pytest.fixture
+def store(cfg):
+    s = Store(cfg.db_path)
+    yield s
+    s.close()
+
+
+@pytest.fixture
+def project(tmp_path) -> Path:
+    """A real directory named the way the hostile measurement's was."""
+    p = tmp_path / 'proj dir\'s "na\\me"'
+    p.mkdir()
+    return p
+
+
+def proc(rc=0, stdout="", stderr=""):
+    return subprocess.CompletedProcess(args=[], returncode=rc, stdout=stdout,
+                                       stderr=stderr)
+
+
+def recorder(*results):
+    """A `run` double. Records argv; the last result repeats indefinitely.
+
+    Every terminal-mode test goes through this instead of `subprocess.run`, which
+    is what keeps `osascript`'s `do script` -- and therefore a real Terminal
+    window and a real Claude session -- out of the suite entirely.
+    """
+    results = results or (proc(),)
+    calls: list[list[str]] = []
+
+    def run(argv, **kwargs):
+        calls.append(list(argv))
+        return results[min(len(calls) - 1, len(results) - 1)]
+
+    run.calls = calls
+    return run
+
+
+def queue_handoff(store, project_path: str, hid="h-launch") -> str:
+    store.create_handoff(
+        Handoff(id=hid, project_path=project_path, next_prompt=HOSTILE_PROMPT,
+                summary="Built Task 2", created_at=1000),
+        resolve_project(store, project_path),
+    )
+    return hid
+
+
+def status_records(cfg) -> list[dict]:
+    drained = Path(cfg.spool_dir) / "drained"
+    return [
+        json.loads(p.read_text(encoding="utf-8"))
+        for p in sorted(drained.glob("*.status.json"))
+    ] if drained.is_dir() else []
+
+
+def only_launch(store, project_path):
+    rows = store.launches(resolve_project(store, project_path))
+    assert len(rows) == 1, f"expected exactly one launch row, got {len(rows)}"
+    return rows[0]
+
+
+# --- the prompt arrives byte for byte, in both modes -------------------------
+
+
+def test_background_mode_delivers_the_prompt_byte_for_byte(
+    store, cfg, project, fake_claude, monkeypatch
+):
+    """One argv element, no shell, no quoting layer to survive."""
+    monkeypatch.setenv("FAKE_CLAUDE_STDOUT", "backgrounded · deadbeef\n")
+
+    result = launcher.launch(
+        store, cfg,
+        spec(project_path=str(project), mode="background", session_id=None),
+    )
+
+    assert result.outcome == "started", result.error
+    argv = fake_claude.call_with("--bg")
+    assert argv[-1] == NORMALISED
+    assert argv[-1].encode("utf-8") == NORMALISED.encode("utf-8")
+    # Absence, not just presence: nothing quoted it, nothing split it.
+    assert [a for a in argv[:-1] if NORMALISED in a] == []
+    assert "--session-id" not in argv
+    for fragment in ("$(echo PWNED)", "`echo BACKTICK_EXECUTED`", "${HOME}",
+                     "'quoted'", '"double quoted"', "🚀 中文", "\n"):
+        assert fragment in argv[-1], f"{fragment!r} did not survive argv"
+    assert "PWNED\n" not in argv[-1] and argv[-1].count("PWNED") == 1
+
+
+def test_the_terminal_shell_layer_delivers_the_prompt_byte_for_byte(
+    store, cfg, project, fake_claude
+):
+    """The shell half of terminal mode, run for real through `/bin/sh -c`.
+
+    No AppleScript and no Terminal window: `launch` writes the prompt file with
+    an injected `run`, and the command that file feeds is then executed directly.
+    """
+    run = recorder(proc(0))
+    result = launcher.launch(
+        store, cfg, spec(project_path=str(project), session_id=None), run=run
+    )
+    assert result.outcome == "started", result.error
+
+    # The script is ONE argv element, never a shell string.
+    assert len(run.calls) == 1
+    assert run.calls[0][:2] == ["/usr/bin/osascript", "-e"]
+    assert len(run.calls[0]) == 3
+    assert NORMALISED not in run.calls[0][2]
+
+    prompt_path = Path(cfg.launches_dir) / f"{result.session_id}.prompt"
+    assert prompt_path.read_text(encoding="utf-8") == NORMALISED
+
+    command = build_shell_command(
+        spec(project_path=str(project), session_id=result.session_id),
+        prompt_path, claude=str(fake_claude.path),
+    )
+    assert NORMALISED not in command  # the central absence, again
+    sh = subprocess.run(["/bin/sh", "-c", command], capture_output=True, text=True,
+                        env=fake_claude.env())
+    assert sh.returncode == 0, sh.stderr
+
+    argv = fake_claude.calls()[-1]
+    assert argv[-1] == NORMALISED
+    assert argv[-1].encode("utf-8") == NORMALISED.encode("utf-8")
+    # Nothing was executed, and nothing was word-split.
+    assert argv.count(NORMALISED) == 1
+    assert "$(echo PWNED)" in argv[-1]
+    assert argv[-1].count("PWNED") == 1
+    assert "`echo BACKTICK_EXECUTED`" in argv[-1]
+    assert "BACKTICK_EXECUTED" in argv[-1] and argv[-1].count("BACKTICK_EXECUTED") == 1
+    assert "${HOME}" in argv[-1] and str(Path.home()) not in argv[-1]
+
+
+def test_a_literal_command_substitution_arrives_literal(store, cfg, project,
+                                                        fake_claude):
+    """`$(echo nope)` must reach claude as nine characters, not as `nope`."""
+    prompt = "before $(echo nope) after"
+    run = recorder(proc(0))
+    result = launcher.launch(
+        store, cfg,
+        spec(project_path=str(project), prompt=prompt, session_id=None),
+        run=run,
+    )
+    prompt_path = Path(cfg.launches_dir) / f"{result.session_id}.prompt"
+    command = build_shell_command(
+        spec(project_path=str(project), prompt=prompt,
+             session_id=result.session_id),
+        prompt_path, claude=str(fake_claude.path),
+    )
+    sh = subprocess.run(["/bin/sh", "-c", command], capture_output=True, text=True,
+                        env=fake_claude.env())
+    assert sh.returncode == 0, sh.stderr
+    assert fake_claude.calls()[-1][-1] == "before $(echo nope) after"
+
+
+def test_a_missing_prompt_file_launches_nothing_at_all(project, fake_claude,
+                                                       tmp_path):
+    """The `[ -r ]` guard, checked by its consequence.
+
+    Without it `cat` fails, the shell's exit status stays 0, and claude starts
+    with an EMPTY prompt -- observed as `argc=4` with a final `b''`. A silent
+    empty session is the worst failure available here because it looks like it
+    worked, so the assertion is that the fake recorded NOTHING.
+    """
+    missing = tmp_path / "launches" / "never-written.prompt"
+    command = build_shell_command(
+        spec(project_path=str(project)), missing, claude=str(fake_claude.path)
+    )
+    sh = subprocess.run(["/bin/sh", "-c", command], capture_output=True, text=True,
+                        env=fake_claude.env())
+
+    assert sh.returncode != 0
+    assert "prompt file missing" in sh.stderr
+    assert fake_claude.calls() == [], "claude ran despite a missing prompt file"
+
+
+# --- outcomes, rows, and the handoff ----------------------------------------
+
+
+def test_a_failed_spawn_records_failed_and_leaves_the_handoff_queued(
+    store, cfg, project, fake_claude):
+    """Losing the prompt is the worst outcome in this phase, so it is pinned."""
+    hid = queue_handoff(store, str(project))
+    run = recorder(proc(1, stderr="osascript: execution error"))
+
+    result = launcher.launch(
+        store, cfg, spec(project_path=str(project), session_id=None), hid, run=run
+    )
+
+    assert result.outcome == "failed"
+    assert result.error and "execution error" in result.error
+    row = store.get_handoff(hid)
+    assert row["status"] == "queued"
+    assert row["consumed_at"] is None
+    assert status_records(cfg) == []
+    assert store.queued_handoff(resolve_project(store, str(project))) is not None
+
+
+def test_a_launches_row_exists_even_when_the_spawn_fails(store, cfg, project,
+                                                        fake_claude):
+    """The row is written BEFORE the spawn, so a failure is still correlatable."""
+    result = launcher.launch(
+        store, cfg, spec(project_path=str(project), session_id=None),
+        run=recorder(proc(1, stderr="boom")),
+    )
+    row = only_launch(store, str(project))
+    assert row["id"] == result.launch_id
+    assert row["outcome"] == "failed"
+    assert row["mode"] == "terminal"
+    # The pre-assigned id is on the row even though the result reports no session:
+    # that is what makes a failed launch correlatable at all.
+    assert result.session_id is None
+    assert SESSION_ID_RE.match(row["session_id"])
+    assert row["prompt"] == NORMALISED  # provenance: exactly what would have run
+
+
+def test_the_prompt_file_survives_a_successful_launch(store, cfg, project, fake_claude):
+    """`do script` returns immediately; `cat` runs later, in the new shell.
+
+    Deleting the file when `osascript` returns is a live race whose prize is the
+    empty session above. It is also provenance, so it is kept and GC'd by age.
+    """
+    result = launcher.launch(
+        store, cfg, spec(project_path=str(project), session_id=None),
+        run=recorder(proc(0)),
+    )
+    prompt_path = Path(cfg.launches_dir) / f"{result.session_id}.prompt"
+    assert prompt_path.is_file()
+    assert prompt_path.read_text(encoding="utf-8") == NORMALISED
+
+
+def test_a_successful_launch_consumes_and_journals_the_handoff(store, cfg, project,
+                                                              fake_claude):
+    hid = queue_handoff(store, str(project))
+
+    result = launcher.launch(
+        store, cfg, spec(project_path=str(project), session_id=None), hid,
+        run=recorder(proc(0)),
+    )
+
+    assert result.outcome == "started"
+    row = store.get_handoff(hid)
+    assert row["status"] == "consumed"
+    assert row["consumed_at"] is not None
+    assert store.queued_handoff(resolve_project(store, str(project))) is None
+    # And the journal, so `rm ~/.bridge/bridge.db && bridge index` does not put a
+    # prompt you already ran back at the top of the dashboard.
+    assert status_records(cfg) == [
+        {"handoff_id": hid, "status": "consumed",
+         "at": status_records(cfg)[0]["at"]}
+    ]
+    assert only_launch(store, str(project))["handoff_id"] == hid
+
+
+def test_the_launch_row_carries_mode_model_effort_and_outcome(store, cfg, project,
+                                                             fake_claude):
+    launcher.launch(
+        store, cfg,
+        spec(project_path=str(project), mode="terminal", session_id=None,
+             model="opus", effort="high"),
+        run=recorder(proc(0)),
+    )
+    row = only_launch(store, str(project))
+    assert (row["mode"], row["model"], row["effort"], row["outcome"]) == (
+        "terminal", "opus", "high", "started",
+    )
+    assert row["launched_at"] > 0
+
+
+# --- background correlation -------------------------------------------------
+
+
+def test_a_colour_wrapped_handle_is_stripped_to_eight_hex(store, cfg, project,
+                                                          fake_claude, monkeypatch):
+    """Unstripped, `\\x1b[36mdeadbeef\\x1b[0m` matches no glob and no lookup."""
+    monkeypatch.setenv("FAKE_CLAUDE_STDOUT", "backgrounded · \x1b[36mdeadbeef\x1b[0m\n")
+
+    result = launcher.launch(
+        store, cfg,
+        spec(project_path=str(project), mode="background", session_id=None),
+    )
+
+    assert result.outcome == "started", result.error
+    assert result.short_id == "deadbeef"
+    row = only_launch(store, str(project))
+    assert row["short_id"] == "deadbeef"
+    # The full id is best effort, and this fake `agents` refuses, so it stays null
+    # for Task 7's prefix backfill to fill in.
+    assert row["session_id"] is None
+    assert result.session_id is None
+    assert result.note and "backfill" in result.note
+
+
+def test_a_resolvable_handle_becomes_a_full_session_id(store, cfg, project,
+                                                       fake_claude, monkeypatch):
+    """`agents --json --all` pairs `"id": "deadbeef"` with its `sessionId`."""
+    monkeypatch.setenv("FAKE_CLAUDE_STDOUT", "backgrounded · deadbeef · phase-3\n")
+    monkeypatch.setenv(
+        "FAKE_CLAUDE_AGENTS",
+        json.dumps([{"id": "cafe0000", "sessionId": "cafe0000-" + BG_SESSION_ID[9:]},
+                    {"id": "deadbeef", "sessionId": BG_SESSION_ID}]),
+    )
+
+    result = launcher.launch(
+        store, cfg,
+        spec(project_path=str(project), mode="background", session_id=None),
+    )
+
+    assert (result.short_id, result.session_id) == ("deadbeef", BG_SESSION_ID)
+    row = only_launch(store, str(project))
+    assert row["session_id"] == BG_SESSION_ID
+    assert store.launch_by_session(BG_SESSION_ID)["id"] == result.launch_id
+    assert result.note is None
+
+
+def test_an_unparseable_background_handle_is_still_started(store, cfg, project,
+                                                           fake_claude, monkeypatch):
+    """It DID start. Marking it failed would requeue a handoff for a live session."""
+    hid = queue_handoff(store, str(project))
+    monkeypatch.setenv("FAKE_CLAUDE_STDOUT", "some unexpected output\n")
+
+    result = launcher.launch(
+        store, cfg,
+        spec(project_path=str(project), mode="background", session_id=None),
+        hid,
+    )
+
+    assert result.outcome == "started"
+    assert result.session_id is None and result.short_id is None
+    assert result.note and "no `backgrounded" in result.note
+    row = only_launch(store, str(project))
+    assert row["session_id"] is None and row["short_id"] is None
+    assert row["outcome"] == "started"
+    assert store.get_handoff(hid)["status"] == "consumed"
+
+
+def test_a_background_spawn_that_exits_non_zero_fails(store, cfg, project,
+                                                       fake_claude, monkeypatch):
+    hid = queue_handoff(store, str(project))
+    monkeypatch.setenv("FAKE_CLAUDE_RC", "2")
+    monkeypatch.setenv("FAKE_CLAUDE_STDERR", "claude: no such model\n")
+
+    result = launcher.launch(
+        store, cfg,
+        spec(project_path=str(project), mode="background", session_id=None),
+        hid,
+    )
+
+    assert result.outcome == "failed"
+    assert "no such model" in result.error
+    assert store.get_handoff(hid)["status"] == "queued"
+
+
+@pytest.mark.parametrize(
+    "line,expected",
+    [
+        ("backgrounded · deadbeef", "deadbeef"),
+        ("backgrounded · deadbeef · a name", "deadbeef"),
+        ("\x1b[2mbackgrounded\x1b[0m · \x1b[36m00b31445\x1b[0m", "00b31445"),
+        ("noise\nbackgrounded · 0123abcd\nmore", "0123abcd"),
+        ("backgrounded · DEADBEEF", None),      # claude emits lowercase
+        ("backgrounded · deadbeef1", None),     # not eight
+        ("nothing to see here", None),
+    ],
+)
+def test_parse_bg_handle_matches_only_eight_lowercase_hex(line, expected):
+    assert parse_bg_handle(line) == expected
+
+
+def test_strip_ansi_removes_colour_without_touching_the_text():
+    assert strip_ansi("\x1b[36mdeadbeef\x1b[0m") == "deadbeef"
+    assert strip_ansi("plain $(echo x) `y` 中文") == "plain $(echo x) `y` 中文"
+
+
+# --- a session id collision is recoverable ----------------------------------
+
+
+COLLISION = (
+    "Error: Session ID aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee is already in use."
+)
+
+
+def test_a_session_id_collision_retries_with_a_fresh_uuid(store, cfg, project,
+                                                          fake_claude):
+    """`claude` `statSync`s `<project-dir>/<uuid>.jsonl`; a hit exits 1.
+
+    That is recoverable by minting another id, so treating it as a launch failure
+    would fail for a reason the launcher can fix by itself.
+    """
+    run = recorder(proc(1, stderr=COLLISION), proc(0))
+
+    result = launcher.launch(
+        store, cfg, spec(project_path=str(project), session_id=None), run=run
+    )
+
+    assert result.outcome == "started", result.error
+    assert len(run.calls) == 2
+    row = only_launch(store, str(project))
+    assert row["outcome"] == "started"
+    assert row["session_id"] == result.session_id
+    assert SESSION_ID_RE.match(row["session_id"])
+    # A fresh id, and its prompt file was written before the retry spawned.
+    first, second = (c[2] for c in run.calls)
+    assert first != second
+    assert (Path(cfg.launches_dir) / f"{result.session_id}.prompt").is_file()
+    assert len(list(Path(cfg.launches_dir).glob("*.prompt"))) == 2
+
+
+def test_the_collision_retry_is_bounded(store, cfg, project, fake_claude):
+    """A systematic cause must not become an unbounded spawn loop."""
+    run = recorder(proc(1, stderr=COLLISION))
+
+    result = launcher.launch(
+        store, cfg, spec(project_path=str(project), session_id=None), run=run
+    )
+
+    assert result.outcome == "failed"
+    assert "already in use" in result.error
+    assert len(run.calls) == MAX_SESSION_ID_ATTEMPTS
+    assert MAX_SESSION_ID_ATTEMPTS <= 5
+
+
+def test_a_non_collision_failure_is_not_retried(store, cfg, project, fake_claude):
+    run = recorder(proc(1, stderr="osascript: -1743 not authorised"))
+    result = launcher.launch(
+        store, cfg, spec(project_path=str(project), session_id=None), run=run
+    )
+    assert result.outcome == "failed"
+    assert len(run.calls) == 1
+
+
+# --- refusals happen before any side effect ---------------------------------
+
+
+def test_launch_refuses_when_claude_is_not_on_path(store, cfg, project, tmp_path):
+    """The injected `which` genuinely searches a directory, and finds nothing.
+
+    Hardcoding the path is what would make every fake-on-PATH test above vacuous.
+    """
+    empty = tmp_path / "empty bin"
+    empty.mkdir()
+    ran = recorder(proc(0))
+
+    with pytest.raises(LaunchError, match="not on PATH"):
+        launcher.launch(
+            store, cfg, spec(project_path=str(project), session_id=None),
+            run=ran, which=lambda name: shutil.which(name, path=str(empty)),
+        )
+
+    assert ran.calls == []
+    assert store.launches(resolve_project(store, str(project))) == []
+    assert not Path(cfg.launches_dir).exists()
+
+
+def test_launch_finds_the_fake_claude_through_the_injected_which(
+    store, cfg, project, fake_claude, tmp_path
+):
+    """The positive half: the same `which` on a directory that DOES hold it."""
+    resolved = shutil.which("claude", path=str(fake_claude.path.parent))
+    assert resolved == str(fake_claude.path)
+    result = launcher.launch(
+        store, cfg, spec(project_path=str(project), session_id=None),
+        run=recorder(proc(0)),
+        which=lambda name: shutil.which(name, path=str(fake_claude.path.parent)),
+    )
+    assert result.outcome == "started"
+
+
+@pytest.mark.parametrize("bad", ["with a \x00 nul", "x" * (MAX_PROMPT_BYTES + 1)])
+def test_a_prompt_that_cannot_launch_leaves_no_trace(store, cfg, project, bad):
+    ran = recorder(proc(0))
+    with pytest.raises(LaunchError):
+        launcher.launch(
+            store, cfg,
+            spec(project_path=str(project), prompt=bad, session_id=None),
+            run=ran, which=lambda _n: "/opt/fake bin/claude",
+        )
+    assert ran.calls == []
+    assert store.launches(resolve_project(store, str(project))) == []
+    assert not Path(cfg.launches_dir).exists()
+
+
+def test_an_unknown_mode_is_refused(store, cfg, project):
+    with pytest.raises(LaunchError, match="mode"):
+        launcher.launch(
+            store, cfg, spec(project_path=str(project), mode="tmux"),
+            run=recorder(proc(0)), which=lambda _n: "/opt/fake bin/claude",
+        )
+
+
+# --- the prompt file on disk ------------------------------------------------
+
+
+def test_the_prompt_file_is_0600_inside_a_0700_directory(store, cfg, project,
+                                                        fake_claude):
+    """The prompt is now at rest on disk. That is the accepted cost of the RCE fix."""
+    result = launcher.launch(
+        store, cfg, spec(project_path=str(project), session_id=None),
+        run=recorder(proc(0)),
+    )
+    directory = Path(cfg.launches_dir)
+    prompt_path = directory / f"{result.session_id}.prompt"
+
+    assert stat.S_IMODE(prompt_path.stat().st_mode) == 0o600
+    assert stat.S_IMODE(directory.stat().st_mode) == 0o700
+    # No temp file left behind, and nothing else in there.
+    assert sorted(p.name for p in directory.iterdir()) == [prompt_path.name]
+
+
+def test_the_prompt_file_is_normalised_so_both_modes_agree(store, cfg, project,
+                                                           fake_claude, monkeypatch):
+    """`$(cat)` strips trailing newlines and argv does not. One standard, not two."""
+    prompt = "trailing spaces here   \nand a body\n\n\n"
+    monkeypatch.setenv("FAKE_CLAUDE_STDOUT", "backgrounded · deadbeef\n")
+
+    terminal = launcher.launch(
+        store, cfg, spec(project_path=str(project), prompt=prompt, session_id=None),
+        run=recorder(proc(0)),
+    )
+    on_disk = (Path(cfg.launches_dir) / f"{terminal.session_id}.prompt").read_text(
+        encoding="utf-8"
+    )
+    launcher.launch(
+        store, cfg,
+        spec(project_path=str(project), prompt=prompt, mode="background",
+             session_id=None),
+    )
+
+    assert on_disk == prompt.rstrip("\n")
+    assert fake_claude.call_with("--bg")[-1] == on_disk
+    assert on_disk.endswith("and a body")
+    assert "trailing spaces here   \n" in on_disk  # interior whitespace is kept
+
+
+def test_gc_removes_stale_prompt_files_and_keeps_fresh_ones(cfg):
+    directory = Path(cfg.launches_dir)
+    directory.mkdir(parents=True)
+    stale, fresh = directory / "old.prompt", directory / "new.prompt"
+    for p in (stale, fresh):
+        p.write_text("x", encoding="utf-8")
+    os.utime(stale, (0, 0))
+
+    assert gc_prompt_files(directory, max_age_days=7) == 1
+    assert not stale.exists()
+    assert fresh.exists()
+    assert gc_prompt_files(directory / "not there") == 0
+
+
+# --- the conftest guard -----------------------------------------------------
+
+
+def test_the_conftest_guard_fires_when_launches_dir_is_not_overridden(store, tmp_path):
+    """A launch WRITES, so a fixture that forgets the override must fail loudly.
+
+    `RealBridgeDirTouched` derives from `BaseException` on purpose, so no
+    well-behaved catch-all can swallow it -- including the ones inside `launch`.
+    """
+    unguarded = load({"db_path": tmp_path / "b.db", "spool_dir": tmp_path / "spool"})
+    assert unguarded.launches_dir == Path.home() / ".bridge" / "launches"
+    ran = recorder(proc(0))
+
+    with pytest.raises(RealBridgeDirTouched, match="launches_dir"):
+        launcher.launch(
+            store, unguarded, spec(project_path=str(tmp_path), session_id=None),
+            run=ran, which=lambda _n: "/opt/fake bin/claude",
+        )
+
+    assert ran.calls == [], "it spawned before the guard could fire"
+
+
+def test_the_default_launches_dir_lives_under_the_bridge_dir():
+    assert load().launches_dir == Path.home() / ".bridge" / "launches"
+    assert load({"launches_dir": Path("/tmp/x")}).launches_dir == Path("/tmp/x")

@@ -1,9 +1,12 @@
-"""Launch command construction. Pure functions from arguments to strings.
+"""Launch command construction, and the one function that spawns.
 
-Nothing here writes a file, spawns a process, or opens a database. That split is
-the design: every escaping decision lives in a function whose whole contract is
-`arguments in, string out`, which is what makes the hostile cases exhaustively
-testable.
+The module splits in two and the split is the design. Everything above
+`# --- spawning ---` is a pure function from arguments to a string: no file, no
+process, no database. Every escaping decision lives there, in functions whose
+whole contract is `arguments in, string out`, which is what makes the hostile
+cases exhaustively testable. `launch()` below is the only impure thing here, and
+it takes its process runner by injection so no test ever opens a real Terminal
+window or starts a real Claude session.
 
 Measured against the real environment before any of this was written:
   * A terminal launch nests a shell command inside an AppleScript literal inside
@@ -25,14 +28,25 @@ Measured against the real environment before any of this was written:
     `--system-prompt-file` sets the system prompt. Hence `$(cat …)`.
 """
 
+import json
+import os
 import re
 import shutil
+import subprocess
+import tempfile
+import time
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
+from bridge import spool
+from bridge.models import Launch
+from bridge.registry import resolve_project
+from bridge.store import now_epoch
+
 CAT = "/bin/cat"
+OSASCRIPT = "/usr/bin/osascript"
 
 # `mode` values, shared with `launches.mode` and `POST /api/launch`.
 MODES = ("terminal", "background")
@@ -237,3 +251,328 @@ def build_bg_argv(spec: LaunchSpec, claude: str | None = None) -> list[str]:
         argv += ["-n", title]
     argv.append(spec.prompt)  # exactly one element, verbatim
     return argv
+
+
+# --- spawning ----------------------------------------------------------------
+#
+# The order below is fixed and load-bearing: resolve `claude`, write the prompt
+# file, insert the `launches` row as `pending`, spawn, record the outcome.
+# Anything that fails before the row exists fails with no side effects; anything
+# after it is correlatable, which is why a failed spawn still leaves a row.
+
+# A pre-assigned id must be unused, and "unused" is per-project-dir: `claude`
+# `statSync`s `<cwd-project-dir>/<uuid>.jsonl` and exits 1 with
+# "Error: Session ID … is already in use." A collision is therefore recoverable
+# by minting another id, and the bound is what stops a systematic cause (a
+# read-only project dir, say) from becoming an unbounded spawn loop.
+MAX_SESSION_ID_ATTEMPTS = 3
+SESSION_ID_IN_USE_RE = re.compile(r"session id\b.*\bis already in use", re.I)
+
+# CSI sequences, OSC strings, and bare two-character escapes. The `--bg` handle
+# arrives colour-wrapped and whether chalk disables itself on a pipe was NOT
+# confirmed, so this strips defensively rather than trusting a TTY check: an
+# unstripped `\x1b[36mdeadbeef\x1b[0m` is a short id no glob or lookup can match.
+ANSI_RE = re.compile(
+    r"\x1b\[[0-9;:?]*[ -/]*[@-~]"
+    r"|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)"
+    r"|\x1b[@-Z\\-_]"
+)
+
+# `backgrounded · <short>[ · <name>]`, where `short` is 8 lowercase hex and is
+# exactly `session_id[:8]`. The separator is matched loosely because it is a
+# decoration; the handle is matched exactly because it is a correlation key.
+BG_HANDLE_RE = re.compile(r"backgrounded[^0-9a-f]*([0-9a-f]{8})(?![0-9a-f])")
+
+
+@dataclass(frozen=True)
+class LaunchResult:
+    """What the caller needs to report, and to fall back on.
+
+    `error` is the text a failed launch shows next to the copied prompt, so it is
+    a string and not an exception: a launch failure is a normal outcome the panel
+    renders, not a 500. `note` carries the non-fatal ones — a background launch
+    that started but printed no handle is `started` with a note, because marking
+    it failed would leave its handoff queued for a session that is running.
+    """
+
+    launch_id: str
+    outcome: str
+    session_id: str | None = None
+    short_id: str | None = None
+    error: str | None = None
+    note: str | None = None
+
+
+def write_prompt_file(launches_dir: str | Path, session_id: str, prompt: str) -> Path:
+    """Write `<session_id>.prompt` atomically, directory 0700 and file 0600.
+
+    Takes the directory rather than a `Config` so `tests/conftest.py` can wrap it
+    with the same real-`~/.bridge` guard it wraps every `spool` writer with — a
+    guard that inspects arguments cannot see a path hidden inside a dataclass.
+
+    The prompt is `rstrip("\\n")`-normalised here, and that is not cosmetic:
+    `$(cat …)` strips trailing newlines while the `--bg` argv path preserves
+    them, so normalising at the single point both modes share is what holds them
+    to one byte-exact assertion instead of two correctness standards.
+    """
+    directory = Path(launches_dir)
+    directory.mkdir(parents=True, exist_ok=True)
+    os.chmod(directory, 0o700)
+
+    final = directory / f"{session_id}.prompt"
+    fd, tmp = tempfile.mkstemp(dir=directory, prefix=f".{session_id}.", suffix=".tmp")
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(prompt.rstrip("\n"))
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, final)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
+    return final
+
+
+def gc_prompt_files(
+    launches_dir: str | Path, max_age_days: int = 14, now: float | None = None
+) -> int:
+    """Delete prompt files older than `max_age_days`. Returns how many went.
+
+    Age-based, never launch-time: `do script` returns immediately and the new
+    shell's `cat` runs later, so unlinking when `osascript` returns is a live
+    race whose prize is an empty session that looks like it worked. The file is
+    also provenance — literally what ran — so it is kept until it is stale.
+    """
+    directory = Path(launches_dir)
+    if not directory.is_dir():
+        return 0
+    cutoff = (time.time() if now is None else now) - max_age_days * 86400
+    removed = 0
+    for path in sorted(directory.glob("*.prompt")):
+        try:
+            if path.stat().st_mtime < cutoff:
+                path.unlink()
+                removed += 1
+        except OSError:  # raced with another GC, or not ours to delete
+            continue
+    return removed
+
+
+def strip_ansi(text: str) -> str:
+    return ANSI_RE.sub("", text)
+
+
+def parse_bg_handle(stdout: str) -> str | None:
+    """The 8-hex handle `--bg` prints, or None if it printed something else."""
+    match = BG_HANDLE_RE.search(strip_ansi(stdout))
+    return match.group(1) if match else None
+
+
+def resolve_short_id(short_id: str, claude: str, run) -> str | None:
+    """`short` → full UUID via `claude agents --json --all`. Best effort only.
+
+    Confirmed live: `"id": "00b31445"` sits alongside
+    `"sessionId": "00b31445-a2d0-4d3b-878b-e37f81284385"`. When this cannot
+    answer — the subcommand changed, the output is not JSON, the agent has not
+    registered yet — the launch keeps its `short_id` alone and Task 7's unique
+    prefix backfill closes the loop on the next index. Guessing here would bind
+    a launch to the wrong session, which is worse than waiting.
+    """
+    try:
+        proc = run([claude, "agents", "--json", "--all"],
+                   capture_output=True, text=True)
+        if proc.returncode != 0:
+            return None
+        data = json.loads(strip_ansi(proc.stdout or ""))
+        for entry in _iter_agent_dicts(data):
+            if entry.get("id") != short_id:
+                continue
+            session_id = str(entry.get("sessionId") or "").lower()
+            if SESSION_ID_RE.match(session_id) and session_id.startswith(short_id):
+                return session_id
+    except Exception:  # noqa: BLE001 - a best-effort lookup cannot fail a launch
+        return None
+    return None
+
+
+def _iter_agent_dicts(data):
+    """Yield the dicts in `agents --json` output, whatever it is wrapped in."""
+    if isinstance(data, dict):
+        data = next((v for v in data.values() if isinstance(v, list)), [])
+    if isinstance(data, list):
+        for entry in data:
+            if isinstance(entry, dict):
+                yield entry
+
+
+def launch(
+    store,
+    cfg,
+    spec: LaunchSpec,
+    handoff_id: str | None = None,
+    *,
+    run=None,
+    which: Callable[[str], str | None] = shutil.which,
+) -> LaunchResult:
+    """Spawn one session and record what happened. The only impure entry point.
+
+    `run` is injected and defaults to `subprocess.run`. That injection is not
+    testability polish: terminal mode shells out to `/usr/bin/osascript`, which
+    would open a real Terminal window and start a real, token-burning session
+    whose transcript the indexer would then ingest. No test may ever do that, so
+    every test substitutes `run`.
+
+    Bridge launches sessions; it never hosts one. Once the spawn returns this
+    function's job is over — it does not wait on, poll, or kill anything.
+    """
+    run = run or subprocess.run
+
+    # Everything that can refuse a launch outright happens first, so a refusal
+    # writes no file, inserts no row, and spawns nothing.
+    if spec.mode not in MODES:
+        raise LaunchError(f"mode {spec.mode!r} is not one of {MODES}")
+    validate_prompt(spec.prompt)
+    claude = resolve_claude(which)
+
+    prompt = spec.prompt.rstrip("\n")
+    project_id = resolve_project(store, spec.project_path)
+    if spec.mode == "background":
+        return _launch_background(store, cfg, spec, prompt, project_id,
+                                  handoff_id, claude, run)
+    return _launch_terminal(store, cfg, spec, prompt, project_id,
+                            handoff_id, claude, run)
+
+
+def _new_row(store, spec, prompt, project_id, handoff_id, session_id) -> str:
+    launch_id = str(uuid.uuid4())
+    store.create_launch(Launch(
+        id=launch_id,
+        project_id=project_id,
+        mode=spec.mode,
+        prompt=prompt,
+        handoff_id=handoff_id,
+        session_id=session_id,
+        model=spec.model,
+        effort=spec.effort,
+        launched_at=now_epoch(),
+        outcome="pending",
+    ))
+    return launch_id
+
+
+def _launch_terminal(store, cfg, spec, prompt, project_id, handoff_id, claude, run):
+    session_id = spec.session_id or new_session_id()
+    # The prompt file is written before the row exists, which is the one ordering
+    # inversion allowed here: its name is derived from the session id, so a
+    # failure to write it must not leave a row claiming a session that has no
+    # prompt to run.
+    prompt_path = write_prompt_file(cfg.launches_dir, session_id, prompt)
+    launch_id = _new_row(store, spec, prompt, project_id, handoff_id, session_id)
+
+    error = None
+    for attempt in range(1, MAX_SESSION_ID_ATTEMPTS + 1):
+        command = build_shell_command(
+            replace(spec, session_id=session_id, prompt=prompt), prompt_path,
+            claude=claude,
+        )
+        script = build_applescript(command)
+        try:
+            proc = run([OSASCRIPT, "-e", script], capture_output=True, text=True)
+        except OSError as exc:
+            error = f"could not run {OSASCRIPT}: {exc}"
+            break
+
+        if proc.returncode == 0:
+            # No `set_launch_session` here: the row already holds the id it was
+            # inserted with, and `short_id` is `session_id[:8]` by construction —
+            # a terminal launch never needs the prefix backfill Task 7 does for
+            # background, so writing it would be a second UPDATE for nothing.
+            return _started(store, cfg, launch_id, handoff_id,
+                            session_id=session_id, short_id=session_id[:8])
+
+        error = _spawn_error(OSASCRIPT, proc)
+        if not _is_session_id_collision(proc) or attempt == MAX_SESSION_ID_ATTEMPTS:
+            break
+        # Recoverable, and only this: mint a fresh id, write its prompt file, and
+        # point the row at it before trying again.
+        session_id = new_session_id()
+        prompt_path = write_prompt_file(cfg.launches_dir, session_id, prompt)
+        store.set_launch_session(launch_id, session_id, session_id[:8])
+
+    return _failed(store, launch_id, error)
+
+
+def _launch_background(store, cfg, spec, prompt, project_id, handoff_id, claude, run):
+    """No prompt file and no shell: the prompt is one argv element.
+
+    Background mode is deliberately not routed through the prompt file, so the
+    two modes fail independently. Its row is written with `session_id` NULL
+    because `--bg` discards `--session-id` and mints its own; recording the
+    pre-assigned one would hold a correlation key matching no transcript that
+    will ever exist.
+    """
+    launch_id = _new_row(store, spec, prompt, project_id, handoff_id, None)
+    argv = build_bg_argv(replace(spec, prompt=prompt, session_id=None), claude=claude)
+    try:
+        proc = run(argv, capture_output=True, text=True, cwd=spec.project_path)
+    except OSError as exc:
+        return _failed(store, launch_id, f"could not run {claude}: {exc}")
+    if proc.returncode != 0:
+        return _failed(store, launch_id, _spawn_error(claude, proc))
+
+    short_id = parse_bg_handle((proc.stdout or "") + (proc.stderr or ""))
+    if short_id is None:
+        # It started. Saying otherwise would leave the handoff queued for a
+        # session that is running, which is the worse of the two wrong answers.
+        return _started(
+            store, cfg, launch_id, handoff_id,
+            note="started, but no `backgrounded · <short>` handle was printed, "
+                 "so this launch has no session id to correlate on",
+        )
+
+    session_id = resolve_short_id(short_id, claude, run)
+    store.set_launch_session(launch_id, session_id, short_id)
+    return _started(
+        store, cfg, launch_id, handoff_id,
+        session_id=session_id, short_id=short_id,
+        note=None if session_id else
+        f"short id {short_id} not yet resolvable to a session id; the next index "
+        "backfills it from a unique prefix match",
+    )
+
+
+def _started(store, cfg, launch_id, handoff_id, session_id=None, short_id=None,
+             note=None) -> LaunchResult:
+    store.set_launch_outcome(launch_id, "started")
+    if handoff_id:
+        # Journal first, then update: the journal is what survives
+        # `rm ~/.bridge/bridge.db`, so it must never lag the database it rebuilds.
+        try:
+            spool.journal_status(handoff_id, "consumed", now_epoch(), cfg.spool_dir)
+        except Exception as exc:  # noqa: BLE001 - a running session is not undone
+            note = f"{note + '; ' if note else ''}status journal failed: {exc!r}"
+        store.set_handoff_status(handoff_id, "consumed")
+    return LaunchResult(launch_id, "started", session_id, short_id, None, note)
+
+
+def _failed(store, launch_id, error) -> LaunchResult:
+    """The handoff is left `queued` — deliberately, and that is the whole contract.
+
+    The launcher's promise is only that a failure does not consume; putting the
+    prompt on the clipboard belongs to the caller, which is the layer that has a
+    clipboard.
+    """
+    store.set_launch_outcome(launch_id, "failed")
+    return LaunchResult(launch_id, "failed", error=error or "launch failed")
+
+
+def _is_session_id_collision(proc) -> bool:
+    text = strip_ansi((proc.stderr or "") + (proc.stdout or ""))
+    return bool(SESSION_ID_IN_USE_RE.search(text))
+
+
+def _spawn_error(program: str, proc) -> str:
+    text = strip_ansi((proc.stderr or "").strip() or (proc.stdout or "").strip())
+    detail = f": {text[:500]}" if text else ""
+    return f"{program} exited {proc.returncode}{detail}"
