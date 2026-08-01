@@ -1431,7 +1431,7 @@ def test_an_unknown_status_is_refused(client):
     assert c.patch(f"/api/projects/{pid}", json={"status": "hiden"}).status_code == 422
 
 
-def test_a_project_patch_with_no_status_is_422_not_a_silent_no_op(client):
+def test_a_project_patch_with_neither_field_is_422_not_a_silent_no_op(client):
     c, _, pid = client
     assert c.patch(f"/api/projects/{pid}", json={}).status_code == 422
 
@@ -1617,3 +1617,53 @@ def test_two_sessions_in_the_same_directory_report_the_newest(client, monkeypatc
     _live_elsewhere(monkeypatch, "/Users/mitsheth/scratch", "/Users/mitsheth/scratch")
     body = c.get("/").text
     assert body.count('data-live-path="/Users/mitsheth/scratch"') == 1
+
+
+# --- Pin ----------------------------------------------------------------------
+
+
+def test_a_pinned_project_sorts_above_a_queued_handoff(tmp_path):
+    """The decision this feature turned on.
+
+    Every other sort term is something Bridge inferred; a pin is the one thing
+    the user said outright, and an inference must not overrule an instruction.
+    """
+    cfg = load({"db_path": tmp_path / "pin.db", "spool_dir": tmp_path / "spool"})
+    store = Store(cfg.db_path)
+    quiet = store.upsert_project("/p/quiet", "quiet")
+    busy = store.upsert_project("/p/busy", "busy")
+    store.create_handoff(Handoff(
+        id="h-pin", project_path="/p/busy", next_prompt="go", status="queued",
+    ), busy)
+
+    c = TestClient(create_app(store, cfg))
+    body = c.get("/").text
+    assert body.index(">busy<") < body.index(">quiet<"), "handoff should lead"
+
+    assert c.patch(f"/api/projects/{quiet}", json={"pinned": True}).status_code == 200
+    body = c.get("/").text
+    assert body.index(">quiet<") < body.index(">busy<"), (
+        "the pinned project did not outrank the queued handoff"
+    )
+    store.close()
+
+
+def test_pinning_and_hiding_are_independent(client):
+    """A caller changing one must not have to restate the other."""
+    c, store, pid = client
+    c.patch(f"/api/projects/{pid}", json={"pinned": True})
+    r = c.patch(f"/api/projects/{pid}", json={"status": "hidden"})
+    assert r.json()["pinned"] == 1, "hiding cleared the pin"
+    r = c.patch(f"/api/projects/{pid}", json={"pinned": False})
+    assert r.json()["status"] == "hidden", "unpinning restored it to the dashboard"
+
+
+def test_the_card_reports_its_pin_state_to_assistive_technology(client):
+    c, _, pid = client
+    body = c.get("/").text
+    assert f'data-project-pin="{pid}"' in body
+    assert re.search(rf'data-project-pin="{pid}"[^>]*aria-pressed="false"', body)
+    c.patch(f"/api/projects/{pid}", json={"pinned": True})
+    assert re.search(
+        rf'data-project-pin="{pid}"[^>]*aria-pressed="true"', c.get("/").text
+    )

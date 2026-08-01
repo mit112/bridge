@@ -216,6 +216,7 @@ def build_cards(
                 tokens_5h=store.token_totals(row["id"], now - FIVE_HOURS),
                 spark=store.token_series(row["id"], SPARK_DAYS, now),
                 is_stale=_is_stale(git, cfg.stale_hours, now),
+                pinned=bool(row["pinned"]),
                 handoff=handoff,
                 # Resolved here rather than in Jinja: prepending an off-catalog
                 # suggestion needs to construct a ModelChoice, and exposing the
@@ -269,10 +270,17 @@ def _is_stale(git: GitState, stale_hours: int, now: int) -> bool:
 
 
 def sort_key(card: Card) -> tuple:
-    """Rank first, then most-recent-first, then name.
+    """Pinned first, then rank, then most-recent-first, then name.
 
-    A queued handoff outranks dirty-and-stale: a card that already knows its next
-    step is more actionable than one that only knows something is wrong.
+    Pin outranks everything, a queued handoff included. Every other term here is
+    something Bridge inferred about a project; a pin is the one thing the user
+    said outright, and an inference must not overrule an instruction. The cost is
+    accepted knowingly: the top card is no longer guaranteed to be the one with a
+    next step ready.
+
+    Below that, a queued handoff outranks dirty-and-stale: a card that already
+    knows its next step is more actionable than one that only knows something is
+    wrong.
     """
     if card.handoff:
         rank = RANK_HANDOFF
@@ -289,4 +297,5 @@ def sort_key(card: Card) -> tuple:
     # recency-then-name sort rather than reshuffling on every poll.
     live_rank = live_priority(card.live.status) if card.live else 0
     ended = to_epoch(card.session.ended_at) if card.session else None
-    return (rank, live_rank, -(ended or 0), card.name.lower())
+    return (0 if card.pinned else 1, rank, live_rank, -(ended or 0),
+            card.name.lower())

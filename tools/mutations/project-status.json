@@ -2,16 +2,16 @@
   {
     "name": "answer 200 for an unknown project, so a failed hide is indistinguishable from a real one",
     "file": "src/bridge/api.py",
-    "old": "        if store.get_project(project_id) is None:\n            raise HTTPException(status_code=404, detail=\"unknown project\")\n        store.set_project_status(project_id, body.status)",
-    "new": "        store.set_project_status(project_id, body.status)",
+    "old": "        if store.get_project(project_id) is None:\n            raise HTTPException(status_code=404, detail=\"unknown project\")\n        if body.status is not None:",
+    "new": "        if body.status is not None:",
     "tests": ["tests/test_api.py::test_patching_an_unknown_project_is_404_not_a_silent_success"],
     "expect_count": 1
   },
   {
     "name": "accept the patch but never write the status, so the card comes back on reload",
     "file": "src/bridge/api.py",
-    "old": "        store.set_project_status(project_id, body.status)",
-    "new": "        pass",
+    "old": "            store.set_project_status(project_id, body.status)",
+    "new": "            pass",
     "tests": ["tests/test_api.py::test_hiding_a_project_removes_it_from_the_dashboard"],
     "expect_count": 1
   },
@@ -24,11 +24,83 @@
     "expect_count": 1
   },
   {
-    "name": "make status optional, so PATCH {} is a 200 that changes nothing",
+    "name": "accept an empty project patch, so PATCH {} is a 200 that changes nothing",
     "file": "src/bridge/api.py",
-    "old": "    status: ProjectStatus\n\n\ndef create_app(",
-    "new": "    status: ProjectStatus | None = None\n\n\ndef create_app(",
-    "tests": ["tests/test_api.py::test_a_project_patch_with_no_status_is_422_not_a_silent_no_op"],
+    "old": "        if self.status is None and self.pinned is None:\n            raise ValueError(\"supply status, pinned, or both\")",
+    "new": "        pass",
+    "tests": ["tests/test_api.py::test_a_project_patch_with_neither_field_is_422_not_a_silent_no_op"],
+    "expect_count": 1
+  },
+  {
+    "name": "never write the pin, so the control looks armed and sorts nothing",
+    "file": "src/bridge/api.py",
+    "old": "            store.set_project_pinned(project_id, body.pinned)",
+    "new": "            pass",
+    "tests": ["tests/test_api.py::test_the_card_reports_its_pin_state_to_assistive_technology"],
+    "expect_count": 1
+  },
+  {
+    "name": "ignore the pinned field entirely, so pinning is a silent no-op",
+    "file": "src/bridge/api.py",
+    "old": "        if body.pinned is not None:",
+    "new": "        if False:",
+    "tests": ["tests/test_api.py::test_pinning_and_hiding_are_independent"],
+    "expect_count": 1
+  },
+  {
+    "name": "always write pinned=0, so a pin never takes",
+    "file": "src/bridge/store.py",
+    "old": "                \"UPDATE projects SET pinned=? WHERE id=?\", (int(pinned), project_id)",
+    "new": "                \"UPDATE projects SET pinned=? WHERE id=?\", (0, project_id)",
+    "tests": ["tests/test_api.py::test_a_pinned_project_sorts_above_a_queued_handoff"],
+    "expect_count": 1
+  },
+  {
+    "name": "drop pin from the sort key, so a queued handoff outranks an explicit instruction",
+    "file": "src/bridge/cards.py",
+    "old": "    return (0 if card.pinned else 1, rank, live_rank, -(ended or 0),\n            card.name.lower())",
+    "new": "    return (rank, live_rank, -(ended or 0), card.name.lower())",
+    "tests": ["tests/test_api.py::test_a_pinned_project_sorts_above_a_queued_handoff"],
+    "expect_count": 1
+  },
+  {
+    "name": "sort pinned projects to the BOTTOM, inverting the one thing the user said outright",
+    "file": "src/bridge/cards.py",
+    "old": "    return (0 if card.pinned else 1, rank,",
+    "new": "    return (1 if card.pinned else 0, rank,",
+    "tests": ["tests/test_api.py::test_a_pinned_project_sorts_above_a_queued_handoff"],
+    "expect_count": 1
+  },
+  {
+    "name": "never read the pin off the row, so every card believes it is unpinned",
+    "file": "src/bridge/cards.py",
+    "old": "                pinned=bool(row[\"pinned\"]),",
+    "new": "                pinned=False,",
+    "tests": ["tests/test_api.py::test_a_pinned_project_sorts_above_a_queued_handoff"],
+    "expect_count": 1
+  },
+  {
+    "name": "hardcode aria-pressed, so the toggle never announces its state",
+    "file": "src/bridge/templates/_card.html",
+    "old": "              aria-pressed=\"{{ 'true' if card.pinned else 'false' }}\"",
+    "new": "              aria-pressed=\"false\"",
+    "tests": ["tests/test_api.py::test_the_card_reports_its_pin_state_to_assistive_technology"],
+    "expect_count": 1
+  },
+  {
+    "name": "always pin rather than toggle, so the control can never be undone",
+    "file": "src/bridge/static/projects.js",
+    "old": "    const next = pin.getAttribute(\"aria-pressed\") !== \"true\";",
+    "new": "    const next = true;",
+    "tests": ["tests/test_static_js.py::test_pin_toggles_from_the_state_it_announces"],
+    "expect_count": 1
+  },
+  {
+    "name": "send the status key on a pin, letting an unrelated field ride along",
+    "file": "src/bridge/static/projects.js",
+    "old": "  if (status !== undefined) body.status = status;",
+    "new": "  body.status = status;",
+    "tests": ["tests/test_static_js.py::test_pin_toggles_from_the_state_it_announces"],
     "expect_count": 1
   },
   {

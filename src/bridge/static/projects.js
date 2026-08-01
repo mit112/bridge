@@ -11,11 +11,17 @@
 // JavaScript would mean duplicating the template, which is the innerHTML pattern
 // live.js exists to avoid.
 
-async function setProjectStatus(projectId, status) {
+// Only the fields actually being changed are sent. The server rejects a body
+// with neither, and sending `status: undefined` alongside a pin would drop out
+// of JSON.stringify anyway — this makes that explicit rather than incidental.
+async function setProjectStatus(projectId, status, pinned) {
+  const body = {};
+  if (status !== undefined) body.status = status;
+  if (pinned !== undefined) body.pinned = pinned;
   const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ status }),
+    body: JSON.stringify(body),
   });
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
 }
@@ -61,6 +67,27 @@ function hiddenRow(projectId, name) {
 }
 
 document.addEventListener("click", async (event) => {
+  const pin = event.target.closest("[data-project-pin]");
+  if (pin) {
+    const id = pin.getAttribute("data-project-pin");
+    // `aria-pressed` is the state, so it is what the toggle reads rather than a
+    // second copy kept somewhere else that could disagree with it.
+    const next = pin.getAttribute("aria-pressed") !== "true";
+    try {
+      await setProjectStatus(id, undefined, next);
+      pin.setAttribute("aria-pressed", String(next));
+      // Not reordered here. A pinned card belongs at the top, but placing it
+      // there client-side would use a different tiebreak from the server's and
+      // the order would visibly reshuffle on the next load.
+      say(`[data-project-status="${id}"]`,
+          next ? "✓ Pinned — reload to re-sort" : "✓ Unpinned — reload to re-sort");
+    } catch (error) {
+      console.error("bridge: pinning the project failed", error);
+      say(`[data-project-status="${id}"]`, next ? "⚠ Not pinned" : "⚠ Not unpinned");
+    }
+    return;
+  }
+
   const hide = event.target.closest("[data-project-hide]");
   if (hide) {
     const id = hide.getAttribute("data-project-hide");

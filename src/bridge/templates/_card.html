@@ -9,6 +9,13 @@
        brings it back. Spelled out in a word rather than an × glyph, which on a
        card reads as delete. #}
     <span class="card__hide">
+      {# A toggle, so `aria-pressed` rather than a label that changes meaning:
+         a screen reader announces the state and the action separately, which an
+         "Unpin"/"Pin" label swap cannot do. #}
+      <button type="button" class="btn btn--icon" data-project-pin="{{ card.project_id }}"
+              aria-pressed="{{ 'true' if card.pinned else 'false' }}"
+              aria-label="Pin {{ card.name }} above every other project"
+              title="Pin to the top"><span aria-hidden="true">📌</span></button>
       <button type="button" class="btn" data-project-hide="{{ card.project_id }}"
               aria-label="Hide {{ card.name }} from the dashboard"
               title="Hide from the dashboard">Hide</button>

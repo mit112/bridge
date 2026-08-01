@@ -126,13 +126,24 @@ class LaunchIn(BaseModel):
 
 
 class ProjectPatch(BaseModel):
-    """Required, not optional, so `PATCH {}` is a 422 and never a silent no-op.
+    """`status`, `pinned`, or both -- but never neither.
 
-    `HandoffPatch` needs a validator for that because both of its fields are
-    genuinely optional; this body has one field and nothing to do without it.
+    Both optional because the panel pins a project without touching its
+    visibility and hides one without touching its pin. Optional fields alone,
+    though, make `PATCH {}` a 200 that changes nothing, so the validator below
+    rejects the empty body: at the far end of a `fetch()` a silent no-op is
+    indistinguishable from a saved change. Same shape as `HandoffPatch`, for
+    exactly the same reason.
     """
 
-    status: ProjectStatus
+    status: ProjectStatus | None = None
+    pinned: bool | None = None
+
+    @model_validator(mode="after")
+    def _at_least_one_field(self):
+        if self.status is None and self.pinned is None:
+            raise ValueError("supply status, pinned, or both")
+        return self
 
 
 def create_app(
@@ -440,7 +451,10 @@ def create_app(
         """
         if store.get_project(project_id) is None:
             raise HTTPException(status_code=404, detail="unknown project")
-        store.set_project_status(project_id, body.status)
+        if body.status is not None:
+            store.set_project_status(project_id, body.status)
+        if body.pinned is not None:
+            store.set_project_pinned(project_id, body.pinned)
         return dict(store.get_project(project_id))
 
     @app.post("/api/refresh")

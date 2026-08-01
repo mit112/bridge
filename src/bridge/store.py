@@ -239,6 +239,17 @@ class Store:
                 "UPDATE projects SET status=? WHERE id=?", (status, project_id)
             )
 
+    def set_project_pinned(self, project_id: int, pinned: bool) -> None:
+        """Stored as 0/1 because the column is INTEGER and SQLite has no bool.
+
+        Separate from `set_project_status`: pinning and hiding are independent
+        decisions, and a caller changing one must not have to restate the other.
+        """
+        with self._lock:
+            self.conn.execute(
+                "UPDATE projects SET pinned=? WHERE id=?", (int(pinned), project_id)
+            )
+
     def projects(self, include_hidden: bool = False) -> list[sqlite3.Row]:
         with self._lock:
             sql = "SELECT * FROM projects"

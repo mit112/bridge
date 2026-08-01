@@ -152,6 +152,8 @@ class Card:
     tokens_5h: int
     spark: list[int] = field(default_factory=list)
     is_stale: bool = False
+    # Sorts above every other signal. See `cards.sort_key`.
+    pinned: bool = False
     # The live session on this project, most recently started first if several.
     live: LiveSession | None = None
     # The sensor failed, as distinct from `live is None` meaning nothing is

@@ -309,6 +309,11 @@ const hideButton = {
 const restoreButton = {
   getAttribute: (n) => (n === "data-project-restore" ? "7" : null),
 };
+const pinButton = {
+  attrs: { "data-project-pin": "7", "aria-pressed": PRESSED },
+  getAttribute(n) { return this.attrs[n] ?? null; },
+  setAttribute(n, v) { this.attrs[n] = v; },
+};
 const details = { attrs: { hidden: "" },
                   setAttribute(n, v) { this.attrs[n] = v; },
                   removeAttribute(n) { delete this.attrs[n]; } };
@@ -347,6 +352,7 @@ const errors = [];
 console.error = (...a) => errors.push(String(a[0]));
 
 clickHandler({ target: { closest: (sel) => {
+  if (sel === "[data-project-pin]") return TARGET === "pin" ? pinButton : null;
   if (sel === "[data-project-hide]") return TARGET === "hide" ? hideButton : null;
   if (sel === "[data-project-restore]") return TARGET === "restore" ? restoreButton : null;
   return null;
@@ -360,17 +366,18 @@ clickHandler({ target: { closest: (sel) => {
     cardStatus: cardStatus.textContent,
     hiddenStatus: hiddenStatus.textContent,
     rowRemoved: row.removed,
+    pressed: pinButton.attrs["aria-pressed"],
   }));
 });
 """
 
 
-def _run_projects(tmp_path, target: str, ok: bool) -> dict:
+def _run_projects(tmp_path, target: str, ok: bool, pressed: str = "false") -> dict:
     harness = tmp_path / "projects_harness.js"
     harness.write_text(
-        PROJECTS_HARNESS.replace("TARGET", json.dumps(target)).replace(
-            "OK", "true" if ok else "false"
-        )
+        PROJECTS_HARNESS.replace("TARGET", json.dumps(target))
+        .replace("PRESSED", json.dumps(pressed))
+        .replace("OK", "true" if ok else "false")
     )
     proc = subprocess.run(
         [_node(), str(harness), str(PROJECTS_JS)], capture_output=True, text=True
@@ -422,3 +429,23 @@ def test_a_refused_restore_leaves_the_row_in_the_list(tmp_path):
     got = _run_projects(tmp_path, "restore", ok=False)
     assert got["rowRemoved"] is False
     assert "⚠" in got["hiddenStatus"]
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_pin_toggles_from_the_state_it_announces(tmp_path):
+    """`aria-pressed` IS the state, so the toggle reads it rather than keeping a
+    second copy somewhere that could disagree with what a screen reader says."""
+    on = _run_projects(tmp_path, "pin", ok=True, pressed="false")
+    assert on["sent"]["body"] == {"pinned": True}, "a pin must not carry a status"
+    assert on["pressed"] == "true"
+
+    off = _run_projects(tmp_path, "pin", ok=True, pressed="true")
+    assert off["sent"]["body"] == {"pinned": False}
+    assert off["pressed"] == "false"
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_a_refused_pin_leaves_the_announced_state_alone(tmp_path):
+    got = _run_projects(tmp_path, "pin", ok=False, pressed="false")
+    assert got["pressed"] == "false", "the button claimed a pin the server refused"
+    assert "\u26a0" in got["cardStatus"]
