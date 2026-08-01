@@ -443,8 +443,13 @@ def test_the_card_shows_the_handoff_and_a_labelled_copy_affordance(handoff_app):
     # The button says what it does, and the confirmation is a live region so it
     # is announced without moving focus.
     assert ">Copy prompt<" in html
-    assert 'role="status"' in html
-    assert 'aria-live="polite"' in html
+    # Asserted on the copy span itself, not on the page: the card renders three
+    # status lines, so a bare `role="status"` substring stays true after the
+    # copy confirmation loses its live region entirely.
+    copy_status = re.search(r'<span[^>]*data-copy-status="handoff-h1"[^>]*>', html)
+    assert copy_status, "no copy-confirmation element on the card"
+    assert 'role="status"' in copy_status.group(0)
+    assert 'aria-live="polite"' in copy_status.group(0)
     assert 'data-copy-target="handoff-h1"' in html
     assert 'id="handoff-h1"' in html
 

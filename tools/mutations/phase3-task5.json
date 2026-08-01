@@ -38,5 +38,15 @@
       "tests/test_cli.py::test_launch_with_nothing_queued_exits_nonzero_and_says_why"
     ],
     "expect_count": 1
+  },
+  {
+    "name": "drop the empty-prompt check on the launch path",
+    "file": "src/bridge/cli.py",
+    "old": "        if not prompt.strip():\n            print(\"bridge launch: refusing to launch an empty prompt\",\n                  file=sys.stderr)\n            return 2",
+    "new": "        if False:\n            print(\"bridge launch: refusing to launch an empty prompt\",\n                  file=sys.stderr)\n            return 2",
+    "tests": [
+      "tests/test_cli.py::test_launching_an_empty_prompt_file_launches_nothing"
+    ],
+    "expect_count": 1
   }
 ]

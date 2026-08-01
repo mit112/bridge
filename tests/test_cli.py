@@ -308,6 +308,22 @@ def test_launch_with_a_prompt_file_overrides_the_queued_handoff(monkeypatch, tmp
     assert fake_server["posts"][0]["prompt"] == HOSTILE
 
 
+def test_launching_an_empty_prompt_file_launches_nothing(monkeypatch, tmp_path,
+                                                         fake_server):
+    """Passing `--prompt-file` is explicit intent, so an empty one cannot fall
+    through to the queued handoff the way omitting the flag does. Posting the
+    whitespace would spawn a session with no instructions instead."""
+    fake_server["code"] = 200
+    fake_server["post_body"] = started()
+    code, _ = run_launch(
+        monkeypatch, tmp_path, fake_server["port"],
+        argv=["launch", "--project", DEMO, "--prompt-file", "-"],
+        prompt="   \n",
+    )
+    assert code == 2
+    assert fake_server["posts"] == [], "an empty prompt was launched anyway"
+
+
 def test_launch_without_a_prompt_file_sends_no_prompt_at_all(monkeypatch, tmp_path,
                                                              fake_server):
     """Asserted as an absence, because the server-side fallback to the queued
