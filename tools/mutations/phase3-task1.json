@@ -1,0 +1,136 @@
+[
+  {
+    "name": "drop the WHERE clause from launch_by_session, so the wrong row returns",
+    "file": "src/bridge/store.py",
+    "old": "                \"SELECT * FROM launches WHERE session_id=?\", (session_id,)",
+    "new": "                \"SELECT * FROM launches WHERE 1=1 OR session_id=?\", (session_id,)",
+    "tests": [
+      "tests/test_store.py::test_a_launch_round_trips_and_is_found_by_its_session_id",
+      "tests/test_store.py::test_set_launch_session_fills_in_both_ids_after_a_background_spawn"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "declare handoff_id NOT NULL, so an ad-hoc launch cannot be recorded",
+    "file": "src/bridge/store.py",
+    "old": "        handoff_id TEXT REFERENCES handoffs(id),",
+    "new": "        handoff_id TEXT NOT NULL REFERENCES handoffs(id),",
+    "tests": [
+      "tests/test_store.py::test_a_launch_needs_no_handoff_behind_it"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "remove REFERENCES handoffs(id), so launches.handoff_id can dangle",
+    "file": "src/bridge/store.py",
+    "old": "        handoff_id TEXT REFERENCES handoffs(id),",
+    "new": "        handoff_id TEXT,",
+    "tests": [
+      "tests/test_store.py::test_a_launch_cannot_reference_a_handoff_that_does_not_exist"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "record a launch as already started instead of pending",
+    "file": "src/bridge/store.py",
+    "old": "                    l.outcome or \"pending\",",
+    "new": "                    \"started\",",
+    "tests": [
+      "tests/test_store.py::test_a_launch_round_trips_and_is_found_by_its_session_id"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "swap session_id and short_id in set_launch_session",
+    "file": "src/bridge/store.py",
+    "old": "                \"UPDATE launches SET session_id=?, short_id=? WHERE id=?\",",
+    "new": "                \"UPDATE launches SET short_id=?, session_id=? WHERE id=?\",",
+    "tests": [
+      "tests/test_store.py::test_set_launch_session_fills_in_both_ids_after_a_background_spawn"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "list launches oldest-first",
+    "file": "src/bridge/store.py",
+    "old": "                    \"ORDER BY launched_at DESC LIMIT ?\",",
+    "new": "                    \"ORDER BY launched_at ASC LIMIT ?\",",
+    "tests": [
+      "tests/test_store.py::test_a_launch_round_trips_and_is_found_by_its_session_id"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "skip the status-replay loop entirely (the regression Task 1 exists to prevent)",
+    "file": "src/bridge/spool.py",
+    "old": "    for s in sorted(statuses, key=lambda s: (s.at, s.handoff_id)):\n        store.set_handoff_status(s.handoff_id, s.status)\n        stats.statuses += 1\n",
+    "new": "",
+    "tests": [
+      "tests/test_spool.py::test_a_consumed_handoff_replays_as_consumed_not_queued",
+      "tests/test_spool.py::test_status_records_replay_in_at_order_not_glob_order"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "drop the `at` sort, so the end state becomes filesystem-dependent",
+    "file": "src/bridge/spool.py",
+    "old": "    for s in sorted(statuses, key=lambda s: (s.at, s.handoff_id)):",
+    "new": "    for s in statuses:",
+    "tests": [
+      "tests/test_spool.py::test_status_records_replay_in_at_order_not_glob_order"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "apply statuses BEFORE creations (a pure code move: byte-size identical, so this also exercises the stale-bytecode guard)",
+    "file": "src/bridge/spool.py",
+    "old": "    records.sort(key=lambda h: (h.created_at, h.id))\n    for h in records:\n        try:\n            store.create_handoff(h, resolve(store, h.project_path))\n            stats.drained += 1\n        except Exception:  # noqa: BLE001\n            stats.failed += 1\n\n    # Statuses last, in `at` order. A creation queues, and `create_handoff`\n    # supersedes as it goes, so applying a status before every creation is in\n    # place would let a later insert overwrite the state we just restored.\n    for s in sorted(statuses, key=lambda s: (s.at, s.handoff_id)):\n        store.set_handoff_status(s.handoff_id, s.status)\n        stats.statuses += 1\n",
+    "new": "    for s in sorted(statuses, key=lambda s: (s.at, s.handoff_id)):\n        store.set_handoff_status(s.handoff_id, s.status)\n        stats.statuses += 1\n\n    # Statuses last, in `at` order. A creation queues, and `create_handoff`\n    # supersedes as it goes, so applying a status before every creation is in\n    # place would let a later insert overwrite the state we just restored.\n    records.sort(key=lambda h: (h.created_at, h.id))\n    for h in records:\n        try:\n            store.create_handoff(h, resolve(store, h.project_path))\n            stats.drained += 1\n        except Exception:  # noqa: BLE001\n            stats.failed += 1\n",
+    "tests": [
+      "tests/test_spool.py::test_a_consumed_handoff_replays_as_consumed_not_queued",
+      "tests/test_spool.py::test_status_records_replay_in_at_order_not_glob_order"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "remove the empty-table guard, so a routine index rewrites live statuses",
+    "file": "src/bridge/spool.py",
+    "old": "    if store.handoff_count() > 0:\n        return DrainStats(skipped=1)",
+    "new": "    if False:\n        return DrainStats(skipped=1)",
+    "tests": [
+      "tests/test_spool.py::test_rebuild_is_still_skipped_when_status_records_are_present"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "stop dispatching on the .status.json suffix, so status records are parsed as handoffs",
+    "file": "src/bridge/spool.py",
+    "old": "            if path.name.endswith(STATUS_SUFFIX):",
+    "new": "            if False:",
+    "tests": [
+      "tests/test_spool.py::test_a_consumed_handoff_replays_as_consumed_not_queued",
+      "tests/test_spool.py::test_a_corrupt_status_record_is_quarantined_and_the_replay_continues"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "journal a status into the live outbox instead of drained/",
+    "file": "src/bridge/spool.py",
+    "old": "    _, drained_dir, _ = _dirs(spool_dir)\n    return _atomic_write(\n        {\"handoff_id\": handoff_id, \"status\": status, \"at\": at},\n        f\"{handoff_id}.{at}.status\",\n        drained_dir,\n    )",
+    "new": "    live, _, _ = _dirs(spool_dir)\n    return _atomic_write(\n        {\"handoff_id\": handoff_id, \"status\": status, \"at\": at},\n        f\"{handoff_id}.{at}.status\",\n        live,\n    )",
+    "tests": [
+      "tests/test_spool.py::test_journal_status_writes_a_record_that_cannot_be_mistaken_for_a_handoff"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "let a corrupt status record abort the whole replay instead of quarantining it",
+    "file": "src/bridge/spool.py",
+    "old": "                except Exception:  # noqa: BLE001 - one bad record cannot stop the replay\n                    _quarantine(path, bad_dir)\n                    stats.bad += 1\n                continue",
+    "new": "                except Exception:  # noqa: BLE001 - one bad record cannot stop the replay\n                    raise\n                continue",
+    "tests": [
+      "tests/test_spool.py::test_a_corrupt_status_record_is_quarantined_and_the_replay_continues"
+    ],
+    "expect_count": 1
+  }
+]
