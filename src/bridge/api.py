@@ -5,13 +5,15 @@ opens the database. Phase 3 makes it the sole *spawner* too: the card and the CL
 are both thin clients of `POST /api/launch`, and neither imports `launcher`.
 """
 
+import json
+import time
 from collections.abc import Callable
 from dataclasses import asdict
 from pathlib import Path
 from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Request, Response
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, field_validator, model_validator
@@ -142,6 +144,101 @@ def create_app(
     # ACROSS requests: a per-request instance would have nothing to remember
     # and the hysteresis would never fire.
     debouncer = LivenessDebouncer()
+
+    # --- SSE ----------------------------------------------------------------
+    #
+    # Snapshot on connect, then deltas WITH tombstones, a named `refresh` when
+    # the server wants the client to resync over REST, and a capped stream that
+    # lets `EventSource` reconnect rather than running an unbounded generator.
+    #
+    # There is deliberately no `Last-Event-ID` handling. Every reconnect opens
+    # with a full snapshot, so there is nothing to replay -- which also deletes
+    # the "requested event older than the retained window" branch entirely.
+    #
+    # Session status NEVER depends on client connectivity. Gating poll *cadence*
+    # on connected clients would be fine; deriving *state* from it is the bug
+    # class that produced three separate reported failures elsewhere.
+
+    SSE_MAX_SECONDS = 300.0
+
+    def _frame(event: str, payload: dict) -> str:
+        # The trailing BLANK line terminates the frame. With a single "\n" the
+        # browser buffers forever and no event ever fires, with no error
+        # anywhere -- which is why the tests assert on it explicitly.
+        return f"event: {event}\ndata: {json.dumps(payload)}\n\n"
+
+    def _live_snapshot() -> dict:
+        """Live state keyed by project path. Acquires the store lock only for
+        the two cheap reads it needs, and never holds it across a sleep."""
+        state = agents.probe()
+        rows = store.projects()
+        grouped = agents.by_project(
+            state, store.alias_map(), [row["path"] for row in rows]
+        )
+        live = {}
+        for path, sessions in grouped.items():
+            if path == agents.UNATTRIBUTED or not sessions:
+                continue
+            session = sessions[0]
+            live[path] = {"status": session.status,
+                          "started_at": session.started_at}
+        run = store.latest_index_run()
+        return {
+            "live": live,
+            "unavailable": state.status == "unavailable",
+            "index": {"ran_at": run["ran_at"],
+                      "parse_errors": run["parse_errors"]} if run else None,
+        }
+
+    def _delta(before: dict, after: dict) -> dict | None:
+        """What changed, including what is GONE.
+
+        The plan's payload shape could say "busy" but had no way to say "this
+        session has ended", so a card kept its live band until the page was
+        reloaded. `removed` is that missing word.
+        """
+        changed = {p: v for p, v in after["live"].items()
+                   if before["live"].get(p) != v}
+        removed = [p for p in before["live"] if p not in after["live"]]
+        if not changed and not removed and before["index"] == after["index"] \
+                and before["unavailable"] == after["unavailable"]:
+            return None  # emit only on change
+        return {"live": changed, "removed": removed,
+                "unavailable": after["unavailable"], "index": after["index"]}
+
+    @app.get("/events")
+    def events(max_ticks: int | None = None, interval: float = 3.0,
+               max_seconds: float = SSE_MAX_SECONDS):
+        def stream():
+            started = time.monotonic()
+            ticks = 0
+            previous = None
+            while True:
+                payload = _live_snapshot()   # takes and releases the lock
+                if previous is None:
+                    yield _frame("snapshot", payload)
+                else:
+                    delta = _delta(previous, payload)
+                    if delta is not None:
+                        yield _frame("delta", delta)
+                previous = payload
+                ticks += 1
+
+                if max_ticks is not None and ticks >= max_ticks:
+                    break
+                if time.monotonic() - started >= max_seconds:
+                    # Cap the stream and tell the client to resync rather than
+                    # running an unbounded generator. EventSource reconnects on
+                    # its own and gets a fresh snapshot.
+                    yield _frame("refresh", {"reason": "stream capped"})
+                    break
+                time.sleep(interval)         # the lock is NOT held here
+                yield ": heartbeat\n\n"
+
+        return StreamingResponse(
+            stream(), media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
 
     def _diagnostics() -> dict:
         """Everything the diagnostics view shows, as plain data.

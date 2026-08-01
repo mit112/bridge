@@ -1117,3 +1117,131 @@ def test_diagnostics_reports_terminal_agents_as_not_running(tmp_path, monkeypatc
     c = TestClient(create_app(store, cfg))
     assert c.get("/api/diagnostics").json()["running_sessions"] == 1
     store.close()
+
+
+# --- Phase 4 Task 8: SSE -----------------------------------------------------
+
+
+def _frames(text: str) -> list[tuple[str, dict]]:
+    out = []
+    for block in text.split("\n\n"):
+        if not block.strip() or block.startswith(":"):
+            continue
+        name, data = None, None
+        for line in block.splitlines():
+            if line.startswith("event: "):
+                name = line[len("event: "):]
+            elif line.startswith("data: "):
+                data = json.loads(line[len("data: "):])
+        if name:
+            out.append((name, data))
+    return out
+
+
+def test_events_opens_with_a_full_snapshot_in_sse_frame_format(client):
+    c, _, _ = client
+    with c.stream("GET", "/events?max_ticks=1&interval=0") as response:
+        assert response.headers["content-type"].startswith("text/event-stream")
+        assert response.headers["x-accel-buffering"] == "no"
+        body = "".join(response.iter_text())
+
+    assert body.startswith("event: snapshot\n")
+    # The trailing BLANK line terminates the frame. With a single "\n" the
+    # browser buffers forever and no event ever fires, with no error anywhere.
+    assert body.endswith("\n\n")
+    name, payload = _frames(body)[0]
+    assert name == "snapshot"
+    assert "live" in payload
+
+
+def test_every_reconnect_begins_with_a_snapshot_so_no_replay_is_needed(client):
+    """This is why there is no Last-Event-ID handling to write."""
+    c, _, _ = client
+    for _ in range(2):
+        with c.stream("GET", "/events?max_ticks=1&interval=0") as r:
+            assert _frames("".join(r.iter_text()))[0][0] == "snapshot"
+
+
+def test_an_unchanged_tick_emits_nothing_after_the_snapshot(client):
+    c, _, _ = client
+    with c.stream("GET", "/events?max_ticks=4&interval=0") as r:
+        frames = _frames("".join(r.iter_text()))
+    assert [n for n, _ in frames] == ["snapshot"], "a quiet server still emitted"
+
+
+def test_a_capped_stream_ends_with_a_named_refresh_rather_than_running_forever(client):
+    c, _, _ = client
+    with c.stream("GET", "/events?interval=0&max_seconds=0") as r:
+        frames = _frames("".join(r.iter_text()))
+    assert [n for n, _ in frames] == ["snapshot", "refresh"]
+
+
+def test_a_delta_carries_a_tombstone_when_a_session_ends(tmp_path, monkeypatch):
+    """The planned payload could say "busy" but had no way to say "gone", so a
+    card kept its live band until the page was reloaded."""
+    from bridge import agents
+    from bridge.models import AgentsState, LiveSession
+
+    cfg = load({"db_path": tmp_path / "sse.db", "spool_dir": tmp_path / "spool"})
+    store = Store(cfg.db_path)
+    store.upsert_project("/p/gone", "gone")
+    states = [
+        AgentsState(status="ok", sessions=[LiveSession(
+            session_id="aaaaaaaa-0000-0000-0000-000000000001", cwd="/p/gone",
+            kind="interactive", status="busy", started_at=5)]),
+        AgentsState(status="ok", sessions=[]),
+    ]
+    monkeypatch.setattr(agents, "probe", lambda *a, **k: states.pop(0) if states
+                        else AgentsState(status="ok", sessions=[]))
+    c = TestClient(create_app(store, cfg))
+    with c.stream("GET", "/events?max_ticks=2&interval=0") as r:
+        frames = _frames("".join(r.iter_text()))
+    store.close()
+
+    assert [n for n, _ in frames] == ["snapshot", "delta"]
+    assert frames[0][1]["live"]["/p/gone"]["status"] == "busy"
+    assert frames[1][1]["removed"] == ["/p/gone"]
+
+
+def test_an_open_stream_does_not_block_other_requests(client):
+    """The store is ONE connection behind ONE lock. A stream that holds it
+    across its sleep freezes the entire panel."""
+    import time as _time
+
+    c, _, _ = client
+    with c.stream("GET", "/events?max_ticks=3&interval=0.3"):
+        start = _time.monotonic()
+        assert c.get("/api/projects").status_code == 200
+        assert _time.monotonic() - start < 0.3
+
+
+def test_the_stream_never_writes(client):
+    """`/events` reads. It must not index, launch, or write."""
+    c, store, _ = client
+    before = store.latest_index_run()
+    with c.stream("GET", "/events?max_ticks=2&interval=0") as r:
+        "".join(r.iter_text())
+    after = store.latest_index_run()
+    assert (before is None) == (after is None)
+
+
+def test_live_js_never_touches_the_prompt_textarea():
+    """The handoff prompt is the only state Bridge cannot rebuild."""
+    source = (Path(__file__).resolve().parent.parent / "src" / "bridge"
+              / "static" / "live.js").read_text()
+    assert "data-prompt-handoff" not in source
+    assert ".innerHTML" not in source        # no subtree replacement
+    assert "location.reload" not in source
+    # No replay handling: `lastEventId` is the EventSource property a
+    # replay design would have to read, and every reconnect already opens
+    # with a full snapshot. Asserted on the API name, not on the prose --
+    # the header is named in a comment explaining why it is absent.
+    assert "lastEventId" not in source
+
+
+def test_live_js_handles_all_three_named_events():
+    source = (Path(__file__).resolve().parent.parent / "src" / "bridge"
+              / "static" / "live.js").read_text()
+    for name in ("snapshot", "delta", "refresh"):
+        assert f'"{name}"' in source
+    assert "removed" in source               # the tombstone is applied

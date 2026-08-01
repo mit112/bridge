@@ -1,0 +1,143 @@
+[
+  {
+    "name": "hold the store lock across the sleep, so the whole panel hangs while a tab is open (the single worst regression available in this phase)",
+    "file": "src/bridge/api.py",
+    "old": "                time.sleep(interval)         # the lock is NOT held here",
+    "new": "                with store._lock:\n                    time.sleep(interval)",
+    "tests": [
+      "tests/test_api.py::test_an_open_stream_does_not_block_other_requests"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "terminate frames with a single newline, so the browser buffers forever and no event ever fires with no error anywhere",
+    "file": "src/bridge/api.py",
+    "old": "        return f\"event: {event}\\ndata: {json.dumps(payload)}\\n\\n\"",
+    "new": "        return f\"event: {event}\\ndata: {json.dumps(payload)}\\n\"",
+    "tests": [
+      "tests/test_api.py::test_events_opens_with_a_full_snapshot_in_sse_frame_format"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "drop the tombstone, so a card keeps a live band for a session that has ended until the page is reloaded",
+    "file": "src/bridge/api.py",
+    "old": "        removed = [p for p in before[\"live\"] if p not in after[\"live\"]]",
+    "new": "        removed = []",
+    "tests": [
+      "tests/test_api.py::test_a_delta_carries_a_tombstone_when_a_session_ends"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "emit a delta on every tick even when nothing changed, so a quiet server floods every connected tab",
+    "file": "src/bridge/api.py",
+    "old": "        if not changed and not removed and before[\"index\"] == after[\"index\"] \\\n                and before[\"unavailable\"] == after[\"unavailable\"]:\n            return None  # emit only on change",
+    "new": "        if False:\n            return None  # emit only on change",
+    "tests": [
+      "tests/test_api.py::test_an_unchanged_tick_emits_nothing_after_the_snapshot"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "send a delta instead of a snapshot on connect, so a reconnecting client never learns the full picture",
+    "file": "src/bridge/api.py",
+    "old": "                if previous is None:\n                    yield _frame(\"snapshot\", payload)",
+    "new": "                if False:\n                    yield _frame(\"snapshot\", payload)",
+    "tests": [
+      "tests/test_api.py::test_events_opens_with_a_full_snapshot_in_sse_frame_format",
+      "tests/test_api.py::test_every_reconnect_begins_with_a_snapshot_so_no_replay_is_needed"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "never cap the stream, running an unbounded generator per connected tab",
+    "file": "src/bridge/api.py",
+    "old": "                if time.monotonic() - started >= max_seconds:",
+    "new": "                if False:",
+    "tests": [
+      "tests/test_api.py::test_a_capped_stream_ends_with_a_named_refresh_rather_than_running_forever"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "cap the stream silently with no refresh event, leaving the client to guess it should resync",
+    "file": "src/bridge/api.py",
+    "old": "                    yield _frame(\"refresh\", {\"reason\": \"stream capped\"})\n                    break",
+    "new": "                    break",
+    "tests": [
+      "tests/test_api.py::test_a_capped_stream_ends_with_a_named_refresh_rather_than_running_forever"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "put unattributed sessions into the wire payload, so a session in no registered project patches an unrelated card",
+    "file": "src/bridge/api.py",
+    "old": "            if path == agents.UNATTRIBUTED or not sessions:",
+    "new": "            if not sessions:",
+    "tests": [
+      "tests/test_api.py::test_a_delta_carries_a_tombstone_when_a_session_ends"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "stop naming the events, leaving the client with no dispatch and a schema-less wire",
+    "file": "src/bridge/api.py",
+    "old": "        return f\"event: {event}\\ndata: {json.dumps(payload)}\\n\\n\"",
+    "new": "        return f\"data: {json.dumps(payload)}\\n\\n\"",
+    "tests": [
+      "tests/test_api.py::test_events_opens_with_a_full_snapshot_in_sse_frame_format"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "drop X-Accel-Buffering, so a reverse proxy buffers the stream into uselessness",
+    "file": "src/bridge/api.py",
+    "old": "            headers={\"Cache-Control\": \"no-cache\", \"X-Accel-Buffering\": \"no\"},",
+    "new": "            headers={\"Cache-Control\": \"no-cache\"},",
+    "tests": [
+      "tests/test_api.py::test_events_opens_with_a_full_snapshot_in_sse_frame_format"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "patch the card by innerHTML, silently discarding whatever the user was typing",
+    "file": "src/bridge/static/live.js",
+    "old": "    if (band) band.textContent = state.status;",
+    "new": "    if (band) band.parentNode.innerHTML = state.status;",
+    "tests": [
+      "tests/test_api.py::test_live_js_never_touches_the_prompt_textarea"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "drop the malformed-frame guard, so one bad payload kills live updates for the session",
+    "file": "src/bridge/static/live.js",
+    "old": "    try {\n      payload = JSON.parse(event.data);\n    } catch (error) {",
+    "new": "    payload = JSON.parse(event.data);\n    if (false) {",
+    "tests": [
+      "tests/test_static_js.py::test_live_js_skips_a_malformed_frame_and_keeps_going"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "reset the reconnect backoff on connect rather than on proof, turning an accept-then-close server into a hot loop",
+    "file": "src/bridge/static/live.js",
+    "old": "  return frames >= HEALTHY_FRAMES\n    || (frames >= 1 && Date.now() - openedAt >= HEALTHY_MS);",
+    "new": "  return true;",
+    "tests": [
+      "tests/test_static_js.py::test_live_js_only_resets_its_backoff_once_a_connection_has_proved_healthy"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "ignore the tombstone in the client, so the band never clears",
+    "file": "src/bridge/static/live.js",
+    "old": "    if (band) band.textContent = \"ended\";",
+    "new": "    if (false) band.textContent = \"ended\";",
+    "tests": [
+      "tests/test_static_js.py::test_live_js_clears_a_band_on_a_tombstone"
+    ],
+    "expect_count": 1
+  }
+]
