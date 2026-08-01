@@ -1,0 +1,105 @@
+[
+  {
+    "name": "drop the flat-series guard, so every idle card raises ZeroDivisionError -- which is most of them",
+    "file": "src/bridge/cards.py",
+    "old": "        y = height - (v - lo) / span * height if span else height",
+    "new": "        y = height - (v - lo) / span * height",
+    "tests": [
+      "tests/test_cards.py::test_all_zeros_is_a_flat_baseline_not_a_division_by_zero",
+      "tests/test_cards.py::test_a_single_flat_nonzero_series_does_not_divide_by_zero"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "invert y the wrong way, so every sparkline is upside down and a project winding down looks like one ramping up",
+    "file": "src/bridge/cards.py",
+    "old": "        y = height - (v - lo) / span * height if span else height",
+    "new": "        y = (v - lo) / span * height if span else height",
+    "tests": [
+      "tests/test_cards.py::test_the_peak_touches_the_top_and_the_trough_the_bottom"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "render a flat series through the roof instead of at the baseline",
+    "file": "src/bridge/cards.py",
+    "old": "        y = height - (v - lo) / span * height if span else height",
+    "new": "        y = height - (v - lo) / span * height if span else 0",
+    "tests": [
+      "tests/test_cards.py::test_all_zeros_is_a_flat_baseline_not_a_division_by_zero"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "divide the x-step by len(values), so the line never reaches the right edge",
+    "file": "src/bridge/cards.py",
+    "old": "    step = width / (len(values) - 1) if len(values) > 1 else 0.0",
+    "new": "    step = width / len(values)",
+    "tests": [
+      "tests/test_cards.py::test_the_x_axis_spans_the_full_width",
+      "tests/test_cards.py::test_a_one_point_series_does_not_divide_by_zero_on_the_x_axis"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "raise on an empty series instead of returning no points",
+    "file": "src/bridge/cards.py",
+    "old": "    if not values:\n        return \"\"",
+    "new": "    if False:\n        return \"\"",
+    "tests": [
+      "tests/test_cards.py::test_an_empty_series_produces_no_points_rather_than_raising"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "return only the days that had activity, so a project active on two days renders a 2-point line labelled as a week",
+    "file": "src/bridge/store.py",
+    "old": "        series = [0] * days\n        for row in rows:\n            bucket = int(row[\"bucket\"])\n            if 0 <= bucket < days:\n                series[bucket] = int(row[\"total\"] or 0)\n        return series",
+    "new": "        return [int(row[\"total\"] or 0) for row in rows]",
+    "tests": [
+      "tests/test_store.py::test_token_series_returns_one_bucket_per_day_oldest_first",
+      "tests/test_store.py::test_token_series_pads_a_project_with_no_activity_at_all"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "reverse the series, so the trend reads backwards",
+    "file": "src/bridge/store.py",
+    "old": "        return series\n\n    def token_totals(self, project_id: int, since_epoch: int) -> int:",
+    "new": "        return series[::-1]\n\n    def token_totals(self, project_id: int, since_epoch: int) -> int:",
+    "tests": [
+      "tests/test_store.py::test_token_series_returns_one_bucket_per_day_oldest_first"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "add the cache columns to the SUM, so the line's magnitude silently contradicts the burn text beside it",
+    "file": "src/bridge/store.py",
+    "old": "                \"COALESCE(SUM(tokens_in + tokens_out),0) AS total \"\n                \"FROM sessions WHERE project_id=? AND ended_epoch >= ? \"",
+    "new": "                \"COALESCE(SUM(tokens_in + tokens_out + tokens_cache_create + tokens_cache_read),0) AS total \"\n                \"FROM sessions WHERE project_id=? AND ended_epoch >= ? \"",
+    "tests": [
+      "tests/test_store.py::test_the_series_uses_the_same_token_definition_as_the_burn_text"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "drop the project filter, so every card draws the whole machine's burn",
+    "file": "src/bridge/store.py",
+    "old": "                \"FROM sessions WHERE project_id=? AND ended_epoch >= ? \"\n                \"GROUP BY bucket\",",
+    "new": "                \"FROM sessions WHERE (project_id=? OR 1=1) AND ended_epoch >= ? \"\n                \"GROUP BY bucket\",",
+    "tests": [
+      "tests/test_store.py::test_token_series_does_not_leak_another_project_s_burn"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "drop the window filter, so activity from a month ago lands in today's bucket",
+    "file": "src/bridge/store.py",
+    "old": "            if 0 <= bucket < days:",
+    "new": "            if bucket < days:",
+    "tests": [
+      "tests/test_store.py::test_token_series_excludes_activity_older_than_the_window"
+    ],
+    "expect_count": 1
+  }
+]

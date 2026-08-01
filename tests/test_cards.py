@@ -1,6 +1,6 @@
 import pytest
 
-from bridge.cards import build_cards, model_options, sort_key
+from bridge.cards import build_cards, model_options, sort_key, spark_points
 from bridge.config import ModelChoice, load
 from bridge.models import GitState, SessionRecord
 from bridge.store import Store
@@ -327,3 +327,39 @@ def test_a_later_good_probe_replaces_the_cached_state(store, tmp_path):
 def test_get_git_cache_is_none_when_nothing_was_ever_written(store, tmp_path):
     pid = add(store, "/p/empty", "empty", "s-empty", "2026-07-30T10:00:00.000Z")
     assert store.get_git_cache(pid) is None
+
+
+# --- Phase 4 Task 6: sparklines ----------------------------------------------
+
+
+def test_all_zeros_is_a_flat_baseline_not_a_division_by_zero():
+    """A project with no burn is the common case for an idle card."""
+    points = spark_points([0] * 7)
+    ys = {p.split(",")[1] for p in points.split()}
+    assert len(ys) == 1              # one flat line
+    assert float(ys.pop()) == 20.0   # at the baseline, not through the roof
+
+
+def test_a_single_flat_nonzero_series_does_not_divide_by_zero():
+    assert spark_points([5] * 7)     # max == min
+
+
+def test_the_peak_touches_the_top_and_the_trough_the_bottom():
+    points = [p.split(",") for p in spark_points([0, 10]).split()]
+    assert float(points[0][1]) == 20.0   # SVG y grows downward: trough is y=height
+    assert float(points[1][1]) == 0.0    # peak is y=0
+
+
+def test_an_empty_series_produces_no_points_rather_than_raising():
+    assert spark_points([]) == ""
+
+
+def test_a_one_point_series_does_not_divide_by_zero_on_the_x_axis():
+    """`len(values) - 1` is a denominator too, and a one-day window hits it."""
+    assert spark_points([7]) == "0.0,20.0"
+
+
+def test_the_x_axis_spans_the_full_width():
+    points = [p.split(",") for p in spark_points([1, 2, 3], width=72).split()]
+    assert float(points[0][0]) == 0.0
+    assert float(points[-1][0]) == 72.0

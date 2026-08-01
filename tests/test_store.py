@@ -423,3 +423,72 @@ def test_set_launch_session_fills_in_both_ids_after_a_background_spawn(store):
     row = store.launch_by_session(SID_A)
     assert row["id"] == "l1"
     assert row["short_id"] == "aaaaaaaa"
+
+
+# --- Phase 4 Task 6: the seven-day token series ------------------------------
+
+SERIES_NOW = 1785600000
+
+
+def _iso(epoch: int) -> str:
+    from datetime import datetime, timezone
+
+    return (datetime.fromtimestamp(epoch, timezone.utc)
+            .strftime("%Y-%m-%dT%H:%M:%S.000Z"))
+
+
+def _sess(store, pid, sid, ended_epoch, tokens_in=0, tokens_out=0, **kw):
+    store.upsert_session(
+        SessionRecord(session_id=sid, transcript_path=f"/t/{sid}",
+                      ended_at=_iso(ended_epoch),
+                      tokens_in=tokens_in, tokens_out=tokens_out, **kw),
+        pid,
+    )
+
+
+def test_token_series_returns_one_bucket_per_day_oldest_first(store):
+    pid = store.upsert_project("/p/series", "series")
+    _sess(store, pid, "t-today-a", SERIES_NOW - 100, tokens_in=100, tokens_out=100)
+    _sess(store, pid, "t-today-b", SERIES_NOW - 200, tokens_in=50, tokens_out=50)
+    _sess(store, pid, "t-3ago", SERIES_NOW - 3 * 86400 - 100, tokens_in=25, tokens_out=25)
+
+    series = store.token_series(pid, days=7, now=SERIES_NOW)
+
+    assert len(series) == 7
+    assert series[-1] == 300   # today is last
+    assert series[3] == 50     # three days ago
+    assert series[0] == 0      # no activity that day, present as a zero
+
+
+def test_token_series_pads_a_project_with_no_activity_at_all(store):
+    pid = store.upsert_project("/p/quiet", "quiet")
+    assert store.token_series(pid, days=7, now=SERIES_NOW) == [0] * 7
+
+
+def test_token_series_excludes_activity_older_than_the_window(store):
+    pid = store.upsert_project("/p/old", "old")
+    _sess(store, pid, "t-old", SERIES_NOW - 30 * 86400, tokens_in=999, tokens_out=999)
+    assert store.token_series(pid, days=7, now=SERIES_NOW) == [0] * 7
+
+
+def test_token_series_does_not_leak_another_project_s_burn(store):
+    mine = store.upsert_project("/p/mine", "mine")
+    theirs = store.upsert_project("/p/theirs", "theirs")
+    _sess(store, theirs, "t-theirs", SERIES_NOW - 100, tokens_in=500, tokens_out=500)
+    assert store.token_series(mine, days=7, now=SERIES_NOW) == [0] * 7
+
+
+def test_the_series_uses_the_same_token_definition_as_the_burn_text(store):
+    """The sparkline sits inches from `token_totals`'s "23k today".
+
+    `token_totals` sums tokens_in + tokens_out only. A series that also summed
+    the cache columns would draw a line whose shape contradicts the number
+    printed beside it, and nothing would ever flag it.
+    """
+    pid = store.upsert_project("/p/defn", "defn")
+    _sess(store, pid, "t-defn", SERIES_NOW - 100, tokens_in=10, tokens_out=5,
+          tokens_cache_create=1000, tokens_cache_read=2000)
+
+    assert store.token_series(pid, days=1, now=SERIES_NOW)[-1] == 15
+    assert (store.token_series(pid, days=1, now=SERIES_NOW)[-1]
+            == store.token_totals(pid, SERIES_NOW - 86400))

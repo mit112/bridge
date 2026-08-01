@@ -120,5 +120,16 @@
   <p class="card__burn">
     <span>{{ card.tokens_today | kilo }} today</span>
     <span>{{ card.tokens_5h | kilo }} last 5h</span>
+    {% if card.spark %}
+      {# aria-hidden: the `23k today / 20k last 5h` text beside it is the
+         accessible representation, and a 7-point line adds no detail a screen
+         reader user would not already have heard. #}
+      <svg class="spark" viewBox="0 0 72 20" width="72" height="20"
+           aria-hidden="true" focusable="false">
+        <polyline points="{{ card.spark | spark_points }}" fill="none"
+                  stroke="currentColor" stroke-width="1.5"
+                  stroke-linejoin="round" stroke-linecap="round"/>
+      </svg>
+    {% endif %}
   </p>
 </article>

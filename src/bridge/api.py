@@ -17,7 +17,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, field_validator, model_validator
 
 from bridge import launcher, spool
-from bridge.cards import build_cards
+from bridge.cards import build_cards, spark_points
 from bridge.config import Config
 from bridge.indexer import reindex
 from bridge.models import Handoff
@@ -135,6 +135,7 @@ def create_app(
     templates.env.filters["ago"] = _ago
     templates.env.filters["ago_epoch"] = _ago_epoch
     templates.env.filters["kilo"] = _kilo
+    templates.env.filters["spark_points"] = spark_points
     app.mount("/static", StaticFiles(directory=str(HERE / "static")), name="static")
 
     @app.get("/", response_class=HTMLResponse)

@@ -514,6 +514,34 @@ class Store:
             row["probed_at"],
         )
 
+    def token_series(self, project_id: int, days: int, now: int) -> list[int]:
+        """Daily token totals, oldest first, exactly `days` long.
+
+        Gaps are filled with zeros: a sparkline whose x-axis skips idle days
+        compresses time and misrepresents the shape.
+
+        Sums `tokens_in + tokens_out` and NOT the cache columns, matching
+        `token_totals` exactly. The sparkline renders inches from that method's
+        "23k today", so a broader definition here would draw a line whose
+        magnitude visibly disagrees with the number beside it. If the definition
+        of burn ever changes, both must change together.
+        """
+        start = now - days * 86400
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT (ended_epoch - ?) / 86400 AS bucket, "
+                "COALESCE(SUM(tokens_in + tokens_out),0) AS total "
+                "FROM sessions WHERE project_id=? AND ended_epoch >= ? "
+                "GROUP BY bucket",
+                (start, project_id, start),
+            ).fetchall()
+        series = [0] * days
+        for row in rows:
+            bucket = int(row["bucket"])
+            if 0 <= bucket < days:
+                series[bucket] = int(row["total"] or 0)
+        return series
+
     def token_totals(self, project_id: int, since_epoch: int) -> int:
         with self._lock:
             row = self.conn.execute(

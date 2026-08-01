@@ -19,6 +19,28 @@ RANK_OTHER = 2
 
 FIVE_HOURS = 5 * 3600
 ONE_DAY = 24 * 3600
+SPARK_DAYS = 7
+
+
+def spark_points(values: list[int], width: int = 72, height: int = 20) -> str:
+    """SVG polyline points for a token-burn sparkline.
+
+    Flat series (including all-zero, the common idle case) render at the
+    baseline rather than dividing by a zero range, and a one-point series does
+    not divide by a zero x-step either -- a `days=1` window reaches both.
+    """
+    if not values:
+        return ""
+    lo, hi = min(values), max(values)
+    span = hi - lo
+    step = width / (len(values) - 1) if len(values) > 1 else 0.0
+    out = []
+    for i, v in enumerate(values):
+        # y is inverted: SVG's origin is top-left, so a peak is y=0 and the
+        # trough sits at y=height.
+        y = height - (v - lo) / span * height if span else height
+        out.append(f"{i * step:.1f},{y:.1f}")
+    return " ".join(out)
 
 
 def model_options(
@@ -74,6 +96,7 @@ def build_cards(store: Store, cfg: Config, probe_fn=None) -> list[Card]:
                 git=git,
                 tokens_today=store.token_totals(row["id"], now - ONE_DAY),
                 tokens_5h=store.token_totals(row["id"], now - FIVE_HOURS),
+                spark=store.token_series(row["id"], SPARK_DAYS, now),
                 is_stale=_is_stale(git, cfg.stale_hours, now),
                 handoff=handoff,
                 # Resolved here rather than in Jinja: prepending an off-catalog
