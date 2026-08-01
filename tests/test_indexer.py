@@ -1,7 +1,11 @@
+from pathlib import Path
+
 import pytest
 
+from bridge import models
 from bridge.config import load
 from bridge.indexer import reindex
+from bridge.registry import transcript_files
 from bridge.store import Store
 from tests.conftest import jline
 
@@ -25,7 +29,15 @@ def transcript_lines(sid=SID, cwd="/Users/mitsheth/dev/demo", title="Did work"):
 def env(tmp_path):
     projects = tmp_path / "projects"
     (projects / "-Users-mitsheth-dev-demo").mkdir(parents=True)
-    cfg = load({"claude_projects_dir": projects, "db_path": tmp_path / "b.db"})
+    # `spool_dir` and `launches_dir` are overridden even though indexing writes
+    # to neither: conftest's guard only fires on a call, so an un-overridden
+    # Config here is a trap for the next test added to this module.
+    cfg = load({
+        "claude_projects_dir": projects,
+        "db_path": tmp_path / "b.db",
+        "spool_dir": tmp_path / "spool",
+        "launches_dir": tmp_path / "launches",
+    })
     store = Store(cfg.db_path)
     yield cfg, store, projects
     store.close()
@@ -203,3 +215,270 @@ def test_aliases_from_config_are_persisted_to_the_alias_table(aliased_env):
     cfg, store, projects = aliased_env
     reindex(store, cfg)
     assert store.alias_map() == {OLD: NEW}
+
+
+# --- Phase 3: the launcher ---------------------------------------------------
+#
+# Correlating a launch back to its transcript, which the two launch modes do
+# differently. A terminal launch pre-assigns the session UUID, so the join is a
+# fact the indexer creates for free the moment it writes the session — these
+# tests assert it rather than build it. `claude --bg` ignores `--session-id` and
+# mints its own, so a background launch holds only the 8-hex handle it printed,
+# and the indexer's backfill is what turns that into a session id.
+#
+# No test here spawns anything: a launch row is constructed directly.
+
+DEMO = "/Users/mitsheth/dev/demo"  # `transcript_lines`' default cwd
+# Shares SID's first eight hex characters, which is the whole hazard: the handle
+# `--bg` prints is exactly `session_id[:8]`.
+SID_TWIN = "22222222-9999-9999-9999-999999999999"
+
+
+def make_launch(store, project_id, mode, lid="L1", session_id=None, short_id=None):
+    """A launch row as `launcher.launch` would have left it, before any index.
+
+    Terminal mode carries `session_id` from the start; background mode carries
+    only `short_id`, which `set_launch_session` is what stamps.
+    """
+    store.create_launch(models.Launch(
+        id=lid, project_id=project_id, mode=mode, prompt="do the next thing",
+        session_id=session_id, model="opus", effort="high",
+        launched_at=1_780_000_000, outcome="started",
+    ))
+    if short_id is not None:
+        store.set_launch_session(lid, session_id, short_id)
+    return lid
+
+
+def render_detail_page(store, project_id):
+    """Render `project.html` with the context the detail route gives it.
+
+    Rendered directly rather than through the route because the route's context
+    is another task's to extend; the filters come from `api` so a filter this
+    template names but the app does not register fails here.
+    """
+    from jinja2 import Environment, FileSystemLoader, select_autoescape
+
+    from bridge import api
+
+    env = Environment(
+        loader=FileSystemLoader(str(Path(api.__file__).parent / "templates")),
+        autoescape=select_autoescape(["html"]),
+    )
+    env.filters["ago"] = api._ago
+    env.filters["ago_epoch"] = api._ago_epoch
+    env.filters["kilo"] = api._kilo
+    return env.get_template("project.html").render(
+        project=store.get_project(project_id),
+        sessions=store.sessions(project_id),
+        handoffs=store.handoffs(project_id),
+        launches=store.launches(project_id),
+    )
+
+
+def launches_table(html):
+    """Just the launches table, so a match cannot come from elsewhere."""
+    assert '<table class="launches"' in html
+    return html.split('<table class="launches"', 1)[1].split("</table>", 1)[0]
+
+
+def test_a_terminal_launch_joins_to_its_transcript_by_its_pre_assigned_uuid(env):
+    """The spec requirement, asserted end to end: because the UUID was assigned
+    before the spawn, the join exists as soon as the session is indexed."""
+    cfg, store, projects = env
+    pid = store.upsert_project(DEMO, "demo")
+    make_launch(store, pid, "terminal", session_id=SID)
+    write(projects, "s.jsonl", transcript_lines())
+
+    reindex(store, cfg)
+
+    row = store.launch_by_session(SID)
+    assert row is not None, "the pre-assigned UUID must find the indexed session"
+    assert row["id"] == "L1"
+    session = store.session_row(SID)
+    assert session is not None
+    assert session["project_id"] == row["project_id"]
+    assert store.get_project(row["project_id"])["path"] == DEMO
+
+
+def test_a_background_launch_resolves_its_short_id_to_a_full_session_id(env):
+    cfg, store, projects = env
+    pid = store.upsert_project(DEMO, "demo")
+    make_launch(store, pid, "background", short_id=SID[:8])
+    write(projects, "s.jsonl", transcript_lines())
+
+    stats = reindex(store, cfg)
+
+    assert stats.launches_linked == 1
+    row = store.launches(pid)[0]
+    assert row["session_id"] == SID
+    assert row["short_id"] == SID[:8], "the handle is kept, not overwritten"
+    assert store.launch_by_session(SID)["id"] == "L1"
+
+
+def test_two_sessions_sharing_a_short_id_prefix_leave_the_launch_unlinked(env):
+    """Ambiguity is left null rather than guessed: binding a launch to a session
+    Bridge did not start is worse than showing it unlinked."""
+    cfg, store, projects = env
+    pid = store.upsert_project(DEMO, "demo")
+    make_launch(store, pid, "background", short_id=SID[:8])
+    write(projects, "a.jsonl", transcript_lines())
+    write(projects, "b.jsonl", transcript_lines(sid=SID_TWIN))
+
+    stats = reindex(store, cfg)
+
+    assert len(store.sessions(pid)) == 2, "both candidates must be indexed"
+    assert stats.launches_linked == 0
+    assert store.launches(pid)[0]["session_id"] is None
+    assert store.launch_by_session(SID) is None
+    assert store.launch_by_session(SID_TWIN) is None
+
+
+def test_a_launch_whose_session_never_appears_stays_started_and_unlinked(env):
+    """A spawn that started nothing, or a session quit before it wrote a
+    transcript. Not an error, and not retried into a wrong answer."""
+    cfg, store, projects = env
+    pid = store.upsert_project(DEMO, "demo")
+    make_launch(store, pid, "background", short_id="abcdef01")
+    write(projects, "s.jsonl", transcript_lines())
+
+    reindex(store, cfg)
+    reindex(store, cfg)  # a second pass must not invent a match either
+
+    row = store.launches(pid)[0]
+    assert row["session_id"] is None
+    assert row["outcome"] == "started"
+
+
+def test_a_launch_with_no_matching_session_renders_the_detail_page(env):
+    cfg, store, projects = env
+    pid = store.upsert_project(DEMO, "demo")
+    make_launch(store, pid, "background", short_id="abcdef01")
+    write(projects, "s.jsonl", transcript_lines())
+    reindex(store, cfg)
+
+    table = launches_table(render_detail_page(store, pid))
+
+    assert "background" in table
+    assert "no session yet" in table
+    assert "abcdef01" in table
+    assert "Did work" not in table, "an unlinked launch must not borrow a session"
+
+
+def test_a_linked_launch_shows_its_session_on_the_detail_page(env):
+    """The launch and the session read as one row once the join exists."""
+    cfg, store, projects = env
+    pid = store.upsert_project(DEMO, "demo")
+    make_launch(store, pid, "background", short_id=SID[:8])
+    write(projects, "s.jsonl", transcript_lines())
+    reindex(store, cfg)
+
+    table = launches_table(render_detail_page(store, pid))
+
+    assert "Did work" in table, "the launched session's own title"
+    assert "no session yet" not in table
+
+
+def test_against_the_real_corpus_no_launch_joins_a_session_it_did_not_launch(tmp_path):
+    """Real session ids, real project directories, launches seeded from them.
+
+    Fixtures choose their own ids, so only real ids can say whether an 8-hex
+    prefix is unique in practice. The prefix census below covers the whole
+    corpus (filenames are session ids, so it needs no parsing); the index itself
+    runs over a bounded symlinked subset, because the full corpus is gigabytes
+    and a test that slow would stop being run.
+    """
+    real = Path.home() / ".claude" / "projects"
+    files = transcript_files(real)
+    if not files:
+        pytest.skip("no real transcript corpus on this machine")
+
+    by_dir: dict[str, list[Path]] = {}
+    for f in files:
+        by_dir.setdefault(f.parent.name, []).append(f)
+
+    ambiguous = 0
+    for dir_name, group in by_dir.items():
+        seen: dict[str, int] = {}
+        for f in group:
+            seen[f.stem[:8]] = seen.get(f.stem[:8], 0) + 1
+        for prefix, n in seen.items():
+            if n > 1:
+                ambiguous += 1
+                print(f"\nreal-corpus prefix collision: {dir_name} {prefix} x{n}")
+    print(f"\nreal-corpus session ids: {len(files)}, "
+          f"colliding 8-hex prefixes: {ambiguous}")
+
+    # Symlinks, never copies: the corpus is read-only and 3.5 GB of it.
+    projects = tmp_path / "projects"
+    for dir_name, group in sorted(by_dir.items()):
+        small = sorted(
+            (f for f in group if 0 < f.stat().st_size <= 1024 * 1024),
+            key=lambda p: p.stat().st_size,
+        )[:8]
+        for f in small:
+            (projects / dir_name).mkdir(parents=True, exist_ok=True)
+            (projects / dir_name / f.name).symlink_to(f)
+
+    cfg = load({
+        "claude_projects_dir": projects,
+        "db_path": tmp_path / "real.db",
+        "spool_dir": tmp_path / "spool",
+        "launches_dir": tmp_path / "launches",
+    })
+    store = Store(cfg.db_path)
+    try:
+        reindex(store, cfg)
+        indexed = [
+            (p["id"], s["id"])
+            for p in store.projects(include_hidden=True)
+            for s in store.sessions(p["id"], limit=10_000)
+        ]
+        assert len(indexed) > 10, "the subset must be big enough to be a test"
+
+        # Half the sessions get a terminal launch (session id pre-assigned), the
+        # other half a background launch (handle only, for the backfill to
+        # resolve), plus one background launch whose handle matches nothing.
+        expected: dict[str, str | None] = {}
+        half = len(indexed) // 2
+        for i, (pid, sid) in enumerate(indexed):
+            lid = f"real-{i}"
+            if i < half:
+                make_launch(store, pid, "terminal", lid=lid, session_id=sid)
+            else:
+                make_launch(store, pid, "background", lid=lid, short_id=sid[:8])
+            expected[lid] = sid
+
+        orphan_pid = indexed[0][0]
+        orphan_handle = next(
+            h for h in (f"{n:08x}" for n in range(1 << 20))
+            if not any(sid.startswith(h) for _, sid in indexed)
+        )
+        make_launch(store, orphan_pid, "background", lid="real-orphan",
+                    short_id=orphan_handle)
+        expected["real-orphan"] = None
+
+        reindex(store, cfg)  # the backfill pass
+
+        rows = {
+            r["id"]: r
+            for p in store.projects(include_hidden=True)
+            for r in store.launches(p["id"], limit=10_000)
+        }
+        assert set(rows) == set(expected)
+        for lid, want in expected.items():
+            row = rows[lid]
+            assert row["session_id"] == want, (
+                f"{lid} joined to {row['session_id']!r}, not the session it launched"
+            )
+            if want is None:
+                continue
+            session = store.session_row(want)
+            assert session is not None
+            assert session["project_id"] == row["project_id"], (
+                f"{lid} joined across projects"
+            )
+        print(f"real-corpus launches checked: {len(rows)} "
+              f"({half} terminal, {len(indexed) - half} background, 1 unmatched)")
+    finally:
+        store.close()

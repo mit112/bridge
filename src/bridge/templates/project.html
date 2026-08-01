@@ -21,6 +21,35 @@
 </table>
 {% endif %}
 
+{% if launches %}
+<table class="launches">
+  <caption>Launches, most recent first</caption>
+  <thead>
+    <tr><th scope="col">Launched</th><th scope="col">Mode</th><th scope="col">Model</th><th scope="col">Outcome</th><th scope="col">Session</th></tr>
+  </thead>
+  <tbody>
+    {% for l in launches %}
+    <tr>
+      <td><time datetime="{{ l['launched_at'] }}">{{ l["launched_at"] | ago_epoch }} ago</time></td>
+      <td>{{ l["mode"] }}</td>
+      <td>{{ l["model"] or "—" }}{% if l["effort"] %}/{{ l["effort"] }}{% endif %}</td>
+      <td>{{ l["outcome"] }}</td>
+      {# The launch and its session are one thing once the indexer has linked
+         them: the session's own title, falling back to the id when the session
+         is older than this page's window. A launch with no session at all —
+         a spawn that started nothing, or a session that never wrote a
+         transcript — is not an error, so it says so and stays visible. #}
+      {% if l["session_id"] %}
+      <td>{% for s in sessions if s["id"] == l["session_id"] %}{{ s["title"] or "Untitled" }}{% else %}{{ l["session_id"][:8] }}{% endfor %}</td>
+      {% else %}
+      <td>no session yet{% if l["short_id"] %} ({{ l["short_id"] }}){% endif %}</td>
+      {% endif %}
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
 <table class="sessions">
   <caption>Indexed sessions, most recent first</caption>
   <thead>
