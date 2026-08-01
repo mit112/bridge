@@ -1490,15 +1490,38 @@ def test_the_topbar_reports_a_burn_rate_over_the_measured_window(client):
     assert "<meter" not in body          # and no gauge implying one
 
 
-def test_the_topbar_reports_running_sessions_and_queued_handoffs(client):
+def test_the_topbar_reports_running_sessions_and_queued_handoffs(
+    client, monkeypatch
+):
+    """Both counts must be non-zero and different from each other.
+
+    Asserting `running` is 0 against conftest's empty registry proved nothing:
+    a topbar hardcoded to 0 passed it. Two sessions and one handoff is what
+    makes the two numbers tell each other apart.
+    """
+    from bridge import agents
+    from bridge.models import AgentsState, LiveSession
+
+    def live(*_a, **_kw):
+        return AgentsState(status="ok", sessions=[
+            LiveSession(session_id="a", cwd=DEMO, kind="interactive",
+                        status="busy"),
+            LiveSession(session_id="b", cwd=DEMO, kind="interactive",
+                        status="idle"),
+            # Terminal, so it is running for nobody and must not be counted.
+            LiveSession(session_id="c", cwd=DEMO, kind="background",
+                        status="done"),
+        ])
+
+    monkeypatch.setattr(agents, "probe", live)
+
     c, store, pid = client
     store.create_handoff(Handoff(
         id="h-top", project_path=DEMO, next_prompt="go", status="queued",
     ), pid)
     body = c.get("/").text
     assert re.search(r"<dt>queued</dt><dd>1</dd>", body)
-    # The registry is pointed at an empty directory by conftest, so nothing runs.
-    assert re.search(r"<dt>running</dt><dd>0</dd>", body)
+    assert re.search(r"<dt>running</dt><dd>2</dd>", body)
 
 
 def test_the_topbar_says_never_rather_than_leaving_the_index_time_blank(client):
