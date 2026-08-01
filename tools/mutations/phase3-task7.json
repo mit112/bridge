@@ -1,0 +1,34 @@
+[
+  {
+    "name": "take the first prefix match instead of requiring a unique one",
+    "file": "src/bridge/indexer.py",
+    "old": "            if len(matches) != 1:",
+    "new": "            if not matches:",
+    "tests": [
+      "tests/test_indexer.py::test_two_sessions_sharing_a_short_id_prefix_leave_the_launch_unlinked"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "skip the background backfill entirely",
+    "file": "src/bridge/indexer.py",
+    "old": "    stats.launches_linked = _link_background_launches(store)",
+    "new": "    stats.launches_linked = 0",
+    "tests": [
+      "tests/test_indexer.py::test_a_background_launch_resolves_its_short_id_to_a_full_session_id",
+      "tests/test_indexer.py::test_a_linked_launch_shows_its_session_on_the_detail_page"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "link launches whose session_id is already set, re-binding settled rows",
+    "file": "src/bridge/indexer.py",
+    "old": "            if row[\"short_id\"] and not row[\"session_id\"]",
+    "new": "            if row[\"short_id\"] or row[\"session_id\"]",
+    "tests": [
+      "tests/test_indexer.py::test_a_terminal_launch_joins_to_its_transcript_by_its_pre_assigned_uuid",
+      "tests/test_indexer.py::test_two_sessions_sharing_a_short_id_prefix_leave_the_launch_unlinked"
+    ],
+    "expect_count": 1
+  }
+]

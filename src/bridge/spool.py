@@ -9,7 +9,9 @@ are the first data Bridge stores that cannot be regenerated from transcripts, so
 Phase 1's "the database is a pure derived cache; delete it and re-index" is no
 longer true of the `handoffs` table on its own. The retained files are what keep
 it true of the system: they can rebuild the table, so `rm ~/.bridge/bridge.db`
-stays a safe operation.
+stays a safe operation. Phase 3 journals status *changes* alongside creations,
+so a rebuild restores the state each handoff ended in rather than showing every
+one of them as queued again.
 
 Any change that unlinks a spool file on successful drain forfeits that property.
 `test_drained_files_are_retained_and_can_rebuild_the_table` exists to fail if
@@ -28,6 +30,11 @@ from bridge.registry import resolve_project
 
 _FIELDS = frozenset(f.name for f in dataclasses.fields(Handoff))
 
+# What distinguishes a status record from a handoff record inside `drained/`.
+# The two now share a directory, so each loader must skip the other's files:
+# parsing a status record as a handoff would quarantine a perfectly good file.
+STATUS_SUFFIX = ".status.json"
+
 
 @dataclass
 class DrainStats:
@@ -35,6 +42,16 @@ class DrainStats:
     bad: int = 0
     failed: int = 0
     skipped: int = 0
+    statuses: int = 0
+
+
+@dataclass(frozen=True)
+class _Status:
+    """One journalled handoff status change. `at` is what orders the replay."""
+
+    handoff_id: str
+    status: str
+    at: int
 
 
 def _dirs(spool_dir: Path) -> tuple[Path, Path, Path]:
@@ -45,7 +62,7 @@ def _dirs(spool_dir: Path) -> tuple[Path, Path, Path]:
 def write(h: Handoff, spool_dir: Path) -> Path:
     """Queue a handoff for a server that is not answering. The outbox path."""
     live, _, _ = _dirs(spool_dir)
-    return _atomic_write(h, live)
+    return _atomic_write(dataclasses.asdict(h), h.id, live)
 
 
 def journal(h: Handoff, spool_dir: Path) -> Path:
@@ -58,11 +75,38 @@ def journal(h: Handoff, spool_dir: Path) -> Path:
     "already in the database", which is exactly true here.
     """
     _, drained_dir, _ = _dirs(spool_dir)
-    return _atomic_write(h, drained_dir)
+    return _atomic_write(dataclasses.asdict(h), h.id, drained_dir)
 
 
-def _atomic_write(h: Handoff, directory: Path) -> Path:
-    """Serialize one handoff durably enough that a reader never sees a partial file.
+def journal_status(handoff_id: str, status: str, at: int, spool_dir: Path) -> Path:
+    """Record a handoff's *status change*, so a rebuild replays where it ended up.
+
+    Phase 2 journalled creations only, which cost nothing while nothing consumed
+    a handoff. Once ▶ exists it costs the panel's most load-bearing signal:
+    launch a prompt, `rm ~/.bridge/bridge.db`, re-index, and a creations-only
+    journal puts the prompt you already ran back at the top of the dashboard.
+
+    The `.status.json` suffix is what keeps these files out of the creation
+    loader's glob, and the epoch separates successive changes to one handoff.
+
+    The epoch is in seconds, so two *different* statuses for the same handoff
+    inside one second write the same filename and the later one wins. That is
+    accepted rather than fixed: `status` is a bare string, `_atomic_write`
+    resolves `<stem>.json` against the directory, and putting it in the filename
+    would turn a status value into a path. The property that matters survives a
+    collision either way — every status that can collide here is terminal and
+    non-queued, so a launched prompt still never replays as queued.
+    """
+    _, drained_dir, _ = _dirs(spool_dir)
+    return _atomic_write(
+        {"handoff_id": handoff_id, "status": status, "at": at},
+        f"{handoff_id}.{at}.status",
+        drained_dir,
+    )
+
+
+def _atomic_write(payload: dict, stem: str, directory: Path) -> Path:
+    """Serialize one record durably enough that a reader never sees a partial file.
 
     The temp file is created in the *same* directory so `os.replace` is an
     atomic rename rather than a cross-filesystem copy, and its name is
@@ -70,15 +114,15 @@ def _atomic_write(h: Handoff, directory: Path) -> Path:
     """
     live = directory
     live.mkdir(parents=True, exist_ok=True)
-    payload = json.dumps(dataclasses.asdict(h), indent=2, ensure_ascii=False)
+    body = json.dumps(payload, indent=2, ensure_ascii=False)
 
-    fd, tmp = tempfile.mkstemp(dir=live, prefix=f".{h.id}.", suffix=".tmp")
+    fd, tmp = tempfile.mkstemp(dir=live, prefix=f".{stem}.", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(payload)
+            f.write(body)
             f.flush()
             os.fsync(f.fileno())
-        final = live / f"{h.id}.json"
+        final = live / f"{stem}.json"
         os.replace(tmp, final)
         return final
     except BaseException:
@@ -111,6 +155,21 @@ def _load(path: Path) -> Handoff:
     if not h.id or not h.project_path or not h.next_prompt:
         raise ValueError(f"{path.name}: missing id, project_path or next_prompt")
     return h
+
+
+def _load_status(path: Path) -> _Status:
+    """Parse one status record, which is unusable without all three fields.
+
+    `at` orders the replay, so a record missing it cannot be placed in the
+    history at all; there is no defensible default. Straight to `bad/`.
+    """
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError(f"{path.name}: top level is {type(data).__name__}, not object")
+    handoff_id, status, at = data.get("handoff_id"), data.get("status"), data.get("at")
+    if not handoff_id or not status or not isinstance(at, int):
+        raise ValueError(f"{path.name}: missing handoff_id, status or at")
+    return _Status(handoff_id, status, at)
 
 
 def _quarantine(path: Path, bad_dir: Path) -> None:
@@ -162,21 +221,32 @@ def rebuild_if_empty(store, spool_dir: Path, resolve=None) -> DrainStats:
     would reappear on the card forever. Guarded, this only runs after genuine
     database loss.
 
-    Phase 2 journals creations and not status changes, so a rebuilt table shows
-    every recorded handoff as queued again. That is the right trade for
-    recovering a wiped cache and the wrong one for routine use — hence the
-    guard.
+    Creations and status changes are loaded separately and applied in that
+    order: every creation first, then every status record sorted by its `at`, so
+    a queued → superseded → consumed history replays to the state it ended in
+    rather than to whatever order the glob returned. That makes recovery
+    *faithful*; it does not make replay routine. The empty-table guard above is
+    what keeps those two things apart, and any design that replays statuses onto
+    a live table has forfeited it.
     """
     if store.handoff_count() > 0:
         return DrainStats(skipped=1)
 
     resolve = resolve or resolve_project
-    _, drained_dir, _ = _dirs(spool_dir)
+    _, drained_dir, bad_dir = _dirs(spool_dir)
     stats = DrainStats()
 
     records: list[Handoff] = []
+    statuses: list[_Status] = []
     if drained_dir.is_dir():
         for path in sorted(drained_dir.glob("*.json")):
+            if path.name.endswith(STATUS_SUFFIX):
+                try:
+                    statuses.append(_load_status(path))
+                except Exception:  # noqa: BLE001 - one bad record cannot stop the replay
+                    _quarantine(path, bad_dir)
+                    stats.bad += 1
+                continue
             try:
                 records.append(_load(path))
             except Exception:  # noqa: BLE001
@@ -189,6 +259,13 @@ def rebuild_if_empty(store, spool_dir: Path, resolve=None) -> DrainStats:
             stats.drained += 1
         except Exception:  # noqa: BLE001
             stats.failed += 1
+
+    # Statuses last, in `at` order. A creation queues, and `create_handoff`
+    # supersedes as it goes, so applying a status before every creation is in
+    # place would let a later insert overwrite the state we just restored.
+    for s in sorted(statuses, key=lambda s: (s.at, s.handoff_id)):
+        store.set_handoff_status(s.handoff_id, s.status)
+        stats.statuses += 1
 
     live = drain(store, spool_dir, resolve)
     stats.drained += live.drained

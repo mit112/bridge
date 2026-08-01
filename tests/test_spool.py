@@ -258,3 +258,119 @@ def test_rebuild_also_picks_up_anything_still_pending(tmp_path, spool_dir):
     assert {r["id"] for r in s2.handoffs(pid)} == {"drained-one", "still-pending"}
     assert s2.queued_handoff(pid)["id"] == "still-pending"
     s2.close()
+
+
+# --- Phase 3: the launcher ---------------------------------------------------
+
+
+def test_journal_status_writes_a_record_that_cannot_be_mistaken_for_a_handoff(
+    spool_dir,
+):
+    p = spool.journal_status("h1", "consumed", 1700, spool_dir)
+    assert p == spool_dir / "drained" / "h1.1700.status.json"
+    assert p.name.endswith(spool.STATUS_SUFFIX)
+    assert json.loads(p.read_text()) == {
+        "handoff_id": "h1", "status": "consumed", "at": 1700,
+    }
+    # The live outbox is for handoffs the server has not seen; a status change is
+    # not one, so nothing here is pending.
+    assert spool.pending(spool_dir) == []
+
+
+def test_a_consumed_handoff_replays_as_consumed_not_queued(tmp_path, spool_dir):
+    """`launch → rm ~/.bridge/bridge.db → bridge index` must not re-offer it.
+
+    Phase 2 journalled creations only, so a rebuild showed every handoff as
+    queued again. That cost nothing while nothing consumed a handoff. Once ▶
+    exists it puts a prompt you already ran back at the top of the dashboard,
+    and the panel's most load-bearing signal starts lying.
+    """
+    db = tmp_path / "c.db"
+    s1 = Store(db)
+    spool.write(h("h1", created_at=1), spool_dir)
+    spool.drain(s1, spool_dir)
+    s1.set_handoff_status("h1", "consumed")
+    spool.journal_status("h1", "consumed", 2000, spool_dir)
+    s1.close()
+
+    # Lose the database exactly as `rm ~/.bridge/bridge.db` would.
+    db.unlink()
+    for suffix in ("-wal", "-shm"):
+        Path(str(db) + suffix).unlink(missing_ok=True)
+
+    s2 = Store(db)
+    stats = spool.rebuild_if_empty(s2, spool_dir)
+
+    assert (stats.drained, stats.statuses, stats.bad) == (1, 1, 0)
+    assert s2.get_handoff("h1")["status"] == "consumed"
+    assert s2.queued_handoff(demo_pid(s2)) is None, (
+        "the rebuild re-offered a prompt that had already been launched"
+    )
+    s2.close()
+
+
+def test_status_records_replay_in_at_order_not_glob_order(store, spool_dir):
+    """A superseded-then-consumed history must land where it actually ended."""
+    spool.journal(h("h1", created_at=1), spool_dir)
+    spool.journal_status("h1", "queued", 999, spool_dir)
+    spool.journal_status("h1", "superseded", 1000, spool_dir)
+    spool.journal_status("h1", "consumed", 1001, spool_dir)
+
+    # Filenames sort lexicographically, so the three-digit epoch lands LAST and
+    # replaying in glob order would end on 'queued'. Asserting that here is what
+    # keeps the test from being vacuous: with glob order equal to `at` order it
+    # would pass with the sort removed.
+    globbed = [
+        p.name for p in sorted((spool_dir / "drained").glob("*" + spool.STATUS_SUFFIX))
+    ]
+    assert globbed[-1] == "h1.999.status.json"
+
+    stats = spool.rebuild_if_empty(store, spool_dir)
+
+    assert stats.statuses == 3
+    assert store.get_handoff("h1")["status"] == "consumed"
+    assert store.queued_handoff(demo_pid(store)) is None
+
+
+def test_rebuild_is_still_skipped_when_status_records_are_present(store, spool_dir):
+    """The empty-table guard is what keeps recovery from becoming replay.
+
+    Here the journal and the live table disagree — the journal says consumed, the
+    row says queued — and the live row must win. Replaying statuses onto a
+    non-empty table would let a routine index rewrite live state.
+    """
+    spool.write(h("h1"), spool_dir)
+    spool.drain(store, spool_dir)
+    spool.journal_status("h1", "consumed", 2000, spool_dir)
+
+    stats = spool.rebuild_if_empty(store, spool_dir)
+
+    assert (stats.skipped, stats.statuses, stats.drained) == (1, 0, 0)
+    assert store.get_handoff("h1")["status"] == "queued"
+    assert store.queued_handoff(demo_pid(store))["id"] == "h1"
+
+
+def test_a_corrupt_status_record_is_quarantined_and_the_replay_continues(
+    tmp_path, spool_dir
+):
+    db = tmp_path / "q.db"
+    spool.journal(h("h1", created_at=1), spool_dir)
+    spool.journal(h("h2", created_at=2), spool_dir)
+    drained = spool_dir / "drained"
+    (drained / "h1.500.status.json").write_text("{not json at all")
+    (drained / "h2.600.status.json").write_text('{"handoff_id": "h2"}')
+    spool.journal_status("h1", "consumed", 700, spool_dir)
+
+    s = Store(db)
+    stats = spool.rebuild_if_empty(s, spool_dir)
+
+    assert (stats.drained, stats.statuses, stats.bad) == (2, 1, 2)
+    assert (spool_dir / "bad" / "h1.500.status.json").exists()
+    assert (spool_dir / "bad" / "h2.600.status.json").exists()
+    assert not (drained / "h1.500.status.json").exists()
+    # Both creations landed, and the one good status record still applied.
+    pid = demo_pid(s)
+    assert {r["id"] for r in s.handoffs(pid)} == {"h1", "h2"}
+    assert s.get_handoff("h1")["status"] == "consumed"
+    assert s.queued_handoff(pid)["id"] == "h2"
+    s.close()

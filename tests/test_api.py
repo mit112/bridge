@@ -1,12 +1,15 @@
+import json
+import re
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
-from bridge import spool
+from bridge import launcher, spool
 from bridge.api import create_app
 from bridge.config import load
-from bridge.models import Handoff, SessionRecord
+from bridge.models import Handoff, Launch, SessionRecord
+from bridge.registry import resolve_project
 from bridge.store import Store
 
 DEMO = "/Users/mitsheth/dev/demo"
@@ -465,3 +468,400 @@ def test_the_project_page_lists_past_handoffs_with_their_status(handoff_app):
     assert "Handoffs, most recent first" in html
     assert "superseded" in html
     assert "queued" in html
+
+
+# --- Phase 3: the launcher ---------------------------------------------------
+
+SESSION_ID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+
+
+def recording_launcher(result=None):
+    """A `launch_fn` double that records its calls.
+
+    Assign `.result` to steer it: a `LaunchResult` is returned, an exception is
+    raised, which is the difference between a spawn that failed and a launch that
+    was refused before anything was recorded.
+
+    Every test below passes one of these. `create_app`'s default is the real
+    `launcher.launch`, which shells out to `/usr/bin/osascript` and would open a
+    real Terminal window running a real, token-burning session -- so this is not
+    testability polish, it is what makes it impossible for a route test to spawn
+    anything by accident.
+
+    It reproduces the two side effects of a real launch that the routes are held
+    to: `launch()` resolves the project through the alias table, and a *started*
+    launch consumes its handoff. Task 3's tests prove the real launcher does both;
+    without them here a route test could pass while asserting nothing.
+    """
+    calls: list[tuple] = []
+
+    def launch_fn(store, cfg, spec, handoff_id=None, **kwargs):
+        calls.append((spec, handoff_id))
+        if isinstance(launch_fn.result, Exception):
+            # A `LaunchError` refuses the launch before any row exists, so this
+            # returns nothing and writes nothing, exactly as the real one does.
+            raise launch_fn.result
+        resolve_project(store, spec.project_path)
+        if launch_fn.result.outcome == "started" and handoff_id:
+            store.set_handoff_status(handoff_id, "consumed")
+        return launch_fn.result
+
+    launch_fn.calls = calls
+    launch_fn.result = result or launcher.LaunchResult(
+        launch_id="l1", outcome="started", session_id=SESSION_ID,
+        short_id=SESSION_ID[:8],
+    )
+    return launch_fn
+
+
+@pytest.fixture
+def launch_app(tmp_path):
+    """An app wired to a recording launch double.
+
+    `launches_dir` is overridden alongside `spool_dir` even though nothing here
+    spawns: `conftest`'s autouse guard raises `RealBridgeDirTouched` -- a
+    `BaseException`, so no catch-all can swallow it -- the moment a launcher
+    writer sees the real `~/.bridge`, and a fixture that forgot the override would
+    litter the user's own launches directory.
+    """
+    cfg = load({
+        "db_path": tmp_path / "l.db",
+        "spool_dir": tmp_path / "spool",
+        "launches_dir": tmp_path / "launches",
+    })
+    store = Store(cfg.db_path)
+    fake = recording_launcher()
+    yield TestClient(create_app(store, cfg, launch_fn=fake)), store, cfg, fake
+    store.close()
+
+
+def test_a_launch_from_an_aliased_path_attaches_to_the_canonical_project(launch_app):
+    """A ▶ pressed on an old ~/Documents path must not re-split merged history.
+
+    The launch sends no prompt, so the route has to resolve the alias itself to
+    find the queued handoff at all -- which is the resolution being asserted.
+    """
+    c, store, _, fake = launch_app
+    store.set_alias("/Users/mitsheth/Documents/projectX", "/Users/mitsheth/dev/projectX")
+    c.post("/api/handoff", json=body("h1", path="/Users/mitsheth/dev/projectX"))
+
+    r = c.post("/api/launch",
+               json={"project_path": "/Users/mitsheth/Documents/projectX"})
+
+    assert r.status_code == 200, r.text
+    assert r.json()["outcome"] == "started"
+    assert r.json()["handoff_id"] == "h1"
+    assert store.project_by_path("/Users/mitsheth/Documents/projectX") is None
+    assert store.project_by_path("/Users/mitsheth/dev/projectX") is not None
+    # The raw path is handed to the launcher unchanged; `launch()` canonicalises
+    # it through the same alias table rather than the route doing it twice.
+    spec, handoff_id = fake.calls[0]
+    assert spec.project_path == "/Users/mitsheth/Documents/projectX"
+    assert handoff_id == "h1"
+
+
+def test_a_failed_launch_is_a_200_carrying_the_error_and_the_prompt(launch_app):
+    """The panel needs both in one response to show one and copy the other."""
+    c, _, _, fake = launch_app
+    c.post("/api/handoff", json=body("h1", prompt="carry on from here"))
+    fake.result = launcher.LaunchResult(
+        launch_id="l9", outcome="failed", error="/usr/bin/osascript exited 1: boom"
+    )
+
+    r = c.post("/api/launch", json={"project_path": DEMO})
+
+    assert r.status_code == 200, r.text
+    got = r.json()
+    assert got["outcome"] == "failed"
+    assert got["error"], "a failed launch must say why"
+    assert got["prompt"] == "carry on from here"  # the clipboard fallback
+    assert got["session_id"] is None
+    # And the prompt is still queued, so the user is never stuck.
+    assert c.get("/api/handoff", params={"project_path": DEMO}).json()["id"] == "h1"
+
+
+def test_patch_next_prompt_changes_the_queued_text_and_leaves_it_queued(launch_app):
+    """An inline edit persists, and editing is not consuming."""
+    c, _, cfg, _ = launch_app
+    pid = c.post("/api/handoff",
+                 json=body("h1", prompt="the old plan")).json()["project_id"]
+
+    r = c.patch("/api/handoff/h1", json={"next_prompt": "the edited plan"})
+
+    assert r.status_code == 200, r.text
+    assert r.json()["next_prompt"] == "the edited plan"
+    assert r.json()["status"] == "queued"
+    got = c.get(f"/api/handoff/{pid}").json()
+    assert got["next_prompt"] == "the edited plan"
+    assert got["status"] == "queued"
+    # Re-journalled, so `rm ~/.bridge/bridge.db` restores the edit and not the
+    # text it replaced.
+    journal = json.loads(
+        (cfg.spool_dir / "drained" / "h1.json").read_text(encoding="utf-8")
+    )
+    assert journal["next_prompt"] == "the edited plan"
+
+
+def test_a_hostile_edited_prompt_round_trips_byte_for_byte(launch_app):
+    """The Phase 2 assertion for POST, applied to the edit path."""
+    c, _, _, _ = launch_app
+    prompt = HOSTILE_PROMPT + "padding " * 5000
+    assert len(prompt) > 40_000
+    pid = c.post("/api/handoff",
+                 json=body("h1", prompt="short")).json()["project_id"]
+
+    assert c.patch("/api/handoff/h1", json={"next_prompt": prompt}).status_code == 200
+
+    got = c.get(f"/api/handoff/{pid}").json()["next_prompt"]
+    assert got == prompt
+    assert len(got) == len(prompt)
+
+
+def test_a_patch_with_neither_field_is_422_not_a_silent_no_op(launch_app):
+    """Two optional fields alone would make `PATCH {}` a 200 that did nothing."""
+    c, store, _, _ = launch_app
+    c.post("/api/handoff", json=body("h1", prompt="unchanged"))
+
+    assert c.patch("/api/handoff/h1", json={}).status_code == 422
+    assert c.patch("/api/handoff/h1",
+                   json={"status": None, "next_prompt": None}).status_code == 422
+
+    row = store.get_handoff("h1")
+    assert row["next_prompt"] == "unchanged"
+    assert row["status"] == "queued"
+
+
+def test_a_successful_launch_consumes_the_handoff(launch_app):
+    """Otherwise the card keeps offering a prompt that is already running."""
+    c, _, _, fake = launch_app
+    pid = c.post("/api/handoff", json=body("h1")).json()["project_id"]
+
+    assert c.post("/api/launch", json={"project_path": DEMO}).json()["outcome"] == "started"
+
+    assert c.get(f"/api/handoff/{pid}").status_code == 204
+    # Consumption and its journal record are the launcher's, which is why the id
+    # reaching it matters more here than the status write itself.
+    assert fake.calls[0][1] == "h1"
+
+
+def test_a_launch_with_no_prompt_uses_the_queued_handoff(launch_app):
+    """`bridge launch` sends no prompt at all; this pins that contract."""
+    c, _, _, fake = launch_app
+    c.post("/api/handoff", json=body("h1", prompt="carry on from here"))
+
+    r = c.post("/api/launch", json={"project_path": DEMO, "mode": "background",
+                                    "model": "opus", "effort": "high"})
+
+    assert r.status_code == 200, r.text
+    spec, handoff_id = fake.calls[0]
+    assert spec.prompt == "carry on from here"
+    assert handoff_id == "h1"
+    assert (spec.mode, spec.model, spec.effort) == ("background", "opus", "high")
+    assert spec.title == "a summary"  # defaulted from the handoff's summary
+    assert spec.session_id is None  # minted by the launcher, never by the client
+
+
+def test_a_launch_with_nothing_queued_and_no_prompt_is_a_clear_error(launch_app):
+    """Not a 500, and not an empty session either."""
+    c, store, _, fake = launch_app
+    store.upsert_project(DEMO, "demo")
+
+    r = c.post("/api/launch", json={"project_path": DEMO})
+
+    assert r.status_code == 422
+    assert "queued" in r.json()["detail"].lower()
+    assert fake.calls == [], "a refused launch must not reach the launcher"
+
+    # Same answer for a project that was never indexed, and the refusal does not
+    # bring its row into existence on the way out.
+    unknown = "/Users/mitsheth/dev/never-indexed"
+    assert c.post("/api/launch", json={"project_path": unknown}).status_code == 422
+    assert store.project_by_path(unknown) is None
+
+
+def test_a_refused_launch_is_422_where_a_failed_spawn_is_200(launch_app):
+    """A `LaunchError` is raised *before* the `launches` row exists.
+
+    So there is no launch id and no outcome to report, and answering
+    `200 {outcome: 'failed'}` would describe a launch the database does not have.
+    A failed *spawn* is the other side of that line and stays a 200, above.
+    """
+    c, store, _, fake = launch_app
+    pid = c.post("/api/handoff", json=body("h1")).json()["project_id"]
+    fake.result = launcher.LaunchError("claude is not on PATH; cannot launch a session")
+
+    r = c.post("/api/launch", json={"project_path": DEMO})
+
+    assert r.status_code == 422
+    assert "not on PATH" in r.json()["detail"]
+    # Nothing recorded, and nothing consumed.
+    assert store.launches(pid) == []
+    assert c.get(f"/api/handoff/{pid}").json()["id"] == "h1"
+
+
+def test_a_launch_naming_an_unknown_handoff_is_404_not_a_foreign_key_500(launch_app):
+    """`launches.handoff_id` has a foreign key, so this must be caught up front."""
+    c, _, _, fake = launch_app
+
+    r = c.post("/api/launch", json={"project_path": DEMO, "prompt": "ad hoc",
+                                    "handoff_id": "never-existed"})
+
+    assert r.status_code == 404
+    assert fake.calls == []
+
+
+def test_an_unknown_mode_is_422_and_never_reaches_the_launcher(launch_app):
+    c, _, _, fake = launch_app
+    c.post("/api/handoff", json=body("h1"))
+
+    r = c.post("/api/launch", json={"project_path": DEMO, "mode": "tmux"})
+
+    assert r.status_code == 422
+    assert fake.calls == []
+    # And the default is terminal, so the CLI and the card can both omit it.
+    c.post("/api/launch", json={"project_path": DEMO})
+    assert fake.calls[0][0].mode == "terminal"
+
+
+# --- Phase 3: the launch band on the card ------------------------------------
+
+
+def test_the_editable_prompt_is_html_escaped_in_the_textarea(launch_app):
+    """A textarea escapes differently from a <pre>, so this is its own test.
+
+    An unescaped `</textarea>` closes the field early and everything after it
+    becomes live markup in the document — the same injection the <pre> test
+    covers, through a hole that test cannot see.
+    """
+    c, _, _, _ = launch_app
+    prompt = "before </textarea><script>alert('xss')</script> after"
+    c.post("/api/handoff", json=body("h1", prompt=prompt))
+
+    html = c.get("/").text
+
+    assert "</textarea><script>" not in html, "the prompt closed its own field"
+    assert "&lt;/textarea&gt;&lt;script&gt;" in html
+    assert html.count("</textarea>") == 1, "exactly one field was opened and closed"
+
+
+def test_both_launch_selects_are_labelled_and_preselect_the_suggestion(launch_app):
+    c, _, _, _ = launch_app
+    pid = c.post(
+        "/api/handoff",
+        json=body("h1", suggested_model="sonnet", suggested_effort="xhigh"),
+    ).json()["project_id"]
+
+    html = c.get("/").text
+    lid = f"launch-{pid}"
+
+    assert f'<label class="launch__label" for="{lid}-model">Model</label>' in html
+    assert f'<label class="launch__label" for="{lid}-effort">Effort</label>' in html
+    assert f'id="{lid}-model"' in html
+    assert f'id="{lid}-effort"' in html
+    assert '<option value="sonnet" selected>sonnet</option>' in html
+    assert '<option value="xhigh" selected>xhigh</option>' in html
+    assert html.count(" selected>") == 2, "one preselection per select, no more"
+
+
+def test_a_suggestion_the_config_does_not_list_is_still_preselected(launch_app):
+    """The suggestion comes from a real session's model string, which need not be
+    one of the configured short names. Dropping it would silently launch a
+    different model than the one being suggested."""
+    c, _, _, _ = launch_app
+    pid = c.post("/api/handoff", json=body("h1")).json()["project_id"]
+    assert "claude-opus-5" not in load({}).models
+
+    html = c.get("/").text
+
+    assert '<option value="claude-opus-5" selected>claude-opus-5</option>' in html
+    assert f'id="launch-{pid}-model"' in html
+
+
+def test_two_cards_produce_no_duplicate_element_id(launch_app):
+    """Ids are keyed off `project_id`; keying them off the handoff id would emit a
+    bare prefix on the card with nothing queued and collide across cards."""
+    c, store, _, _ = launch_app
+    c.post("/api/handoff", json=body("h1", path=DEMO))
+    store.upsert_project("/Users/mitsheth/dev/second", "second")
+
+    html = c.get("/").text
+
+    ids = re.findall(r'\sid="([^"]+)"', html)
+    assert len(ids) == len(set(ids)), f"duplicate ids: {sorted(ids)}"
+    assert len([i for i in ids if i.startswith("launch-")]) == 4, (
+        "two selects on each of the two cards"
+    )
+
+
+def test_a_card_with_no_queued_handoff_still_renders_a_launch_band(launch_app):
+    """Nothing queued is not the same as nothing to launch."""
+    c, store, _, _ = launch_app
+    pid = store.upsert_project("/Users/mitsheth/dev/quiet", "quiet")
+
+    html = c.get("/").text
+
+    assert f'data-launch="launch-{pid}"' in html
+    assert f'id="launch-{pid}-model"' in html
+    assert f'data-launch-status="launch-{pid}"' in html
+    # ...and no empty prompt block, no orphan copy affordance, no handoff id.
+    assert "Next step queued" not in html
+    assert "<textarea" not in html
+    assert "data-copy-target" not in html
+    assert "data-launch-handoff" not in html
+
+
+def test_every_new_control_is_labelled_and_none_leaves_the_tab_order(launch_app):
+    """Keyboard operability asserted structurally rather than by hand."""
+    c, _, _, _ = launch_app
+    c.post("/api/handoff", json=body("h1"))
+
+    html = c.get("/").text
+
+    assert 'tabindex="-1"' not in html
+    labelled = set(re.findall(r'<label[^>]*\sfor="([^"]+)"', html))
+    fields = re.findall(r"<(?:select|textarea)\b[^>]*>", html)
+    assert len(fields) == 3, "two selects and the prompt field"
+    for tag in fields:
+        ident = re.search(r'\sid="([^"]+)"', tag)
+        assert (ident and ident.group(1) in labelled) or "aria-label=" in tag, tag
+    # The ▶ has no text node of its own, so its accessible name is explicit.
+    assert re.search(
+        r'<button[^>]*data-launch-button[^>]*aria-label="Launch a session for [^"]+"',
+        html,
+    )
+    # The launch status is a live region with a key of its own, so it and the
+    # copy status cannot overwrite each other.
+    assert 'data-launch-status="launch-' in html
+    assert "data-copy-status=" in html
+
+
+def test_the_project_page_lists_launch_history_with_its_linked_session(launch_app):
+    """Task 7 added the table; the route never passed `launches`, so it was inert."""
+    c, store, _, _ = launch_app
+    pid = store.upsert_project(DEMO, "demo")
+    store.upsert_session(
+        SessionRecord(session_id=SESSION_ID, transcript_path="/t/launched.jsonl",
+                      title="Launched work", ended_at="2026-07-30T10:00:00.000Z"),
+        pid,
+    )
+    store.create_launch(
+        Launch(id="l-linked", project_id=pid, mode="terminal", model="opus",
+               effort="xhigh", prompt="go", session_id=SESSION_ID,
+               launched_at=2000, outcome="started")
+    )
+    store.create_launch(
+        Launch(id="l-orphan", project_id=pid, mode="background", model="sonnet",
+               effort="low", prompt="go too", launched_at=1000, outcome="started")
+    )
+
+    html = c.get(f"/project/{pid}").text
+
+    assert "Launches, most recent first" in html
+    assert "terminal" in html
+    assert "background" in html
+    assert "opus/xhigh" in html
+    assert "sonnet/low" in html
+    assert "started" in html
+    assert "Launched work" in html, "the linked session is shown as its own title"
+    # A launch whose session never appeared is not an error; it stays visible.
+    assert "no session yet" in html

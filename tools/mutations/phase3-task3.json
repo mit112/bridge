@@ -1,0 +1,125 @@
+[
+  {
+    "name": "quote the background prompt as well, so the bytes differ",
+    "file": "src/bridge/launcher.py",
+    "old": "    argv.append(spec.prompt)  # exactly one element, verbatim",
+    "new": "    argv.append('\"' + spec.prompt + '\"')  # exactly one element, verbatim",
+    "tests": [
+      "tests/test_launcher.py::test_background_mode_delivers_the_prompt_byte_for_byte"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "insert the launches row after the spawn instead of before it",
+    "file": "src/bridge/launcher.py",
+    "old": "    prompt_path = write_prompt_file(cfg.launches_dir, session_id, prompt)\n    launch_id = _new_row(store, spec, prompt, project_id, handoff_id, session_id)",
+    "new": "    prompt_path = write_prompt_file(cfg.launches_dir, session_id, prompt)\n    launch_id = str(uuid.uuid4())",
+    "tests": [
+      "tests/test_launcher.py::test_a_launches_row_exists_even_when_the_spawn_fails"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "consume the handoff before checking the spawn result, losing the prompt on failure",
+    "file": "src/bridge/launcher.py",
+    "old": "    launch_id = _new_row(store, spec, prompt, project_id, handoff_id, session_id)\n\n    error = None",
+    "new": "    launch_id = _new_row(store, spec, prompt, project_id, handoff_id, session_id)\n    if handoff_id:\n        store.set_handoff_status(handoff_id, \"consumed\")\n\n    error = None",
+    "tests": [
+      "tests/test_launcher.py::test_a_failed_spawn_records_failed_and_leaves_the_handoff_queued"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "unlink the prompt file once osascript returns (the race against the new shell's cat)",
+    "file": "src/bridge/launcher.py",
+    "old": "            return _started(store, cfg, launch_id, handoff_id,\n                            session_id=session_id, short_id=session_id[:8])",
+    "new": "            prompt_path.unlink(missing_ok=True)\n            return _started(store, cfg, launch_id, handoff_id,\n                            session_id=session_id, short_id=session_id[:8])",
+    "tests": [
+      "tests/test_launcher.py::test_the_prompt_file_survives_a_successful_launch"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "skip the ANSI strip, so the handle keeps its colour escapes",
+    "file": "src/bridge/launcher.py",
+    "old": "    match = BG_HANDLE_RE.search(strip_ansi(stdout))",
+    "new": "    match = BG_HANDLE_RE.search(stdout)",
+    "tests": [
+      "tests/test_launcher.py::test_a_colour_wrapped_handle_is_stripped_to_eight_hex",
+      "tests/test_launcher.py::test_a_resolvable_handle_becomes_a_full_session_id"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "mark an unparseable background handle failed, queueing a handoff for a running session",
+    "file": "src/bridge/launcher.py",
+    "old": "        return _started(\n            store, cfg, launch_id, handoff_id,\n            note=\"started, but no `backgrounded · <short>` handle was printed, \"\n                 \"so this launch has no session id to correlate on\",\n        )",
+    "new": "        return _failed(store, launch_id, \"no backgrounded handle was printed\")",
+    "tests": [
+      "tests/test_launcher.py::test_an_unparseable_background_handle_is_still_started"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "treat a session-id collision as fatal instead of retrying",
+    "file": "src/bridge/launcher.py",
+    "old": "        if not _is_session_id_collision(proc) or attempt == MAX_SESSION_ID_ATTEMPTS:",
+    "new": "        if True:",
+    "tests": [
+      "tests/test_launcher.py::test_a_session_id_collision_retries_with_a_fresh_uuid",
+      "tests/test_launcher.py::test_the_collision_retry_is_bounded"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "hardcode claude's path in launch(), making every fake-on-PATH test vacuous",
+    "file": "src/bridge/launcher.py",
+    "old": "    claude = resolve_claude(which)",
+    "new": "    claude = \"/Users/mitsheth/.local/bin/claude\"  # noqa: hardcoded on purpose",
+    "tests": [
+      "tests/test_launcher.py::test_launch_refuses_when_claude_is_not_on_path",
+      "tests/test_launcher.py::test_launch_finds_the_fake_claude_through_the_injected_which"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "stop normalising trailing newlines, so the two modes disagree byte for byte",
+    "file": "src/bridge/launcher.py",
+    "old": "    prompt = spec.prompt.rstrip(\"\\n\")",
+    "new": "    prompt = spec.prompt",
+    "tests": [
+      "tests/test_launcher.py::test_the_prompt_file_is_normalised_so_both_modes_agree"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "write the prompt file world-readable",
+    "file": "src/bridge/launcher.py",
+    "old": "        os.fchmod(fd, 0o600)",
+    "new": "        os.fchmod(fd, 0o644)",
+    "tests": [
+      "tests/test_launcher.py::test_the_prompt_file_is_0600_inside_a_0700_directory"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "skip journalling the consumption, so a rebuild re-offers a launched prompt",
+    "file": "src/bridge/launcher.py",
+    "old": "            spool.journal_status(handoff_id, \"consumed\", now_epoch(), cfg.spool_dir)",
+    "new": "            pass",
+    "tests": [
+      "tests/test_launcher.py::test_a_successful_launch_consumes_and_journals_the_handoff"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "delete stale prompt files regardless of age",
+    "file": "src/bridge/launcher.py",
+    "old": "            if path.stat().st_mtime < cutoff:",
+    "new": "            if True:",
+    "tests": [
+      "tests/test_launcher.py::test_gc_removes_stale_prompt_files_and_keeps_fresh_ones"
+    ],
+    "expect_count": 1
+  }
+]

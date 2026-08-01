@@ -23,6 +23,7 @@ class IndexStats:
     lines_parsed: int = 0
     parse_errors: int = 0
     sessions_upserted: int = 0
+    launches_linked: int = 0
 
 
 def reindex(
@@ -53,7 +54,53 @@ def reindex(
         row = store.project_by_path(archived)
         if row is not None and row["status"] != "archived":
             store.set_project_status(row["id"], "archived")
+
+    # Last, because it can only match sessions this run has already written.
+    stats.launches_linked = _link_background_launches(store)
     return stats
+
+
+# `store.launches`/`store.sessions` are paged for the UI; correlation needs the
+# whole set, so the limit is raised rather than a new query added.
+_ALL = 1_000_000
+
+
+def _link_background_launches(store: Store) -> int:
+    """Fill in `session_id` for background launches, by unique `short_id` prefix.
+
+    Terminal launches need nothing here: their UUID is pre-assigned, so
+    `launches.session_id = sessions.id` holds the moment the session is written.
+    `claude --bg` ignores `--session-id` and mints its own, so a background launch
+    starts life with only the 8-hex handle it printed — which is exactly
+    `session_id[:8]`.
+
+    Eight hex characters is 2^32, and the candidate set is one project's sessions,
+    so a collision is unlikely and not impossible. A **unique** prefix match is
+    required and ambiguity leaves the row null, because binding a launch to the
+    wrong session is worse than leaving it unlinked: the panel would then show a
+    session Bridge did not start as one it did. Zero matches is equally ordinary —
+    the session may not have written a transcript yet, or ever — and the launch
+    stays visible as what it is.
+    """
+    linked = 0
+    for project in store.projects(include_hidden=True):
+        pid = project["id"]
+        pending = [
+            row
+            for row in store.launches(pid, limit=_ALL)
+            if row["short_id"] and not row["session_id"]
+        ]
+        if not pending:
+            continue
+        session_ids = [s["id"] for s in store.sessions(pid, limit=_ALL)]
+        for row in pending:
+            short = row["short_id"]
+            matches = [sid for sid in session_ids if sid.startswith(short)]
+            if len(matches) != 1:
+                continue
+            store.set_launch_session(row["id"], matches[0], short)
+            linked += 1
+    return linked
 
 
 def _index_one(

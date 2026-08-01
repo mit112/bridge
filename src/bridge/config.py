@@ -5,7 +5,10 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 DEFAULT_MODELS = ["opus", "sonnet", "haiku"]
-DEFAULT_EFFORTS = ["low", "medium", "high"]
+# The full set `claude --effort` accepts. Phase 3 is the first phase to surface
+# the list in the UI, so the two values nothing read before are added here rather
+# than left implicit. The spec's `~/.bridge/config.toml` is still out of scope.
+DEFAULT_EFFORTS = ["low", "medium", "high", "xhigh", "max"]
 
 # Projects move, and a transcript records the cwd it was written under, so one
 # logical project can appear under several paths with its history split between
@@ -35,6 +38,10 @@ class Config:
     claude_projects_dir: Path
     db_path: Path
     spool_dir: Path
+    # Where a launch's prompt file is written, mode 0700. The prompt is taken off
+    # the command line entirely, so this directory is the only place it exists
+    # between `launch()` and the new shell's `cat`.
+    launches_dir: Path
     dev_dir: Path
     stale_hours: int
     models: list[str]
@@ -50,6 +57,7 @@ def load(overrides: dict | None = None) -> Config:
         claude_projects_dir=home / ".claude" / "projects",
         db_path=home / ".bridge" / "bridge.db",
         spool_dir=home / ".bridge" / "spool",
+        launches_dir=home / ".bridge" / "launches",
         dev_dir=home / "dev",
         stale_hours=12,
         models=list(DEFAULT_MODELS),

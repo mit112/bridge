@@ -45,6 +45,8 @@ def build_cards(store: Store, cfg: Config, probe_fn=None) -> list[Card]:
                 tokens_5h=store.token_totals(row["id"], now - FIVE_HOURS),
                 is_stale=_is_stale(git, cfg.stale_hours, now),
                 handoff=_handoff(store, row["id"]),
+                launch_models=list(cfg.models),
+                launch_efforts=list(cfg.efforts),
             )
         )
 

@@ -59,6 +59,31 @@ class Handoff:
 
 
 @dataclass
+class Launch:
+    """One spawn attempt, recorded before anything is spawned.
+
+    The row exists even when the spawn fails, which is what keeps a session
+    correlatable in the case that needs it most. `handoff_id` is None for an
+    ad-hoc prompt with no queued handoff behind it. `session_id` is None for a
+    background launch, because `claude --bg` mints its own id and does not tell
+    us until it has printed its handle. `short_id` is deliberately absent here:
+    like `Handoff.consumed_at` it is stamped by the store — `set_launch_session`
+    — and never authored by the caller.
+    """
+
+    id: str
+    project_id: int
+    mode: str
+    prompt: str
+    handoff_id: str | None = None
+    session_id: str | None = None
+    model: str | None = None
+    effort: str | None = None
+    launched_at: int = 0
+    outcome: str = "pending"
+
+
+@dataclass
 class Card:
     project_id: int
     path: str
@@ -72,3 +97,9 @@ class Card:
     # The queued handoff, as a plain dict. A card carries at most one: the store
     # supersedes the rest, so "what next" is never ambiguous.
     handoff: dict | None = None
+    # The launch band's option lists, copied off `Config` by `build_cards`. They
+    # live on the card because the launch band renders per card and the template
+    # only ever sees the card, so this is what keeps the configured vocabulary
+    # out of the template as a literal.
+    launch_models: list[str] = field(default_factory=list)
+    launch_efforts: list[str] = field(default_factory=list)

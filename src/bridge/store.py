@@ -11,7 +11,7 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
-from bridge.models import Handoff, SessionRecord
+from bridge.models import Handoff, Launch, SessionRecord
 
 SCHEMA = [
     """
@@ -79,6 +79,36 @@ SCHEMA = [
     """,
     "CREATE INDEX IF NOT EXISTS idx_handoffs_project "
     "ON handoffs(project_id, status, created_at)",
+    # `mode` is one of terminal | background and `outcome` one of
+    # pending | started | failed. Neither is a CHECK constraint, matching
+    # `handoffs.status` and `projects.status`: the writing code is the authority
+    # on the vocabulary, and a CHECK would make adding a value a table rebuild.
+    #
+    # `session_id` is nullable and this is forced, not stylistic. `claude --bg`
+    # ignores `--session-id` and mints its own, so a background launch has no
+    # session id at the moment its row is written; `short_id` holds the 8-hex
+    # handle `--bg` prints, which is exactly `session_id[:8]`, and
+    # `set_launch_session` fills both in once they are known. Do not tighten
+    # this to NOT NULL: that forces a placeholder, and a placeholder in a
+    # correlation key is how a launch joins to the wrong session.
+    """
+    CREATE TABLE IF NOT EXISTS launches (
+        id TEXT PRIMARY KEY,
+        project_id INTEGER NOT NULL REFERENCES projects(id),
+        handoff_id TEXT REFERENCES handoffs(id),
+        session_id TEXT,
+        short_id TEXT,
+        mode TEXT NOT NULL,
+        model TEXT,
+        effort TEXT,
+        prompt TEXT NOT NULL,
+        launched_at INTEGER NOT NULL,
+        outcome TEXT NOT NULL DEFAULT 'pending'
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_launches_project "
+    "ON launches(project_id, launched_at)",
+    "CREATE INDEX IF NOT EXISTS idx_launches_session ON launches(session_id)",
     """
     CREATE TABLE IF NOT EXISTS git_cache (
         project_id INTEGER PRIMARY KEY REFERENCES projects(id),
@@ -343,11 +373,75 @@ class Store:
                 (status, status, now_epoch(), handoff_id),
             )
 
+    def update_handoff_prompt(self, handoff_id: str, next_prompt: str) -> None:
+        """Persist an inline edit. `status` is deliberately left alone.
+
+        Editing a queued prompt must leave it queued, and `create_handoff` cannot
+        do this job: its `ON CONFLICT(id) DO NOTHING` is what makes a re-drained
+        spool file idempotent, so an upsert of the same id changes nothing.
+        """
+        with self._lock:
+            self.conn.execute(
+                "UPDATE handoffs SET next_prompt=? WHERE id=?",
+                (next_prompt, handoff_id),
+            )
+
     def handoff_count(self) -> int:
         with self._lock:
             return self.conn.execute(
                 "SELECT COUNT(*) AS n FROM handoffs"
             ).fetchone()["n"]
+
+    # --- launches: what Bridge spawned. The row is written before the spawn, so
+    # --- a failed launch is still a fact the panel can show.
+
+    def create_launch(self, l: Launch) -> str:  # noqa: E741 - matches `h: Handoff`
+        """Record a launch. No supersede: every attempt is kept, forever."""
+        with self._lock:
+            self.conn.execute(
+                "INSERT INTO launches(id, project_id, handoff_id, session_id, "
+                "mode, model, effort, prompt, launched_at, outcome) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?)",
+                (
+                    l.id, l.project_id, l.handoff_id, l.session_id, l.mode, l.model,
+                    l.effort, l.prompt, l.launched_at or now_epoch(),
+                    l.outcome or "pending",
+                ),
+            )
+        return l.id
+
+    def set_launch_outcome(self, launch_id: str, outcome: str) -> None:
+        """Takes a bare string, exactly as `set_handoff_status` does."""
+        with self._lock:
+            self.conn.execute(
+                "UPDATE launches SET outcome=? WHERE id=?", (outcome, launch_id)
+            )
+
+    def set_launch_session(
+        self, launch_id: str, session_id: str | None, short_id: str | None
+    ) -> None:
+        """Background mode learns both ids only after the spawn has printed them."""
+        with self._lock:
+            self.conn.execute(
+                "UPDATE launches SET session_id=?, short_id=? WHERE id=?",
+                (session_id, short_id, launch_id),
+            )
+
+    def launches(self, project_id: int, limit: int = 50) -> list[sqlite3.Row]:
+        with self._lock:
+            return list(
+                self.conn.execute(
+                    "SELECT * FROM launches WHERE project_id=? "
+                    "ORDER BY launched_at DESC LIMIT ?",
+                    (project_id, limit),
+                )
+            )
+
+    def launch_by_session(self, session_id: str) -> sqlite3.Row | None:
+        with self._lock:
+            return self.conn.execute(
+                "SELECT * FROM launches WHERE session_id=?", (session_id,)
+            ).fetchone()
 
     def get_scan_state(self, path: str) -> sqlite3.Row | None:
         with self._lock:

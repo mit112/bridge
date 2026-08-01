@@ -1,0 +1,84 @@
+[
+  {
+    "name": "key the launch band's ids off the handoff id, so ids collide across cards",
+    "file": "src/bridge/templates/_card.html",
+    "old": "  {% set lid = \"launch-\" ~ card.project_id %}",
+    "new": "  {% set lid = \"launch-\" ~ (card.handoff.id if card.handoff else \"\") %}",
+    "tests": [
+      "tests/test_api.py::test_two_cards_produce_no_duplicate_element_id",
+      "tests/test_api.py::test_a_card_with_no_queued_handoff_still_renders_a_launch_band"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "reuse --line for form-control borders, dropping below WCAG 1.4.11's 3:1",
+    "file": "src/bridge/static/app.css",
+    "old": "  --field-line: #7f888f;",
+    "new": "  --field-line: #d8dde1;",
+    "tests": [
+      "tests/test_contrast.py::test_contrast_meets_wcag_aa"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "define --field-line as a 3-digit hex, making it invisible to the contrast suite",
+    "file": "src/bridge/static/app.css",
+    "old": "  --field-line: #7f888f;",
+    "new": "  --field-line: #888;",
+    "tests": [
+      "tests/test_contrast.py::test_contrast_meets_wcag_aa"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "copy.js reads textContent again, handing over the server-rendered prompt",
+    "file": "src/bridge/static/copy.js",
+    "old": "  return \"value\" in element ? element.value : element.textContent;",
+    "new": "  return element.textContent;",
+    "tests": [
+      "tests/test_static_js.py::test_bridge_text_prefers_the_live_value_over_the_rendered_text"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "mark the textarea safe, so </textarea><script> escapes the field",
+    "file": "src/bridge/templates/_card.html",
+    "old": "{{ card.handoff.next_prompt }}</textarea>",
+    "new": "{{ card.handoff.next_prompt | safe }}</textarea>",
+    "tests": [
+      "tests/test_api.py::test_the_editable_prompt_is_html_escaped_in_the_textarea"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "drop the selected attribute, so the suggestion is not preselected",
+    "file": "src/bridge/templates/_card.html",
+    "old": "        <option value=\"{{ m }}\"{% if m == sm or (not sm and loop.first) %} selected{% endif %}>{{ m }}</option>",
+    "new": "        <option value=\"{{ m }}\">{{ m }}</option>",
+    "tests": [
+      "tests/test_api.py::test_both_launch_selects_are_labelled_and_preselect_the_suggestion",
+      "tests/test_api.py::test_a_suggestion_the_config_does_not_list_is_still_preselected"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "stop passing the configured option lists onto the card",
+    "file": "src/bridge/cards.py",
+    "old": "                launch_models=list(cfg.models),",
+    "new": "                launch_models=[],",
+    "tests": [
+      "tests/test_cards.py::test_a_card_carries_the_configured_launch_options"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "stop passing launches into the project page context, leaving the table inert",
+    "file": "src/bridge/api.py",
+    "old": "                \"launches\": store.launches(project_id),",
+    "new": "                \"launches\": [],",
+    "tests": [
+      "tests/test_api.py::test_the_project_page_lists_launch_history_with_its_linked_session"
+    ],
+    "expect_count": 1
+  }
+]

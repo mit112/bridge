@@ -39,17 +39,64 @@
       {% if card.handoff.summary %}
         <p class="handoff__summary">{{ card.handoff.summary }}</p>
       {% endif %}
-      {# tabindex so keyboard users can scroll the region, with a name for it. #}
-      <pre class="handoff__prompt" id="{{ hid }}" tabindex="0"
-           aria-label="Queued prompt for {{ card.name }}">{{ card.handoff.next_prompt }}</pre>
+      {# Editable in place, with a persistent visible label rather than a
+         placeholder. Jinja escapes the text, which a textarea needs as much as
+         the <pre> did: an unescaped `</textarea>` would close the field early. #}
+      <label class="handoff__label" for="{{ hid }}">Prompt for {{ card.name }}</label>
+      <textarea class="handoff__prompt" id="{{ hid }}"
+                data-prompt-handoff="{{ card.handoff.id }}">{{ card.handoff.next_prompt }}</textarea>
       <p class="handoff__actions">
         <button type="button" class="btn" data-copy-target="{{ hid }}">Copy prompt</button>
-        {# Confirmation carries a glyph and words, never colour alone. #}
+        {# Three status lines, three keys. Copy, save and launch all announce into
+           `role="status"`, and sharing one key would let them overwrite each
+           other's message — so each has its own. #}
         <span class="handoff__status" role="status" aria-live="polite"
               data-copy-status="{{ hid }}"></span>
+        <span class="handoff__status" role="status" aria-live="polite"
+              data-prompt-status="{{ hid }}"></span>
       </p>
     </section>
   {% endif %}
+
+  {# The launch band renders OUTSIDE the handoff guard: a project with nothing
+     queued is still launchable. Its ids are therefore keyed off `project_id`,
+     never off a handoff id that may not exist — a bare `handoff-` prefix would
+     repeat on every card and silently break each `<label for>`. #}
+  {% set lid = "launch-" ~ card.project_id %}
+  {% set sm = card.handoff.suggested_model if card.handoff else None %}
+  {% set se = card.handoff.suggested_effort if card.handoff else None %}
+  {# A suggestion the configured list does not contain is prepended rather than
+     dropped: silently launching a different model than the last session used is
+     worse than showing an unfamiliar value. #}
+  {% set model_options = ([sm] if sm and sm not in card.launch_models else []) + card.launch_models %}
+  {% set effort_options = ([se] if se and se not in card.launch_efforts else []) + card.launch_efforts %}
+  <p class="launch" data-launch="{{ lid }}" data-launch-path="{{ card.path }}"
+     {%- if card.handoff %} data-launch-handoff="{{ card.handoff.id }}"
+     data-launch-prompt="{{ "handoff-" ~ card.handoff.id }}"{% endif %}>
+    <span class="launch__field">
+      <label class="launch__label" for="{{ lid }}-model">Model</label>
+      <select class="launch__select" id="{{ lid }}-model" data-launch-model="{{ lid }}">
+        {%- for m in model_options %}
+        <option value="{{ m }}"{% if m == sm or (not sm and loop.first) %} selected{% endif %}>{{ m }}</option>
+        {%- endfor %}
+      </select>
+    </span>
+    <span class="launch__field">
+      <label class="launch__label" for="{{ lid }}-effort">Effort</label>
+      <select class="launch__select" id="{{ lid }}-effort" data-launch-effort="{{ lid }}">
+        {%- for e in effort_options %}
+        <option value="{{ e }}"{% if e == se or (not se and loop.first) %} selected{% endif %}>{{ e }}</option>
+        {%- endfor %}
+      </select>
+    </span>
+    <button type="button" class="btn btn--icon" data-launch-button="{{ lid }}"
+            aria-label="Launch a session for {{ card.name }}"
+            title="Launch a session in Terminal"><span aria-hidden="true">▶</span></button>
+    {# Distinct from `data-copy-status`: the two would otherwise overwrite each
+       other. A failure says so in words as well as its glyph. #}
+    <span class="launch__status" role="status" aria-live="polite"
+          data-launch-status="{{ lid }}"></span>
+  </p>
 
   <p class="card__burn">
     <span>{{ card.tokens_today | kilo }} today</span>

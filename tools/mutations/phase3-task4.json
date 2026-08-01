@@ -1,0 +1,84 @@
+[
+  {
+    "name": "PATCH ignores next_prompt, so the edit is a silent no-op",
+    "file": "src/bridge/api.py",
+    "old": "            store.update_handoff_prompt(handoff_id, body.next_prompt)",
+    "new": "            pass",
+    "tests": [
+      "tests/test_api.py::test_patch_next_prompt_changes_the_queued_text_and_leaves_it_queued",
+      "tests/test_api.py::test_a_hostile_edited_prompt_round_trips_byte_for_byte"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "drop the empty-body validator, so a PATCH with neither field returns 200",
+    "file": "src/bridge/api.py",
+    "old": "        if self.status is None and self.next_prompt is None:",
+    "new": "        if False:",
+    "tests": [
+      "tests/test_api.py::test_a_patch_with_neither_field_is_422_not_a_silent_no_op"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "skip alias resolution, splitting a launch's history across the old path",
+    "file": "src/bridge/api.py",
+    "old": "        canonical = store.alias_map().get(body.project_path, body.project_path)",
+    "new": "        canonical = body.project_path",
+    "tests": [
+      "tests/test_api.py::test_a_launch_from_an_aliased_path_attaches_to_the_canonical_project"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "raise 500 on a failed spawn, so the response carries no prompt to copy",
+    "file": "src/bridge/api.py",
+    "old": "        except launcher.LaunchError as exc:\n            raise HTTPException(status_code=422, detail=str(exc)) from exc\n",
+    "new": "        except launcher.LaunchError as exc:\n            raise HTTPException(status_code=422, detail=str(exc)) from exc\n        if result.outcome == \"failed\":\n            raise HTTPException(status_code=500, detail=result.error or \"failed\")\n",
+    "tests": [
+      "tests/test_api.py::test_a_failed_launch_is_a_200_carrying_the_error_and_the_prompt"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "never pass the handoff id to the launcher, so nothing is ever consumed",
+    "file": "src/bridge/api.py",
+    "old": "            result = launch_fn(store, cfg, spec, handoff_id)",
+    "new": "            result = launch_fn(store, cfg, spec, None)",
+    "tests": [
+      "tests/test_api.py::test_a_successful_launch_consumes_the_handoff",
+      "tests/test_api.py::test_a_launch_with_no_prompt_uses_the_queued_handoff"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "drop mode validation, so an unknown mode reaches the launcher",
+    "file": "src/bridge/api.py",
+    "old": "        if value not in launcher.MODES:",
+    "new": "        if False:",
+    "tests": [
+      "tests/test_api.py::test_an_unknown_mode_is_422_and_never_reaches_the_launcher"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "let LaunchError escape as a 500 instead of a 422",
+    "file": "src/bridge/api.py",
+    "old": "            raise HTTPException(status_code=422, detail=str(exc)) from exc",
+    "new": "            raise",
+    "tests": [
+      "tests/test_api.py::test_a_refused_launch_is_422_where_a_failed_spawn_is_200"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "accept a made-up handoff id, surfacing a foreign-key traceback",
+    "file": "src/bridge/api.py",
+    "old": "            raise HTTPException(status_code=404, detail=\"unknown handoff\")\n        spec = launcher.LaunchSpec(",
+    "new": "            pass\n        spec = launcher.LaunchSpec(",
+    "tests": [
+      "tests/test_api.py::test_a_launch_naming_an_unknown_handoff_is_404_not_a_foreign_key_500"
+    ],
+    "expect_count": 1
+  }
+]

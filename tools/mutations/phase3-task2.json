@@ -1,0 +1,135 @@
+[
+  {
+    "name": "interpolate the prompt straight into the command (the Phase 2 --summary RCE, Phase 3 form)",
+    "file": "src/bridge/launcher.py",
+    "old": "    argv.append(f'\"$({CAT} {file_q})\"')",
+    "new": "    argv.append('\"' + spec.prompt + '\"')",
+    "tests": [
+      "tests/test_launcher.py::test_the_shell_command_does_not_contain_the_prompt"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "use the naive sh_quote that backslash-escapes the quote",
+    "file": "src/bridge/launcher.py",
+    "old": "    return \"'\" + s.replace(\"'\", \"'\\\\''\") + \"'\"\n",
+    "new": "    return \"'\" + s.replace(\"'\", \"\\\\'\") + \"'\"\n",
+    "tests": [
+      "tests/test_launcher.py::test_sh_quote_round_trips_through_a_real_shell"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "escape the double quote before the backslash in as_quote",
+    "file": "src/bridge/launcher.py",
+    "old": "    return '\"' + s.replace(\"\\\\\", \"\\\\\\\\\").replace('\"', '\\\\\"') + '\"'",
+    "new": "    return '\"' + s.replace('\"', '\\\\\"').replace(\"\\\\\", \"\\\\\\\\\") + '\"'",
+    "tests": [
+      "tests/test_launcher.py::test_as_quote_escapes_backslash_and_double_quote_without_double_escaping",
+      "tests/test_launcher.py::test_as_quote_round_trips_through_osascript"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "drop the [ -r ] prompt-file guard, so a missing file starts an empty session",
+    "file": "src/bridge/launcher.py",
+    "old": "    guard = (\n        f\"[ -r {file_q} ] || \"\n        \"{ echo 'bridge: prompt file missing' >&2; exit 1; }\"\n    )\n    return f\"{guard}; cd {sh_quote(spec.project_path)} && {' '.join(argv)}\"",
+    "new": "    return f\"cd {sh_quote(spec.project_path)} && {' '.join(argv)}\"",
+    "tests": [
+      "tests/test_launcher.py::test_the_command_contains_the_readable_file_guard",
+      "tests/test_launcher.py::test_the_command_shape_is_the_measured_one"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "drop the double quotes around $(cat ...), so word splitting shatters the prompt",
+    "file": "src/bridge/launcher.py",
+    "old": "    argv.append(f'\"$({CAT} {file_q})\"')",
+    "new": "    argv.append(f'$({CAT} {file_q})')",
+    "tests": [
+      "tests/test_launcher.py::test_the_shell_command_does_not_contain_the_prompt",
+      "tests/test_launcher.py::test_the_command_shape_is_the_measured_one"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "join the background argv into one shell string",
+    "file": "src/bridge/launcher.py",
+    "old": "    argv.append(spec.prompt)  # exactly one element, verbatim\n    return argv",
+    "new": "    argv.append(spec.prompt)  # exactly one element, verbatim\n    return [\" \".join(argv)]",
+    "tests": [
+      "tests/test_launcher.py::test_build_bg_argv_puts_the_prompt_in_exactly_one_element"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "restore --session-id to the background argv on the spec's authority",
+    "file": "src/bridge/launcher.py",
+    "old": "    argv = [claude, \"--bg\"]\n    if spec.model:",
+    "new": "    argv = [claude, \"--bg\"]\n    if spec.session_id:\n        argv += [\"--session-id\", spec.session_id]\n    if spec.model:",
+    "tests": [
+      "tests/test_launcher.py::test_build_bg_argv_never_passes_session_id"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "generate uppercase session ids",
+    "file": "src/bridge/launcher.py",
+    "old": "    return str(uuid.uuid4()).lower()",
+    "new": "    return str(uuid.uuid4()).upper()",
+    "tests": [
+      "tests/test_launcher.py::test_generated_session_ids_are_lowercase_and_pass_claudes_validator"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "skip the title sanitiser, so control bytes reach the terminal title",
+    "file": "src/bridge/launcher.py",
+    "old": "    kept = \"\".join(c for c in first if c.isprintable())\n    return kept.strip()[:limit]",
+    "new": "    return s[:limit]",
+    "tests": [
+      "tests/test_launcher.py::test_a_title_with_control_characters_is_sanitised_before_quoting"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "always emit --model and --effort, so an empty --model '' appears",
+    "file": "src/bridge/launcher.py",
+    "old": "    if spec.model:\n        argv += [\"--model\", sh_quote(spec.model)]\n    if spec.effort:\n        argv += [\"--effort\", sh_quote(spec.effort)]",
+    "new": "    argv += [\"--model\", sh_quote(spec.model or \"\")]\n    argv += [\"--effort\", sh_quote(spec.effort or \"\")]",
+    "tests": [
+      "tests/test_launcher.py::test_model_and_effort_are_absent_when_none"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "hardcode claude's path the way gitprobe hardcodes git",
+    "file": "src/bridge/launcher.py",
+    "old": "    found = which(\"claude\")",
+    "new": "    found = \"/Users/mitsheth/.local/bin/claude\"  # noqa: hardcoded on purpose",
+    "tests": [
+      "tests/test_launcher.py::test_resolve_claude_raises_when_it_is_not_on_path"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "validate the prompt after resolving and quoting instead of before",
+    "file": "src/bridge/launcher.py",
+    "old": "    validate_prompt(spec.prompt)\n    claude = claude or resolve_claude()\n    file_q = sh_quote(str(prompt_path))",
+    "new": "    claude = claude or resolve_claude()\n    file_q = sh_quote(str(prompt_path))\n    validate_prompt(spec.prompt)",
+    "tests": [
+      "tests/test_launcher.py::test_a_bad_prompt_is_refused_before_anything_is_constructed"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "accept an unvalidated session id on the unquoted command line",
+    "file": "src/bridge/launcher.py",
+    "old": "        if not SESSION_ID_RE.match(spec.session_id):\n            raise LaunchError(f\"session id {spec.session_id!r} is not lowercase 8-4-4-4-12 hex\")\n",
+    "new": "",
+    "tests": [
+      "tests/test_launcher.py::test_an_uppercase_session_id_is_refused_by_the_shell_builder"
+    ],
+    "expect_count": 1
+  }
+]

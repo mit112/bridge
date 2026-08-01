@@ -41,7 +41,8 @@ def closed_port() -> int:
 @pytest.fixture
 def fake_server():
     """A real HTTP server on a real port, with a settable status code."""
-    state = {"code": 201, "get_body": None, "posts": []}
+    state = {"code": 201, "get_body": None, "posts": [],
+             "post_body": {"id": "server-side"}}
 
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self):
@@ -50,7 +51,7 @@ def fake_server():
             self.send_response(state["code"])
             self.send_header("Content-Type", "application/json")
             self.end_headers()
-            self.wfile.write(b'{"id": "server-side"}')
+            self.wfile.write(json.dumps(state["post_body"]).encode())
 
         def do_GET(self):
             body = state["get_body"]
@@ -76,6 +77,7 @@ def cfg_for(tmp_path, port):
     return load({
         "db_path": tmp_path / "cli.db",
         "spool_dir": tmp_path / "spool",
+        "launches_dir": tmp_path / "launches",
         "port": port,
     })
 
@@ -206,15 +208,160 @@ def test_next_with_the_panel_down_exits_nonzero_and_prints_nothing(
     assert out.out == ""
 
 
+# --- Phase 3: the launcher ---------------------------------------------------
+
+
+def run_launch(monkeypatch, tmp_path, port, argv=None, prompt=None):
+    cfg = cfg_for(tmp_path, port)
+    monkeypatch.setattr(cli, "load", lambda overrides=None: cfg)
+    if prompt is not None:
+        monkeypatch.setattr(sys, "stdin", __import__("io").StringIO(prompt))
+    code = cli.main(argv or ["launch", "--project", DEMO])
+    return code, cfg
+
+
+def started(**extra):
+    """What `POST /api/launch` returns for a launch that started."""
+    return {"outcome": "started", "session_id": "1234", "launch_id": "l-1", **extra}
+
+
+def test_launch_exits_one_where_handoff_exits_zero_on_the_same_closed_port(tmp_path):
+    """The two commands are deliberately asymmetric, so they are asserted together.
+
+    Same closed port, same HOME, same subprocess machinery: the only difference is
+    the subcommand. `handoff` must survive a dead panel because it is holding the
+    only copy of something. `launch` must not, because a launch that did not
+    happen has lost nothing and a launch deferred to some later boot is worse
+    than one that never fired.
+    """
+    port = closed_port()
+    home = tmp_path / "home"
+    home.mkdir()
+    env = {"HOME": str(home), "PATH": "/usr/bin:/bin",
+           "BRIDGE_PORT": str(port), "PYTHONDONTWRITEBYTECODE": "1"}
+
+    def run(argv, stdin=""):
+        return subprocess.run(
+            [sys.executable, "-m", "bridge", *argv],
+            input=stdin, capture_output=True, text=True,
+            cwd=str(tmp_path), env=env,
+        )
+
+    launch = run(["launch", "--project", DEMO])
+    handoff = run(["handoff", "--prompt-file", "-", "--project", DEMO], HOSTILE)
+
+    assert (launch.returncode, handoff.returncode) == (1, 0), (
+        "launch must fail loudly and handoff must not fail at all\n"
+        f"launch stderr:\n{launch.stderr}\nhandoff stderr:\n{handoff.stderr}"
+    )
+    assert launch.stdout == ""
+    assert "panel unreachable" in launch.stderr
+
+
+def test_a_failed_launch_writes_no_spool_file(tmp_path):
+    """A spooled launch would fire at an unpredictable later time. Nothing at all
+    must be left behind that a drain could pick up."""
+    port = closed_port()
+    home = tmp_path / "home"
+    home.mkdir()
+
+    proc = subprocess.run(
+        [sys.executable, "-m", "bridge", "launch", "--project", DEMO],
+        input="", capture_output=True, text=True, cwd=str(tmp_path),
+        env={"HOME": str(home), "PATH": "/usr/bin:/bin",
+             "BRIDGE_PORT": str(port), "PYTHONDONTWRITEBYTECODE": "1"},
+    )
+
+    assert proc.returncode == 1, f"stderr:\n{proc.stderr}"
+    left = [p for p in (home / ".bridge").rglob("*") if p.is_file()]
+    assert left == [], f"a failed launch left files behind: {left}"
+
+
+def test_launch_posts_the_project_mode_model_and_effort(monkeypatch, tmp_path,
+                                                        fake_server):
+    fake_server["code"] = 200
+    fake_server["post_body"] = started()
+    code, _ = run_launch(monkeypatch, tmp_path, fake_server["port"], argv=[
+        "launch", "--project", DEMO, "--mode", "background",
+        "--model", "opus", "--effort", "xhigh",
+    ])
+    assert code == 0
+    posted = fake_server["posts"][0]
+    assert posted["project_path"] == DEMO
+    assert posted["mode"] == "background"
+    assert posted["model"] == "opus"
+    assert posted["effort"] == "xhigh"
+
+
+def test_launch_with_a_prompt_file_overrides_the_queued_handoff(monkeypatch, tmp_path,
+                                                                fake_server):
+    """`--prompt-file -` is the escape hatch for launching something other than
+    whatever the panel has queued."""
+    fake_server["code"] = 200
+    fake_server["post_body"] = started()
+    code, _ = run_launch(
+        monkeypatch, tmp_path, fake_server["port"],
+        argv=["launch", "--project", DEMO, "--prompt-file", "-"],
+        prompt=HOSTILE,
+    )
+    assert code == 0
+    assert fake_server["posts"][0]["prompt"] == HOSTILE
+
+
+def test_launch_without_a_prompt_file_sends_no_prompt_at_all(monkeypatch, tmp_path,
+                                                             fake_server):
+    """Asserted as an absence, because the server-side fallback to the queued
+    handoff is the whole point: an empty-string prompt would look like a request
+    to launch nothing, and echoing the queued prompt back would let the client
+    launch text the panel no longer holds."""
+    fake_server["code"] = 200
+    fake_server["post_body"] = started()
+    code, _ = run_launch(monkeypatch, tmp_path, fake_server["port"])
+    assert code == 0
+    posted = fake_server["posts"][0]
+    assert "prompt" not in posted, f"the CLI sent a prompt anyway: {posted}"
+    assert posted["mode"] == "terminal", "--mode defaults to terminal"
+
+
+@pytest.mark.parametrize("code_and_body", [
+    (409, {"detail": "nothing queued for " + DEMO}),
+    (200, {"outcome": "failed", "error": "nothing queued for " + DEMO,
+           "session_id": None, "launch_id": "l-1"}),
+], ids=["refused-outright", "reported-as-a-failed-outcome"])
+def test_launch_with_nothing_queued_exits_nonzero_and_says_why(
+    monkeypatch, tmp_path, fake_server, capsys, code_and_body
+):
+    """Matching `bridge next`: nothing to run is a non-zero exit with a message.
+
+    Both shapes the API can express this in are covered — a refusal, and the
+    200-with-`outcome='failed'` the panel needs in order to show the error beside
+    the prompt — because either way the CLI must fail and must repeat the
+    server's own words rather than inventing a guess.
+    """
+    fake_server["code"], fake_server["post_body"] = code_and_body
+    code, _ = run_launch(monkeypatch, tmp_path, fake_server["port"])
+    out = capsys.readouterr()
+    assert code == 1
+    assert out.out == ""
+    assert "nothing queued" in out.err
+
+
 # --- structure ---------------------------------------------------------------
 
 
 def test_the_cli_never_loads_a_database_module():
     """Asserted by observation, not by reading imports: the CLI must not reach
-    the database even transitively. Deterministic, unlike a timing test."""
+    the database even transitively. Deterministic, unlike a timing test.
+
+    `bridge.launcher` is held to the same rule from Phase 3 on. The server is the
+    sole spawner as well as the sole writer, so importing the launcher here would
+    both slow the end-of-session path down and invite a future `bridge launch`
+    that spawns client-side, leaving no `launches` row behind it.
+    """
     probe = (
         "import bridge.cli, sys;"
-        "print('sqlite3' in sys.modules, 'bridge.store' in sys.modules)"
+        "print('sqlite3' in sys.modules, 'bridge.store' in sys.modules,"
+        " 'bridge.launcher' in sys.modules)"
     )
     proc = subprocess.run(
         [sys.executable, "-c", probe], capture_output=True, text=True,
@@ -222,6 +369,6 @@ def test_the_cli_never_loads_a_database_module():
              "HOME": str(Path.home())},
     )
     assert proc.returncode == 0, proc.stderr
-    assert proc.stdout.strip() == "False False", (
-        f"the CLI loaded a database module: {proc.stdout.strip()}"
+    assert proc.stdout.strip() == "False False False", (
+        f"the CLI loaded a database or launcher module: {proc.stdout.strip()}"
     )

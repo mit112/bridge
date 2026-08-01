@@ -1,9 +1,11 @@
 """FastAPI application. Read-only in Phase 1; Phase 2 adds handoff capture.
 
 This process stays the sole writer. The `bridge` CLI speaks HTTP to it and never
-opens the database.
+opens the database. Phase 3 makes it the sole *spawner* too: the card and the CLI
+are both thin clients of `POST /api/launch`, and neither imports `launcher`.
 """
 
+from collections.abc import Callable
 from dataclasses import asdict
 from pathlib import Path
 from typing import Literal
@@ -12,19 +14,26 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator, model_validator
 
-from bridge import spool
+from bridge import launcher, spool
 from bridge.cards import build_cards
 from bridge.config import Config
 from bridge.indexer import reindex
 from bridge.models import Handoff
-from bridge.registry import resolve_project
+from bridge.registry import display_name, resolve_project
 from bridge.store import Store, now_epoch
 
 HERE = Path(__file__).parent
 
 HandoffStatus = Literal["queued", "consumed", "dismissed", "superseded"]
+
+# The spawner, injected into `create_app` with a default. Not testability polish:
+# `launcher.launch` shells out to `/usr/bin/osascript`, which opens a real
+# Terminal window running a real, token-burning session whose transcript the
+# indexer then ingests. Injection is what makes it impossible for a route test to
+# spawn one by accident, and it is why no test monkeypatches a module global.
+LaunchFn = Callable[..., launcher.LaunchResult]
 
 
 class HandoffIn(BaseModel):
@@ -41,11 +50,58 @@ class HandoffIn(BaseModel):
     created_at: int | None = None
 
 
-class StatusIn(BaseModel):
-    status: HandoffStatus
+class HandoffPatch(BaseModel):
+    """`status`, `next_prompt`, or both — but never neither.
+
+    Both fields are optional because the panel edits a prompt without touching
+    the status and dismisses a handoff without touching its text. Optional fields
+    alone, though, make `PATCH {}` a 200 that changes nothing, so the validator
+    below rejects the empty body outright: a silent no-op is indistinguishable
+    from a saved edit at the far end of a `fetch()`.
+    """
+
+    status: HandoffStatus | None = None
+    next_prompt: str | None = None
+
+    @model_validator(mode="after")
+    def _at_least_one_field(self):
+        if self.status is None and self.next_prompt is None:
+            raise ValueError("supply status, next_prompt, or both")
+        return self
 
 
-def create_app(store: Store, cfg: Config) -> FastAPI:
+class LaunchIn(BaseModel):
+    """`prompt` is optional, and that is the load-bearing part.
+
+    `bridge launch` deliberately sends no prompt: the server already holds the
+    queued handoff, so round-tripping it out to the client and back would be
+    bytes over the wire — and a second copy to keep in sync — for nothing. When
+    it is omitted the server uses that project's queued handoff, and having
+    neither is an error rather than an empty session.
+    """
+
+    project_path: str
+    prompt: str | None = None
+    mode: str = "terminal"
+    model: str | None = None
+    effort: str | None = None
+    handoff_id: str | None = None
+    title: str | None = None
+
+    @field_validator("mode")
+    @classmethod
+    def _known_mode(cls, value: str) -> str:
+        # Validated here rather than left to `launch()` so the check does not
+        # depend on which launcher is injected, and consumed from `launcher.MODES`
+        # rather than restated, so the vocabulary has one source.
+        if value not in launcher.MODES:
+            raise ValueError(f"mode must be one of {launcher.MODES}")
+        return value
+
+
+def create_app(
+    store: Store, cfg: Config, launch_fn: LaunchFn = launcher.launch
+) -> FastAPI:
     app = FastAPI(title="Bridge")
 
     # Drain before serving. Under the manual-`bridge serve` uptime model this is
@@ -93,6 +149,9 @@ def create_app(store: Store, cfg: Config) -> FastAPI:
                 "project": row,
                 "sessions": store.sessions(project_id),
                 "handoffs": store.handoffs(project_id),
+                # Task 7 added the launch-history table to the template but
+                # nothing ever passed it, so the block was inert in the live app.
+                "launches": store.launches(project_id),
             },
         )
 
@@ -156,11 +215,114 @@ def create_app(store: Store, cfg: Config) -> FastAPI:
         return dict(row)
 
     @app.patch("/api/handoff/{handoff_id}")
-    def patch_handoff(handoff_id: str, body: StatusIn):
-        if store.get_handoff(handoff_id) is None:
+    def patch_handoff(handoff_id: str, body: HandoffPatch):
+        """Edit the queued prompt, change the status, or both.
+
+        Each change is journalled *before* the row is written, exactly as the
+        launcher journals consumption: the journal is what survives
+        `rm ~/.bridge/bridge.db`, so it must never lag the database it rebuilds.
+        A journal failure therefore surfaces with the row untouched, rather than
+        leaving a saved edit the journal has never heard of.
+        """
+        row = store.get_handoff(handoff_id)
+        if row is None:
             raise HTTPException(status_code=404, detail="unknown handoff")
-        store.set_handoff_status(handoff_id, body.status)
+
+        if body.next_prompt is not None:
+            project = store.get_project(row["project_id"])
+            spool.journal(
+                Handoff(
+                    id=handoff_id,
+                    project_path=project["path"],
+                    next_prompt=body.next_prompt,
+                    source_session_id=row["source_session_id"],
+                    summary=row["summary"],
+                    suggested_model=row["suggested_model"],
+                    suggested_effort=row["suggested_effort"],
+                    created_at=row["created_at"],
+                    status=row["status"],
+                ),
+                cfg.spool_dir,
+            )
+            # Status untouched: editing a queued prompt leaves it queued. The
+            # exact bytes each launch ran are kept separately in
+            # `launches.prompt`, so an edit cannot erase what actually ran.
+            store.update_handoff_prompt(handoff_id, body.next_prompt)
+
+        if body.status is not None:
+            spool.journal_status(handoff_id, body.status, now_epoch(), cfg.spool_dir)
+            store.set_handoff_status(handoff_id, body.status)
+
         return dict(store.get_handoff(handoff_id))
+
+    @app.post("/api/launch")
+    def post_launch(body: LaunchIn):
+        """Spawn one session. A failed *launch* is a 200, not an HTTP error.
+
+        The boundary is whether a `launches` row exists yet:
+
+        * Nothing recorded — an unknown mode, a NUL or oversize prompt, no
+          `claude` on `PATH`, no prompt and nothing queued — is a `422`. Nothing
+          happened, there is no launch id or outcome to report, and a
+          `200 {outcome: 'failed'}` would describe a launch the database does not
+          have.
+        * A row exists and the *spawn* failed: `200`, `outcome='failed'`, and a
+          non-empty `error`. The panel needs the error text and the prompt in the
+          same response to show one and copy the other, and a 500 gives it
+          neither. The handoff stays queued, so nothing is lost.
+        """
+        # Read-only resolution, matching `GET /api/handoff`: looking for a queued
+        # prompt must not bring a project row into existence, or a launch that is
+        # about to be refused would leave one behind. Canonicalising the project
+        # for the launch itself is `launch()`'s job, through the same alias table.
+        canonical = store.alias_map().get(body.project_path, body.project_path)
+        project = store.project_by_path(canonical)
+        queued = store.queued_handoff(project["id"]) if project else None
+
+        prompt, handoff_id = body.prompt, body.handoff_id
+        if prompt is None:
+            if queued is None:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"no prompt supplied and nothing queued for {canonical}",
+                )
+            prompt, handoff_id = queued["next_prompt"], queued["id"]
+
+        # Passing the handoff id is what gets it consumed and journalled, and only
+        # on success — `launch()` leaves it queued when the spawn fails.
+        handoff = store.get_handoff(handoff_id) if handoff_id else None
+        if handoff_id and handoff is None:
+            # `launches.handoff_id` has a foreign key, so an id the client made up
+            # would otherwise surface as an IntegrityError traceback from `launch()`.
+            raise HTTPException(status_code=404, detail="unknown handoff")
+        spec = launcher.LaunchSpec(
+            project_path=body.project_path,
+            prompt=prompt,
+            model=body.model,
+            effort=body.effort,
+            title=body.title or launcher.default_title(
+                handoff["summary"] if handoff else None, display_name(canonical)
+            ),
+            mode=body.mode,
+        )
+        try:
+            result = launch_fn(store, cfg, spec, handoff_id)
+        except launcher.LaunchError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+        return {
+            "launch_id": result.launch_id,
+            "outcome": result.outcome,
+            "session_id": result.session_id,
+            "short_id": result.short_id,
+            "error": result.error,
+            "note": result.note,
+            "handoff_id": handoff_id,
+            # Echoed so a client that never sent the prompt — `bridge launch`, or
+            # a card rendered before someone else edited it — can still put the
+            # right bytes on the clipboard when the launch fails.
+            "prompt": prompt,
+        }
 
     return app
 
