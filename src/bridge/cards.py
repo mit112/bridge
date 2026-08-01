@@ -12,7 +12,7 @@ waiting on you.
 
 from dataclasses import replace
 
-from bridge import agents, gitprobe
+from bridge import agents, gitprobe, hooks
 from bridge.config import Config, ModelChoice
 from bridge.models import AgentsState, Card, GitState, SessionRecord
 from bridge.store import Store, now_epoch, to_epoch
@@ -139,7 +139,8 @@ def model_options(
 
 
 def build_cards(
-    store: Store, cfg: Config, probe_fn=None, agents_fn=None, debouncer=None
+    store: Store, cfg: Config, probe_fn=None, agents_fn=None, debouncer=None,
+    hook_state=None,
 ) -> list[Card]:
     # Late-bound default: looked up at call time (not at def time) so tests
     # can monkeypatch `gitprobe.probe` and have callers that omit `probe_fn`
@@ -159,6 +160,22 @@ def build_cards(
     except Exception:  # noqa: BLE001
         live_state = AgentsState(status="unavailable", sessions=[], source="none")
     live_unavailable = live_state.status == "unavailable"
+
+    # Hooks are an OVERLAY on the sensor, never a substitute for it. The sensor
+    # decides what exists; a hook can only say that something the sensor can
+    # already see is waiting on a human. `forget` is the reconciliation: a
+    # session the sensor no longer reports cannot be waiting, whatever the last
+    # hook said, and hook events are silently lost whenever Bridge is down.
+    if hook_state is not None and live_state.status == "ok":
+        hook_state.forget(s.session_id for s in live_state.sessions)
+        waiting = hook_state.waiting_ids()
+        if waiting:
+            live_state = replace(live_state, sessions=[
+                replace(s, status=hooks.NEEDS_INPUT)
+                if s.session_id in waiting else s
+                for s in live_state.sessions
+            ])
+
     if debouncer is not None:
         live_state = replace(
             live_state, sessions=debouncer.apply(live_state.sessions, now)

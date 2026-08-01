@@ -9,6 +9,7 @@ import json
 import time
 from collections.abc import Callable
 from dataclasses import asdict
+from dataclasses import replace as dataclasses_replace
 from pathlib import Path
 from typing import Literal
 
@@ -18,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, field_validator, model_validator
 
-from bridge import agents, launcher, spool
+from bridge import agents, hooks, launcher, spool
 from bridge.cards import LivenessDebouncer, build_cards, spark_points
 from bridge.config import Config
 from bridge.indexer import reindex
@@ -145,6 +146,32 @@ def create_app(
     # and the hysteresis would never fire.
     debouncer = LivenessDebouncer()
 
+    # --- hooks --------------------------------------------------------------
+    #
+    # The receiving end of `Notification` / `SessionStart` / `SessionEnd`,
+    # posted by Claude Code as `type: "http"` hooks. This route is the ONLY
+    # route to a `needs_input` state: no JSONL entry records a permission
+    # prompt, so polling and transcript-tailing provably cannot see one.
+    #
+    # It must always answer, always fast, and never with an error. A hook that
+    # fails is noise in somebody's unrelated session, and one that hangs stalls
+    # a turn -- which is why the settings entries carry an explicit `timeout`
+    # and why nothing below can raise.
+
+    hook_state = app.state.hook_state = hooks.HookState()
+
+    @app.post("/api/hooks")
+    async def post_hook(request: Request):
+        try:
+            event = await request.json()
+        except Exception:  # noqa: BLE001 - a malformed body is still a 200
+            return {"ok": True}
+        try:
+            hook_state.record(event)
+        except Exception:  # noqa: BLE001
+            pass
+        return {"ok": True}
+
     # --- SSE ----------------------------------------------------------------
     #
     # Snapshot on connect, then deltas WITH tombstones, a named `refresh` when
@@ -171,6 +198,16 @@ def create_app(
         """Live state keyed by project path. Acquires the store lock only for
         the two cheap reads it needs, and never holds it across a sleep."""
         state = agents.probe()
+        # Same overlay the dashboard applies, so a card and a live tick can
+        # never disagree about whether a session is waiting on a human.
+        if state.status == "ok":
+            hook_state.forget(s.session_id for s in state.sessions)
+            waiting = hook_state.waiting_ids()
+            if waiting:
+                state = dataclasses_replace(state, sessions=[
+                    dataclasses_replace(s, status=hooks.NEEDS_INPUT)
+                    if s.session_id in waiting else s for s in state.sessions
+                ])
         rows = store.projects()
         grouped = agents.by_project(
             state, store.alias_map(), [row["path"] for row in rows]
@@ -286,7 +323,8 @@ def create_app(
 
     @app.get("/", response_class=HTMLResponse)
     def dashboard(request: Request):
-        cards = build_cards(store, cfg, debouncer=debouncer)
+        cards = build_cards(store, cfg, debouncer=debouncer,
+                            hook_state=hook_state)
         return templates.TemplateResponse(
             request,
             "dashboard.html",
