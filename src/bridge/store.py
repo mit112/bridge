@@ -537,8 +537,13 @@ class Store:
             ).fetchall()
         series = [0] * days
         for row in rows:
+            # The WHERE clause is the only thing keeping `bucket` non-negative,
+            # and a negative index would silently write from the END of the
+            # list rather than raise. The upper bound is still checked here
+            # because `now` can sit mid-day, putting today's rows in bucket
+            # `days` exactly.
             bucket = int(row["bucket"])
-            if 0 <= bucket < days:
+            if bucket < days:
                 series[bucket] = int(row["total"] or 0)
         return series
 

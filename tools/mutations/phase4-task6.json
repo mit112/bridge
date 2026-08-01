@@ -54,7 +54,7 @@
   {
     "name": "return only the days that had activity, so a project active on two days renders a 2-point line labelled as a week",
     "file": "src/bridge/store.py",
-    "old": "        series = [0] * days\n        for row in rows:\n            bucket = int(row[\"bucket\"])\n            if 0 <= bucket < days:\n                series[bucket] = int(row[\"total\"] or 0)\n        return series",
+    "old": "        series = [0] * days\n        for row in rows:\n            # The WHERE clause is the only thing keeping `bucket` non-negative,\n            # and a negative index would silently write from the END of the\n            # list rather than raise. The upper bound is still checked here\n            # because `now` can sit mid-day, putting today's rows in bucket\n            # `days` exactly.\n            bucket = int(row[\"bucket\"])\n            if bucket < days:\n                series[bucket] = int(row[\"total\"] or 0)\n        return series",
     "new": "        return [int(row[\"total\"] or 0) for row in rows]",
     "tests": [
       "tests/test_store.py::test_token_series_returns_one_bucket_per_day_oldest_first",
@@ -93,10 +93,10 @@
     "expect_count": 1
   },
   {
-    "name": "drop the window filter, so activity from a month ago lands in today's bucket",
+    "name": "widen the SQL window, so a session from a month ago gets a negative bucket and writes into the series from the END of the list",
     "file": "src/bridge/store.py",
-    "old": "            if 0 <= bucket < days:",
-    "new": "            if bucket < days:",
+    "old": "                \"FROM sessions WHERE project_id=? AND ended_epoch >= ? \"\n                \"GROUP BY bucket\",\n                (start, project_id, start),",
+    "new": "                \"FROM sessions WHERE project_id=? AND ended_epoch >= ? \"\n                \"GROUP BY bucket\",\n                (start, project_id, 0),",
     "tests": [
       "tests/test_store.py::test_token_series_excludes_activity_older_than_the_window"
     ],
