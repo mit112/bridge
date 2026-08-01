@@ -1,0 +1,229 @@
+[
+  {
+    "name": "default a missing status to idle, labelling a RUNNING background agent idle -- the false quiescence the design forbids",
+    "file": "src/bridge/agents.py",
+    "old": "    for key in (\"status\", \"state\"):\n        value = entry.get(key)\n        if isinstance(value, str) and value:\n            return value\n    return UNKNOWN",
+    "new": "    return entry.get(\"status\") or \"idle\"",
+    "tests": [
+      "tests/test_agents.py::test_a_running_background_agent_is_never_labelled_idle",
+      "tests/test_agents.py::test_a_record_with_neither_field_is_unknown_never_idle",
+      "tests/test_agents.py::test_a_background_record_reads_state_not_status"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "read only `status`, so every background agent's state is invisible",
+    "file": "src/bridge/agents.py",
+    "old": "    for key in (\"status\", \"state\"):",
+    "new": "    for key in (\"status\",):",
+    "tests": [
+      "tests/test_agents.py::test_a_background_record_reads_state_not_status"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "validate status against a closed set, so a new state is coerced into a wrong one",
+    "file": "src/bridge/agents.py",
+    "old": "        if isinstance(value, str) and value:\n            return value\n    return UNKNOWN",
+    "new": "        if isinstance(value, str) and value in (\"idle\", \"busy\"):\n            return value\n    return UNKNOWN",
+    "tests": [
+      "tests/test_agents.py::test_an_unrecognised_state_round_trips_verbatim"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "drop the //1000, so every live session claims to have started 56,000 years in the future",
+    "file": "src/bridge/agents.py",
+    "old": "    return int(value) // 1000",
+    "new": "    return int(value)",
+    "tests": [
+      "tests/test_agents.py::test_the_registry_reads_camelcase_keys_and_converts_milliseconds",
+      "tests/test_agents.py::test_the_subprocess_reads_the_real_recorded_payload"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "read `session_id` instead of `sessionId`, the exact bug the design spec would have caused",
+    "file": "src/bridge/agents.py",
+    "old": "    session_id = str(entry.get(\"sessionId\") or entry.get(\"id\") or \"\").lower()",
+    "new": "    session_id = str(entry.get(\"session_id\") or \"\").lower()",
+    "tests": [
+      "tests/test_agents.py::test_the_subprocess_reads_sessionId_not_session_id",
+      "tests/test_agents.py::test_the_registry_reads_camelcase_keys_and_converts_milliseconds"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "ignore the background shape's `id` key, silently dropping every background agent",
+    "file": "src/bridge/agents.py",
+    "old": "    session_id = str(entry.get(\"sessionId\") or entry.get(\"id\") or \"\").lower()",
+    "new": "    session_id = str(entry.get(\"sessionId\") or \"\").lower()",
+    "tests": [
+      "tests/test_agents.py::test_a_background_record_is_correlated_by_its_id_field"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "parse procStart as local time too, so the PID-reuse guard always fails by five hours",
+    "file": "src/bridge/agents.py",
+    "old": "    expected = _parse_instant(expected_utc or \"\", assume_utc=True)",
+    "new": "    expected = _parse_instant(expected_utc or \"\", assume_utc=False)",
+    "tests": [
+      "tests/test_agents.py::test_a_matching_start_time_is_alive"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "string-compare the two start stamps instead of parsing them as instants",
+    "file": "src/bridge/agents.py",
+    "old": "    if assume_utc:\n        return naive.replace(tzinfo=timezone.utc)\n    return naive.astimezone()  # interprets a naive stamp as local time",
+    "new": "    return naive.replace(tzinfo=timezone.utc)",
+    "tests": [
+      "tests/test_agents.py::test_proc_start_is_parsed_as_utc_and_ps_as_local_time",
+      "tests/test_agents.py::test_a_matching_start_time_is_alive"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "skip the liveness check, so a registry file that outlived its process reports a dead session as running forever",
+    "file": "src/bridge/agents.py",
+    "old": "        if not alive_fn(live.pid, entry.get(\"procStart\")):\n            continue",
+    "new": "        if False:\n            continue",
+    "tests": [
+      "tests/test_agents.py::test_a_registry_file_whose_process_is_gone_is_not_reported_as_running"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "treat a reused pid as alive, so a recycled pid keeps a dead session on the card",
+    "file": "src/bridge/agents.py",
+    "old": "    return abs((actual_local - expected).total_seconds()) <= PID_START_TOLERANCE_S",
+    "new": "    return True",
+    "tests": [
+      "tests/test_agents.py::test_a_reused_pid_whose_start_time_disagrees_is_not_alive"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "treat an unverifiable start time as dead, dropping real running sessions off the dashboard",
+    "file": "src/bridge/agents.py",
+    "old": "    if expected is None or actual_local is None:",
+    "new": "    if False:",
+    "tests": [
+      "tests/test_agents.py::test_a_failed_ps_leaves_the_session_alive_rather_than_dropping_it",
+      "tests/test_agents.py::test_a_missing_proc_start_leaves_the_session_alive"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "spawn one `ps` per session, handing back most of the reason the registry sensor exists",
+    "file": "src/bridge/agents.py",
+    "old": "    if alive_fn is None:\n        starts = ps_start_times([live.pid for live, _ in candidates])\n\n        def alive_fn(pid, proc_start, _starts=starts):\n            return pid_exists(pid) and _start_matches(proc_start, _starts.get(pid))",
+    "new": "    if alive_fn is None:\n        def alive_fn(pid, proc_start):\n            return pid_exists(pid) and _start_matches(\n                proc_start, ps_start_times([pid]).get(pid))",
+    "tests": [
+      "tests/test_agents.py::test_the_pid_guard_makes_exactly_one_ps_call_however_many_sessions"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "report a missing registry directory as empty, asserting \"nothing is running\" from a sensor that never read anything",
+    "file": "src/bridge/agents.py",
+    "old": "    if not sessions_dir.is_dir():\n        return UNAVAILABLE",
+    "new": "    if False:\n        return UNAVAILABLE",
+    "tests": [
+      "tests/test_agents.py::test_a_missing_registry_directory_is_unavailable_not_empty"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "let one torn registry file kill the whole read",
+    "file": "src/bridge/agents.py",
+    "old": "        except (OSError, ValueError):\n            continue  # torn write or junk: skip the file, keep the rest",
+    "new": "        except (OSError, ValueError):\n            raise",
+    "tests": [
+      "tests/test_agents.py::test_one_malformed_registry_file_is_skipped_not_fatal"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "accept any parse from the subprocess, so a null payload claims nothing is running",
+    "file": "src/bridge/agents.py",
+    "old": "    if not isinstance(data, (list, dict)):\n        return UNAVAILABLE",
+    "new": "    if False:\n        return UNAVAILABLE",
+    "tests": [
+      "tests/test_agents.py::test_malformed_subprocess_output_is_unavailable"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "report a nonzero exit as ok-with-nothing-running",
+    "file": "src/bridge/agents.py",
+    "old": "        if proc.returncode != 0:\n            return UNAVAILABLE",
+    "new": "        if False:\n            return UNAVAILABLE",
+    "tests": [
+      "tests/test_agents.py::test_a_nonzero_exit_is_unavailable_not_empty"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "match a registered path as a bare string prefix, merging `/dev/bridge-old` into `/dev/bridge`",
+    "file": "src/bridge/agents.py",
+    "old": "                if cwd.startswith(path.rstrip(\"/\") + \"/\"):",
+    "new": "                if cwd.startswith(path):",
+    "tests": [
+      "tests/test_agents.py::test_a_sibling_sharing_a_name_prefix_is_not_matched"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "check the prefix before the exact match, putting a registered subproject on its parent's card",
+    "file": "src/bridge/agents.py",
+    "old": "        if cwd in registered_paths:\n            key = cwd\n        else:\n            for path in registered:  # longest first",
+    "new": "        if False:\n            key = cwd\n        else:\n            for path in registered:  # longest first",
+    "tests": [
+      "tests/test_agents.py::test_an_exact_cwd_match_wins_over_a_shorter_registered_prefix"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "try registered paths shortest-first, so the least specific project wins",
+    "file": "src/bridge/agents.py",
+    "old": "    registered = sorted(registered_paths, key=len, reverse=True)",
+    "new": "    registered = sorted(registered_paths, key=len)",
+    "tests": [
+      "tests/test_agents.py::test_the_longest_prefix_wins_not_the_first_one_found"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "fall back to the cwd itself instead of an unattributed bucket -- the measured bug where /Users/mitsheth vanished from the dashboard",
+    "file": "src/bridge/agents.py",
+    "old": "        grouped.setdefault(key if key is not None else UNATTRIBUTED, []).append(\n            session\n        )",
+    "new": "        if key is None:\n            continue\n        grouped.setdefault(key, []).append(session)",
+    "tests": [
+      "tests/test_agents.py::test_an_unregistered_cwd_lands_in_the_unattributed_bucket_not_nowhere",
+      "tests/test_agents.py::test_no_live_session_is_ever_dropped"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "skip the alias map, so a session under an old project path lands unattributed",
+    "file": "src/bridge/agents.py",
+    "old": "        cwd = alias_map.get(session.cwd, session.cwd)",
+    "new": "        cwd = session.cwd",
+    "tests": [
+      "tests/test_agents.py::test_an_aliased_cwd_maps_to_its_canonical_project"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "sort several sessions on one project oldest-first, so a card shows the session the user is least likely to mean",
+    "file": "src/bridge/agents.py",
+    "old": "        sessions.sort(key=lambda s: -s.started_at)",
+    "new": "        sessions.sort(key=lambda s: s.started_at)",
+    "tests": [
+      "tests/test_agents.py::test_several_sessions_on_one_project_are_most_recent_first"
+    ],
+    "expect_count": 1
+  }
+]
