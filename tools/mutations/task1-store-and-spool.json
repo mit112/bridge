@@ -83,8 +83,8 @@
   {
     "name": "write the spool file in place, without the temp + os.replace",
     "file": "src/bridge/spool.py",
-    "old": "    fd, tmp = tempfile.mkstemp(dir=live, prefix=f\".{h.id}.\", suffix=\".tmp\")\n    try:\n        with os.fdopen(fd, \"w\", encoding=\"utf-8\") as f:\n            f.write(payload)\n            f.flush()\n            os.fsync(f.fileno())\n        final = live / f\"{h.id}.json\"\n        os.replace(tmp, final)\n        return final\n    except BaseException:\n        Path(tmp).unlink(missing_ok=True)\n        raise",
-    "new": "    final = live / f\"{h.id}.json\"\n    with open(final, \"w\", encoding=\"utf-8\") as f:\n        f.write(payload)\n        f.flush()\n        os.fsync(f.fileno())\n    return final",
+    "old": "    fd, tmp = tempfile.mkstemp(dir=live, prefix=f\".{stem}.\", suffix=\".tmp\")\n    try:\n        with os.fdopen(fd, \"w\", encoding=\"utf-8\") as f:\n            f.write(body)\n            f.flush()\n            os.fsync(f.fileno())\n        final = live / f\"{stem}.json\"\n        os.replace(tmp, final)\n        return final\n    except BaseException:\n        Path(tmp).unlink(missing_ok=True)\n        raise",
+    "new": "    final = live / f\"{stem}.json\"\n    with open(final, \"w\", encoding=\"utf-8\") as f:\n        f.write(body)\n        f.flush()\n        os.fsync(f.fileno())\n    return final",
     "tests": [
       "tests/test_spool.py::test_an_interrupted_write_leaves_no_readable_final_file"
     ]

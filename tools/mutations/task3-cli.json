@@ -57,8 +57,8 @@
   {
     "name": "drop the empty-prompt usage check",
     "file": "src/bridge/cli.py",
-    "old": "    if not prompt.strip():",
-    "new": "    if False:",
+    "old": "    if not prompt.strip():\n        # A local usage error, not a server failure. Exiting zero here would\n        # report success for a handoff that recorded nothing.\n        print(\"bridge handoff: refusing to record an empty prompt\", file=sys.stderr)\n        return 2",
+    "new": "    if False:\n        print(\"bridge handoff: refusing to record an empty prompt\", file=sys.stderr)\n        return 2",
     "tests": [
       "tests/test_cli.py::test_an_empty_prompt_is_a_usage_error_not_a_silent_success"
     ]

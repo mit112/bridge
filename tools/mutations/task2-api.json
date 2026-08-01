@@ -47,8 +47,8 @@
   {
     "name": "journal into the live outbox instead of drained/",
     "file": "src/bridge/spool.py",
-    "old": "    _, drained_dir, _ = _dirs(spool_dir)\n    return _atomic_write(h, drained_dir)",
-    "new": "    live, _, _ = _dirs(spool_dir)\n    return _atomic_write(h, live)",
+    "old": "    _, drained_dir, _ = _dirs(spool_dir)\n    return _atomic_write(dataclasses.asdict(h), h.id, drained_dir)",
+    "new": "    live, _, _ = _dirs(spool_dir)\n    return _atomic_write(dataclasses.asdict(h), h.id, live)",
     "tests": [
       "tests/test_api.py::test_a_live_post_is_journaled_so_the_database_stays_disposable"
     ]
@@ -56,8 +56,8 @@
   {
     "name": "truncate the prompt on the way in",
     "file": "src/bridge/api.py",
-    "old": "            next_prompt=body.next_prompt,",
-    "new": "            next_prompt=body.next_prompt[:1000],",
+    "old": "            project_path=body.project_path,\n            next_prompt=body.next_prompt,",
+    "new": "            project_path=body.project_path,\n            next_prompt=body.next_prompt[:1000],",
     "tests": [
       "tests/test_api.py::test_a_hostile_prompt_round_trips_byte_for_byte"
     ]
@@ -65,8 +65,8 @@
   {
     "name": "GET returns 200/null instead of 204 when nothing is queued",
     "file": "src/bridge/api.py",
-    "old": "        if row is None:\n            return Response(status_code=204)",
-    "new": "        if row is None:\n            return None",
+    "old": "    def get_handoff(project_id: int):\n        row = store.queued_handoff(project_id)\n        if row is None:\n            return Response(status_code=204)",
+    "new": "    def get_handoff(project_id: int):\n        row = store.queued_handoff(project_id)\n        if row is None:\n            return None",
     "tests": [
       "tests/test_api.py::test_get_returns_204_when_nothing_is_queued"
     ]
@@ -74,8 +74,8 @@
   {
     "name": "PATCH does not 404 an unknown handoff id",
     "file": "src/bridge/api.py",
-    "old": "        if store.get_handoff(handoff_id) is None:\n            raise HTTPException(status_code=404, detail=\"unknown handoff\")",
-    "new": "        if False:\n            raise HTTPException(status_code=404, detail=\"unknown handoff\")",
+    "old": "        row = store.get_handoff(handoff_id)\n        if row is None:\n            raise HTTPException(status_code=404, detail=\"unknown handoff\")",
+    "new": "        row = store.get_handoff(handoff_id)\n        if False:\n            raise HTTPException(status_code=404, detail=\"unknown handoff\")",
     "tests": [
       "tests/test_api.py::test_patch_sets_status_and_rejects_unknown_ids_and_statuses"
     ]
