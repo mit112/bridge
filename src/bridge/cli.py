@@ -13,6 +13,16 @@ network attempt, where nothing can have been lost because nothing was captured.
 works. No banner, no log line, not even a trailing newline — anything else ends
 up inside the prompt the next session receives.
 
+**`bridge launch` is the deliberate opposite of `bridge handoff`: it exits 1 on
+every server-failure mode and never spools.** That reads like an inconsistency
+until you see why. A handoff that cannot reach the panel has *captured* something
+the session is about to throw away, so it must be kept at any cost. A launch that
+cannot reach the panel has lost nothing — the user can run `claude` themselves —
+and a spooled launch would fire whenever the panel next boots, which is worse
+than never firing: a session appearing hours later, in some other context, on a
+prompt that has since been done by hand. So a launch either happens now or fails
+loudly.
+
 This uses `urllib` from the stdlib rather than `httpx`. The plan allowed one
 dependency; none is needed. It keeps the end-of-session path free of import cost
 and means the command cannot fail because a virtualenv is missing a package.
@@ -151,6 +161,65 @@ def cmd_next(args, cfg) -> int:
     return 0
 
 
+def _detail(body) -> str:
+    """The server's own words, when it gave any. FastAPI's `detail` is a string
+    for an `HTTPException` and a list for a 422, so only a string is quoted."""
+    if isinstance(body, dict) and isinstance(body.get("detail"), str):
+        return f": {body['detail']}"
+    return ""
+
+
+def cmd_launch(args, cfg) -> int:
+    """Ask the panel to spawn a session. This module never spawns one itself and
+    never imports `bridge.launcher`: the server is the only process that writes
+    the `launches` row, so it must also be the one that spawns."""
+    payload = {
+        "project_path": args.project or os.getcwd(),
+        "mode": args.mode,
+        "model": args.model,
+        "effort": args.effort,
+    }
+    if args.prompt_file:
+        try:
+            prompt = _read_prompt(args.prompt_file)
+        except OSError as exc:
+            print(f"bridge launch: cannot read prompt: {exc}", file=sys.stderr)
+            return 2
+        if not prompt.strip():
+            print("bridge launch: refusing to launch an empty prompt",
+                  file=sys.stderr)
+            return 2
+        payload["prompt"] = prompt
+    # Otherwise no `prompt` key at all, rather than an empty one: the server holds
+    # the queued handoff already, so round-tripping it through the client would
+    # only add a way for the two to disagree about what got launched.
+
+    try:
+        status, body = _request("POST", f"{_base(cfg)}/api/launch", payload)
+    except Exception as exc:  # noqa: BLE001 - refused, timed out, DNS, anything
+        print(f"bridge launch: panel unreachable "
+              f"({type(exc).__name__}: {exc}); nothing was launched",
+              file=sys.stderr)
+        return 1
+    if not 200 <= status < 300:
+        print(f"bridge launch: server returned {status}{_detail(body)}",
+              file=sys.stderr)
+        return 1
+
+    result = body or {}
+    if result.get("outcome") != "started":
+        # A launch failure is a 200 with `outcome='failed'` so the panel's UI can
+        # show the error next to the prompt. Here it is still a failed launch.
+        print(f"bridge launch: {result.get('error') or 'nothing was launched'}",
+              file=sys.stderr)
+        return 1
+    # stderr, like `handoff`: nothing should ever parse this command's stdout.
+    print(f"bridge: launched {args.mode} session "
+          f"{result.get('session_id') or result.get('launch_id')}",
+          file=sys.stderr)
+    return 0
+
+
 def cmd_status(args, cfg) -> int:
     project = args.project or os.getcwd()
     # The spool count is local, so status still says something useful offline.
@@ -197,6 +266,16 @@ def build_parser() -> argparse.ArgumentParser:
     h.add_argument("--model")
     h.add_argument("--effort")
 
+    la = sub.add_parser("launch", help="launch the queued prompt as a session")
+    la.add_argument("--project")
+    la.add_argument("--mode", choices=("terminal", "background"),
+                    default="terminal")
+    la.add_argument("--model")
+    la.add_argument("--effort")
+    la.add_argument("--prompt-file",
+                    help="path to a prompt, or - for stdin; "
+                         "defaults to the project's queued handoff")
+
     n = sub.add_parser("next", help="print the queued prompt to stdout")
     n.add_argument("--project")
 
@@ -221,6 +300,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 HANDLERS = {
     "handoff": cmd_handoff,
+    "launch": cmd_launch,
     "next": cmd_next,
     "status": cmd_status,
     "open": cmd_open,
