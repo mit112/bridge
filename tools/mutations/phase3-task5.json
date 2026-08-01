@@ -1,0 +1,42 @@
+[
+  {
+    "name": "exit 0 when the panel is down, reporting success for a non-launch",
+    "file": "src/bridge/cli.py",
+    "old": "        print(f\"bridge launch: panel unreachable \"\n              f\"({type(exc).__name__}: {exc}); nothing was launched\",\n              file=sys.stderr)\n        return 1",
+    "new": "        print(f\"bridge launch: panel unreachable \"\n              f\"({type(exc).__name__}: {exc}); nothing was launched\",\n              file=sys.stderr)\n        return 0",
+    "tests": [
+      "tests/test_cli.py::test_launch_exits_one_where_handoff_exits_zero_on_the_same_closed_port"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "spool a failed launch, so it fires at the panel's next boot",
+    "file": "src/bridge/cli.py",
+    "old": "        print(f\"bridge launch: panel unreachable \"\n              f\"({type(exc).__name__}: {exc}); nothing was launched\",\n              file=sys.stderr)\n        return 1",
+    "new": "        print(f\"bridge launch: panel unreachable \"\n              f\"({type(exc).__name__}: {exc}); nothing was launched\",\n              file=sys.stderr)\n        spool.write(\n            Handoff(id=str(uuid.uuid4()), project_path=payload[\"project_path\"],\n                    next_prompt=payload.get(\"prompt\") or \"\",\n                    created_at=int(time.time())),\n            cfg.spool_dir)\n        return 1",
+    "tests": [
+      "tests/test_cli.py::test_a_failed_launch_writes_no_spool_file"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "always send a prompt key, round-tripping it through the client for nothing",
+    "file": "src/bridge/cli.py",
+    "old": "    # Otherwise no `prompt` key at all, rather than an empty one: the server holds",
+    "new": "    payload.setdefault(\"prompt\", \"\")\n    # Otherwise no `prompt` key at all, rather than an empty one: the server holds",
+    "tests": [
+      "tests/test_cli.py::test_launch_without_a_prompt_file_sends_no_prompt_at_all"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "exit 0 on a non-2xx, so nothing-queued reports success",
+    "file": "src/bridge/cli.py",
+    "old": "        print(f\"bridge launch: server returned {status}{_detail(body)}\",\n              file=sys.stderr)\n        return 1",
+    "new": "        print(f\"bridge launch: server returned {status}{_detail(body)}\",\n              file=sys.stderr)\n        return 0",
+    "tests": [
+      "tests/test_cli.py::test_launch_with_nothing_queued_exits_nonzero_and_says_why"
+    ],
+    "expect_count": 1
+  }
+]
