@@ -1334,3 +1334,121 @@ def test_live_js_handles_all_three_named_events():
     for name in ("snapshot", "delta", "refresh"):
         assert f'"{name}"' in source
     assert "removed" in source               # the tombstone is applied
+
+
+# --- PATCH /api/projects/{id}: hide, archive, restore -------------------------
+
+
+def test_hiding_a_project_removes_it_from_the_dashboard(client):
+    c, store, pid = client
+    assert "demo" in c.get("/").text
+
+    r = c.patch(f"/api/projects/{pid}", json={"status": "hidden"})
+    assert r.status_code == 200
+    assert r.json()["status"] == "hidden"
+
+    body = c.get("/").text
+    assert not re.search(r'<h2><a href="/project/\d+">demo</a></h2>', body), (
+        "the hidden project still renders a card"
+    )
+    assert [p["name"] for p in c.get("/api/projects").json()] == []
+
+
+def test_a_hidden_project_is_still_listed_so_it_can_be_restored(client):
+    """Hiding must not be a one-way door.
+
+    `store.projects()` whitelists `active`, so without the list at the foot of
+    the dashboard nothing in the panel could name a hidden project again.
+    """
+    c, _, pid = client
+    c.patch(f"/api/projects/{pid}", json={"status": "hidden"})
+
+    body = c.get("/").text
+    assert f'data-hidden-project="{pid}"' in body
+    assert f'data-project-restore="{pid}"' in body
+    # The word, so a project archived by config.toml is distinguishable from one
+    # hidden here -- which is the only thing that explains why it vanished.
+    assert re.search(
+        rf'data-hidden-project="{pid}".*?<span class="card__note">hidden</span>',
+        body, re.S,
+    )
+
+
+def test_restoring_a_project_brings_its_card_back(client):
+    c, _, pid = client
+    c.patch(f"/api/projects/{pid}", json={"status": "hidden"})
+
+    r = c.patch(f"/api/projects/{pid}", json={"status": "active"})
+    assert r.status_code == 200
+    assert r.json()["status"] == "active"
+
+    body = c.get("/").text
+    assert re.search(r'<h2><a href="/project/\d+">demo</a></h2>', body)
+    assert f'data-hidden-project="{pid}"' not in body
+
+
+def test_an_archived_project_is_listed_as_archived_not_as_hidden(client):
+    c, _, pid = client
+    c.patch(f"/api/projects/{pid}", json={"status": "archived"})
+    assert re.search(
+        rf'data-hidden-project="{pid}".*?<span class="card__note">archived</span>',
+        c.get("/").text, re.S,
+    )
+
+
+def test_patching_an_unknown_project_is_404_not_a_silent_success(client):
+    """`set_project_status` is a bare UPDATE with no rowcount check.
+
+    Without the existence check this is a 200 that changed nothing, which at the
+    far end of a `fetch()` is indistinguishable from a hide that worked.
+    """
+    c, _, _ = client
+    r = c.patch("/api/projects/99999", json={"status": "hidden"})
+    assert r.status_code == 404
+    assert r.json()["detail"] == "unknown project"
+
+
+def test_an_unknown_status_is_refused(client):
+    """The vocabulary is a Literal, so a typo cannot invent a status that
+    `Store.projects` would then filter out forever."""
+    c, _, pid = client
+    assert c.patch(f"/api/projects/{pid}", json={"status": "hiden"}).status_code == 422
+
+
+def test_a_project_patch_with_no_status_is_422_not_a_silent_no_op(client):
+    c, _, pid = client
+    assert c.patch(f"/api/projects/{pid}", json={}).status_code == 422
+
+
+def test_every_card_offers_a_hide_control(client):
+    c, _, pid = client
+    body = c.get("/").text
+    assert f'data-project-hide="{pid}"' in body
+    # The row the client removes on success, and the region it reports into if
+    # the PATCH fails.
+    assert f'data-project-card="{pid}"' in body
+    assert f'data-project-status="{pid}"' in body
+
+
+def test_the_hidden_list_is_rendered_even_when_empty(client):
+    """Hiding the FIRST project needs somewhere to put it.
+
+    Omitting the block until a reload produced one would leave that project
+    unreachable in the meantime -- exactly the one-way door the list prevents.
+    """
+    c, _, _ = client
+    body = c.get("/").text
+    assert "data-hidden-projects" in body
+    assert "data-hidden-list" in body
+    assert re.search(r"<details[^>]*data-hidden-projects[^>]*\shidden[\s>]", body), (
+        "the empty list must be present but not visible"
+    )
+
+
+def test_projects_js_never_reloads_over_a_half_typed_prompt():
+    """`launch.js` saves on `focusout`, so clicking Hide puts a PATCH in flight
+    that a reload would race, losing the one thing Bridge cannot rebuild."""
+    source = (Path(__file__).resolve().parent.parent / "src" / "bridge"
+              / "static" / "projects.js").read_text()
+    assert "location.reload" not in source
+    assert ".innerHTML" not in source

@@ -31,6 +31,13 @@ HERE = Path(__file__).parent
 
 HandoffStatus = Literal["queued", "consumed", "dismissed", "superseded"]
 
+# Three values, not two. `archived` is what `config.toml` seeds for a directory
+# that is gone; `hidden` is what the panel's own control writes; `active`
+# restores either. They filter identically in `Store.projects`, which whitelists
+# `active` -- the distinction is a record of who decided, and that is what makes
+# the seed-versus-override rule in `indexer.reindex` legible.
+ProjectStatus = Literal["active", "hidden", "archived"]
+
 # The spawner, injected into `create_app` with a default. Not testability polish:
 # `launcher.launch` shells out to `/usr/bin/osascript`, which opens a real
 # Terminal window running a real, token-burning session whose transcript the
@@ -116,6 +123,16 @@ class LaunchIn(BaseModel):
         if value not in launcher.MODES:
             raise ValueError(f"mode must be one of {launcher.MODES}")
         return value
+
+
+class ProjectPatch(BaseModel):
+    """Required, not optional, so `PATCH {}` is a 422 and never a silent no-op.
+
+    `HandoffPatch` needs a validator for that because both of its fields are
+    genuinely optional; this body has one field and nothing to do without it.
+    """
+
+    status: ProjectStatus
 
 
 def create_app(
@@ -325,11 +342,19 @@ def create_app(
     def dashboard(request: Request):
         cards = build_cards(store, cfg, debouncer=debouncer,
                             hook_state=hook_state)
+        # `store.projects()` whitelists `active`, so a hidden project is absent
+        # from the cards entirely. Without this list, hiding one would be a
+        # one-way door: nothing in the panel could name it again, let alone
+        # restore it.
+        hidden = [
+            r for r in store.projects(include_hidden=True) if r["status"] != "active"
+        ]
         return templates.TemplateResponse(
             request,
             "dashboard.html",
             {
                 "cards": cards,
+                "hidden": hidden,
                 "diag_alert": _needs_attention(_diagnostics()),
                 "totals": {
                     "today": sum(c.tokens_today for c in cards),
@@ -360,6 +385,20 @@ def create_app(
     @app.get("/api/projects")
     def projects():
         return [dict(r) for r in store.projects()]
+
+    @app.patch("/api/projects/{project_id}")
+    def patch_project(project_id: int, body: ProjectPatch):
+        """Hide a project from the dashboard, archive it, or restore it.
+
+        The existence check is not decoration: `set_project_status` is a bare
+        UPDATE with no rowcount check, so an unknown id would otherwise be a 200
+        that changed nothing -- indistinguishable, at the far end of a `fetch()`,
+        from a hide that worked.
+        """
+        if store.get_project(project_id) is None:
+            raise HTTPException(status_code=404, detail="unknown project")
+        store.set_project_status(project_id, body.status)
+        return dict(store.get_project(project_id))
 
     @app.post("/api/refresh")
     def refresh():

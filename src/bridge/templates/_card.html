@@ -4,6 +4,19 @@
     {% if card.session and card.session.model %}
       <span class="card__meta">{{ card.session.model }}{% if card.session.effort %}/{{ card.session.effort }}{% endif %}</span>
     {% endif %}
+    {# Hides the card, never the data: the project keeps its sessions, its
+       handoffs and its detail page, and the list at the foot of the dashboard
+       brings it back. Spelled out in a word rather than an × glyph, which on a
+       card reads as delete. #}
+    <span class="card__hide">
+      <button type="button" class="btn" data-project-hide="{{ card.project_id }}"
+              aria-label="Hide {{ card.name }} from the dashboard"
+              title="Hide from the dashboard">Hide</button>
+      {# Stays behind when the card does not: a failed hide has to say so, and
+         on success this node is removed along with everything else. #}
+      <span class="card__hide-status" role="status" aria-live="polite"
+            data-project-status="{{ card.project_id }}"></span>
+    </span>
   </header>
   <p class="card__path">{{ card.path }}</p>
 

@@ -283,3 +283,142 @@ listeners.delta({ data: frame });
 listeners.refresh({ data: "{}" });
 """)
     assert healthy["delays"] == [0], healthy["delays"]
+
+
+# --- Hide and restore: projects.js -------------------------------------------
+
+PROJECTS_JS = Path(__file__).resolve().parent.parent / "src" / "bridge" / "static" / "projects.js"
+
+# Two properties that no amount of HTML inspection reveals: which body each
+# control sends, and — the one that matters — that a REFUSED hide leaves the card
+# on screen. Removing it optimistically would make a 404 look exactly like a
+# successful hide, and the project would vanish from a dashboard that had not
+# actually hidden it. Run under node resolved by ABSOLUTE PATH: under
+# `tools/falsify.py` (PATH=/usr/bin:/bin) a bare `node` would SKIP, and a skipped
+# test reports SURVIVED for a mutation it would actually catch.
+PROJECTS_HARNESS = """
+globalThis.window = globalThis;
+let clickHandler = null;
+
+const card = { removed: false, remove() { this.removed = true; },
+               querySelector: () => ({ textContent: "  demo  " }) };
+const hideButton = {
+  getAttribute: (n) => (n === "data-project-hide" ? "7" : null),
+  closest: (sel) => (sel === "[data-project-card]" ? card : null),
+};
+const restoreButton = {
+  getAttribute: (n) => (n === "data-project-restore" ? "7" : null),
+};
+const details = { attrs: { hidden: "" },
+                  setAttribute(n, v) { this.attrs[n] = v; },
+                  removeAttribute(n) { delete this.attrs[n]; } };
+const count = { textContent: "0" };
+const list = { appended: 0, append() { this.appended += 1; } };
+const cardStatus = { textContent: "" };
+const hiddenStatus = { textContent: "" };
+const row = { removed: false, remove() { this.removed = true; } };
+
+const nodes = {
+  "[data-hidden-projects]": details,
+  "[data-hidden-count]": count,
+  "[data-hidden-list]": list,
+  '[data-project-status="7"]': cardStatus,
+  "[data-hidden-status]": hiddenStatus,
+  '[data-hidden-project="7"]': row,
+};
+
+globalThis.document = {
+  addEventListener(type, fn) { if (type === "click") clickHandler = fn; },
+  querySelector: (sel) => nodes[sel] ?? null,
+  createElement: () => ({ setAttribute() {}, append() {},
+                          textContent: "", className: "", href: "", type: "" }),
+};
+
+let sent = null;
+globalThis.fetch = async (url, init) => {
+  sent = { url, method: init.method, body: JSON.parse(init.body) };
+  return { ok: OK, status: OK ? 200 : 404 };
+};
+
+const fs = require("fs");
+eval(fs.readFileSync(process.argv[2], "utf8"));
+
+const errors = [];
+console.error = (...a) => errors.push(String(a[0]));
+
+clickHandler({ target: { closest: (sel) => {
+  if (sel === "[data-project-hide]") return TARGET === "hide" ? hideButton : null;
+  if (sel === "[data-project-restore]") return TARGET === "restore" ? restoreButton : null;
+  return null;
+} } }).then(() => {
+  console.log(JSON.stringify({
+    sent, errors,
+    cardRemoved: card.removed,
+    count: count.textContent,
+    listHidden: Object.prototype.hasOwnProperty.call(details.attrs, "hidden"),
+    appended: list.appended,
+    cardStatus: cardStatus.textContent,
+    hiddenStatus: hiddenStatus.textContent,
+    rowRemoved: row.removed,
+  }));
+});
+"""
+
+
+def _run_projects(tmp_path, target: str, ok: bool) -> dict:
+    harness = tmp_path / "projects_harness.js"
+    harness.write_text(
+        PROJECTS_HARNESS.replace("TARGET", json.dumps(target)).replace(
+            "OK", "true" if ok else "false"
+        )
+    )
+    proc = subprocess.run(
+        [_node(), str(harness), str(PROJECTS_JS)], capture_output=True, text=True
+    )
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout)
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_hide_patches_the_status_and_moves_the_card_into_the_hidden_list(tmp_path):
+    got = _run_projects(tmp_path, "hide", ok=True)
+    assert got["sent"]["method"] == "PATCH"
+    assert got["sent"]["url"] == "/api/projects/7"
+    assert got["sent"]["body"] == {"status": "hidden"}
+    assert got["cardRemoved"] is True
+    # The list has to become reachable in the same gesture, or hiding the first
+    # project strands it until a reload.
+    assert got["appended"] == 1
+    assert got["count"] == "1"
+    assert got["listHidden"] is False, "the hidden list stayed collapsed away"
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_a_refused_hide_leaves_the_card_on_screen_and_says_so(tmp_path):
+    """Removing it optimistically would make a 404 indistinguishable from a
+    hide that worked, and the project would vanish from a dashboard that had
+    not hidden it."""
+    got = _run_projects(tmp_path, "hide", ok=False)
+    assert got["cardRemoved"] is False
+    assert got["appended"] == 0
+    assert got["count"] == "0"
+    assert "⚠" in got["cardStatus"]
+    assert any("hiding" in e for e in got["errors"])
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_restore_patches_active_and_drops_the_row(tmp_path):
+    got = _run_projects(tmp_path, "restore", ok=True)
+    assert got["sent"]["body"] == {"status": "active"}
+    assert got["rowRemoved"] is True
+    assert got["count"] == "0"
+    # The card cannot be rebuilt client-side without duplicating the template,
+    # so the reload is asked for in words rather than performed.
+    assert "reload" in got["hiddenStatus"]
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_a_refused_restore_leaves_the_row_in_the_list(tmp_path):
+    got = _run_projects(tmp_path, "restore", ok=False)
+    assert got["rowRemoved"] is False
+    assert "⚠" in got["hiddenStatus"]

@@ -217,6 +217,45 @@ def test_aliases_from_config_are_persisted_to_the_alias_table(aliased_env):
     assert store.alias_map() == {OLD: NEW}
 
 
+def test_restoring_an_archived_project_survives_the_next_index(aliased_env):
+    """Config seeds; the database overrides.
+
+    `config.toml` still lists this path, so a run that re-asserted the config
+    would silently undo the restore at the next index — config overriding the
+    user rather than seeding them, and no way to tell from the panel why the
+    project kept disappearing.
+    """
+    cfg, store, projects = aliased_env
+    write(projects, "g.jsonl", transcript_lines(cwd=GONE), dirname=GONE_DIR)
+    reindex(store, cfg)
+    row = store.project_by_path(GONE)
+    assert row["status"] == "archived"
+
+    store.set_project_status(row["id"], "active")
+    reindex(store, cfg)
+
+    assert store.project_by_path(GONE)["status"] == "active"
+    assert [p["path"] for p in store.projects()] == [GONE]
+
+
+def test_a_newly_configured_archive_path_is_still_seeded_on_a_later_run(aliased_env):
+    """Seed-on-first-sight, not seed-once-ever.
+
+    A path added to `config.toml` today has no project row yet, so the run that
+    first indexes it must still archive it. Restricting the rule to rows this
+    run created is what keeps both properties true at the same time.
+    """
+    cfg, store, projects = aliased_env
+    write(projects, "n.jsonl", transcript_lines(cwd=NEW))
+    reindex(store, cfg)
+    assert store.project_by_path(GONE) is None
+
+    write(projects, "g.jsonl", transcript_lines(sid=SID_B, cwd=GONE),
+          dirname=GONE_DIR)
+    reindex(store, cfg)
+    assert store.project_by_path(GONE)["status"] == "archived"
+
+
 # --- Phase 3: the launcher ---------------------------------------------------
 #
 # Correlating a launch back to its transcript, which the two launch modes do

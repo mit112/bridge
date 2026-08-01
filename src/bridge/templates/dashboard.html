@@ -11,7 +11,30 @@
   <p class="empty">No projects indexed yet. Run <code>uv run python -m bridge index</code>.</p>
 {% else %}
   <ul class="cards">
-    {% for card in cards %}<li>{% include "_card.html" %}</li>{% endfor %}
+    {% for card in cards %}<li data-project-card="{{ card.project_id }}">{% include "_card.html" %}</li>{% endfor %}
   </ul>
 {% endif %}
+
+{# Rendered even when empty, and hidden with the `hidden` attribute rather than
+   omitted, so that hiding the FIRST project has somewhere to put it. Omitting
+   the block until a reload produced one would leave that project unreachable in
+   the meantime, which is the one-way door this list exists to prevent. #}
+<details class="hidden-projects" data-hidden-projects {% if not hidden %}hidden{% endif %}>
+  <summary><span data-hidden-count>{{ hidden | length }}</span> hidden</summary>
+  <ul data-hidden-list>
+    {% for p in hidden %}
+      <li data-hidden-project="{{ p.id }}">
+        <a href="/project/{{ p.id }}">{{ p.name }}</a>
+        {# The word, not just absence from the list: `archived` was seeded by
+           config.toml and `hidden` was a decision made here, and which one it
+           was is the only thing that explains why a project vanished. #}
+        <span class="card__note">{{ p.status }}</span>
+        <button type="button" class="btn" data-project-restore="{{ p.id }}"
+                aria-label="Restore {{ p.name }} to the dashboard">Restore</button>
+      </li>
+    {% endfor %}
+  </ul>
+  <span class="card__note" role="status" aria-live="polite"
+        data-hidden-status></span>
+</details>
 {% endblock %}

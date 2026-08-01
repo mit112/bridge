@@ -1,0 +1,154 @@
+[
+  {
+    "name": "answer 200 for an unknown project, so a failed hide is indistinguishable from a real one",
+    "file": "src/bridge/api.py",
+    "old": "        if store.get_project(project_id) is None:\n            raise HTTPException(status_code=404, detail=\"unknown project\")\n        store.set_project_status(project_id, body.status)",
+    "new": "        store.set_project_status(project_id, body.status)",
+    "tests": ["tests/test_api.py::test_patching_an_unknown_project_is_404_not_a_silent_success"],
+    "expect_count": 1
+  },
+  {
+    "name": "accept the patch but never write the status, so the card comes back on reload",
+    "file": "src/bridge/api.py",
+    "old": "        store.set_project_status(project_id, body.status)",
+    "new": "        pass",
+    "tests": ["tests/test_api.py::test_hiding_a_project_removes_it_from_the_dashboard"],
+    "expect_count": 1
+  },
+  {
+    "name": "widen the status vocabulary to any string, so a typo hides a project forever",
+    "file": "src/bridge/api.py",
+    "old": "ProjectStatus = Literal[\"active\", \"hidden\", \"archived\"]",
+    "new": "ProjectStatus = str",
+    "tests": ["tests/test_api.py::test_an_unknown_status_is_refused"],
+    "expect_count": 1
+  },
+  {
+    "name": "make status optional, so PATCH {} is a 200 that changes nothing",
+    "file": "src/bridge/api.py",
+    "old": "    status: ProjectStatus\n\n\ndef create_app(",
+    "new": "    status: ProjectStatus | None = None\n\n\ndef create_app(",
+    "tests": ["tests/test_api.py::test_a_project_patch_with_no_status_is_422_not_a_silent_no_op"],
+    "expect_count": 1
+  },
+  {
+    "name": "never list the hidden projects, making hide a one-way door",
+    "file": "src/bridge/api.py",
+    "old": "        hidden = [\n            r for r in store.projects(include_hidden=True) if r[\"status\"] != \"active\"\n        ]",
+    "new": "        hidden = []",
+    "tests": ["tests/test_api.py::test_a_hidden_project_is_still_listed_so_it_can_be_restored"],
+    "expect_count": 1
+  },
+  {
+    "name": "list every project as hidden, including the ones on screen",
+    "file": "src/bridge/api.py",
+    "old": "            r for r in store.projects(include_hidden=True) if r[\"status\"] != \"active\"",
+    "new": "            r for r in store.projects(include_hidden=True)",
+    "tests": ["tests/test_api.py::test_the_hidden_list_is_rendered_even_when_empty"],
+    "expect_count": 1
+  },
+  {
+    "name": "re-assert config.toml on every index, silently undoing a restore",
+    "file": "src/bridge/indexer.py",
+    "old": "    for archived in unseen_archived:",
+    "new": "    for archived in cfg.archived_paths:",
+    "tests": ["tests/test_indexer.py::test_restoring_an_archived_project_survives_the_next_index"],
+    "expect_count": 1
+  },
+  {
+    "name": "treat every configured path as unseen, which is the same silent undo by another route",
+    "file": "src/bridge/indexer.py",
+    "old": "    unseen_archived = [\n        p for p in cfg.archived_paths if store.project_by_path(p) is None\n    ]",
+    "new": "    unseen_archived = list(cfg.archived_paths)",
+    "tests": ["tests/test_indexer.py::test_restoring_an_archived_project_survives_the_next_index"],
+    "expect_count": 1
+  },
+  {
+    "name": "seed only paths that ALREADY have a row, so a configured archive is never applied",
+    "file": "src/bridge/indexer.py",
+    "old": "        p for p in cfg.archived_paths if store.project_by_path(p) is None",
+    "new": "        p for p in cfg.archived_paths if store.project_by_path(p) is not None",
+    "tests": ["tests/test_indexer.py::test_configured_archive_path_is_created_then_hidden"],
+    "expect_count": 1
+  },
+  {
+    "name": "drop the hide control from the card",
+    "file": "src/bridge/templates/_card.html",
+    "old": "      <button type=\"button\" class=\"btn\" data-project-hide=\"{{ card.project_id }}\"",
+    "new": "      <button type=\"button\" class=\"btn\" data-project-hid=\"{{ card.project_id }}\"",
+    "tests": ["tests/test_api.py::test_every_card_offers_a_hide_control"],
+    "expect_count": 1
+  },
+  {
+    "name": "leave the card row unidentifiable, so the client cannot find what to remove",
+    "file": "src/bridge/templates/dashboard.html",
+    "old": "<li data-project-card=\"{{ card.project_id }}\">",
+    "new": "<li>",
+    "tests": ["tests/test_api.py::test_every_card_offers_a_hide_control"],
+    "expect_count": 1
+  },
+  {
+    "name": "render the empty hidden list visibly instead of hiding it",
+    "file": "src/bridge/templates/dashboard.html",
+    "old": "<details class=\"hidden-projects\" data-hidden-projects {% if not hidden %}hidden{% endif %}>",
+    "new": "<details class=\"hidden-projects\" data-hidden-projects>",
+    "tests": ["tests/test_api.py::test_the_hidden_list_is_rendered_even_when_empty"],
+    "expect_count": 1
+  },
+  {
+    "name": "omit the hidden list entirely when empty, stranding the first project hidden",
+    "file": "src/bridge/templates/dashboard.html",
+    "old": "<details class=\"hidden-projects\" data-hidden-projects {% if not hidden %}hidden{% endif %}>",
+    "new": "<details class=\"hidden-projects\" data-hidden-projects {% if not hidden %}hidden{% endif %}>\n{% if hidden %}",
+    "tests": ["tests/test_api.py::test_the_hidden_list_is_rendered_even_when_empty"],
+    "expect_count": 1
+  },
+  {
+    "name": "remove the card before the PATCH answers, so a 404 looks like a successful hide",
+    "file": "src/bridge/static/projects.js",
+    "old": "      await setProjectStatus(id, \"hidden\");\n      const list = document.querySelector(\"[data-hidden-list]\");",
+    "new": "      if (card) card.remove();\n      await setProjectStatus(id, \"hidden\");\n      const list = document.querySelector(\"[data-hidden-list]\");",
+    "tests": ["tests/test_static_js.py::test_a_refused_hide_leaves_the_card_on_screen_and_says_so"],
+    "expect_count": 1
+  },
+  {
+    "name": "hide by writing `archived`, erasing the record of who decided",
+    "file": "src/bridge/static/projects.js",
+    "old": "      await setProjectStatus(id, \"hidden\");",
+    "new": "      await setProjectStatus(id, \"archived\");",
+    "tests": ["tests/test_static_js.py::test_hide_patches_the_status_and_moves_the_card_into_the_hidden_list"],
+    "expect_count": 1
+  },
+  {
+    "name": "restore by writing `hidden`, so Restore does nothing at all",
+    "file": "src/bridge/static/projects.js",
+    "old": "    await setProjectStatus(id, \"active\");",
+    "new": "    await setProjectStatus(id, \"hidden\");",
+    "tests": ["tests/test_static_js.py::test_restore_patches_active_and_drops_the_row"],
+    "expect_count": 1
+  },
+  {
+    "name": "leave the hidden list collapsed after a hide, stranding the project until a reload",
+    "file": "src/bridge/static/projects.js",
+    "old": "      bumpHiddenCount(1);",
+    "new": "      ;",
+    "tests": ["tests/test_static_js.py::test_hide_patches_the_status_and_moves_the_card_into_the_hidden_list"],
+    "expect_count": 1
+  },
+  {
+    "name": "drop the row into nothing, so the hidden project is never named on screen",
+    "file": "src/bridge/static/projects.js",
+    "old": "      if (list) list.append(hiddenRow(id, name));",
+    "new": "      ;",
+    "tests": ["tests/test_static_js.py::test_hide_patches_the_status_and_moves_the_card_into_the_hidden_list"],
+    "expect_count": 1
+  },
+  {
+    "name": "treat any response as success, so a refused restore reports as done",
+    "file": "src/bridge/static/projects.js",
+    "old": "  if (!response.ok) throw new Error(`HTTP ${response.status}`);",
+    "new": "  ;",
+    "tests": ["tests/test_static_js.py::test_a_refused_restore_leaves_the_row_in_the_list"],
+    "expect_count": 1
+  }
+]

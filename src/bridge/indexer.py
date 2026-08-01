@@ -42,6 +42,12 @@ def reindex(
         store.set_alias(alias, canonical)
     aliases = store.alias_map()
 
+    # Config seeds; the database overrides. Which archived paths are new has to
+    # be settled BEFORE indexing, because indexing is what creates their rows.
+    unseen_archived = [
+        p for p in cfg.archived_paths if store.project_by_path(p) is None
+    ]
+
     for i, path in enumerate(files):
         stats.files_seen += 1
         if progress:
@@ -51,11 +57,14 @@ def reindex(
         except OSError:
             continue  # file vanished or unreadable mid-run; never fatal
 
-    # After indexing: a path only worth archiving may not have had a project
-    # row until this run created it.
-    for archived in cfg.archived_paths:
+    # After indexing, because a path only worth archiving may not have had a
+    # project row until this run created it -- and only for the paths this run
+    # first saw. Re-asserting the config on every run would mean restoring one of
+    # them in the panel came silently undone at the next index: config would be
+    # overriding the user rather than seeding them.
+    for archived in unseen_archived:
         row = store.project_by_path(archived)
-        if row is not None and row["status"] != "archived":
+        if row is not None:
             store.set_project_status(row["id"], "archived")
 
     # Last, because it can only match sessions this run has already written.
