@@ -87,15 +87,15 @@
     "old": "                \"ON CONFLICT(project_id) DO UPDATE SET \"\n                \"payload_json=excluded.payload_json, probed_at=excluded.probed_at\",",
     "new": "                \"ON CONFLICT(project_id) DO NOTHING\",",
     "tests": [
-      "tests/test_cards.py::test_the_cache_round_trips_every_field_of_git_state"
+      "tests/test_cards.py::test_a_later_good_probe_replaces_the_cached_state"
     ],
     "expect_count": 1
   },
   {
     "name": "render the cached age with `ago` instead of `ago_epoch`, the filter that takes an ISO string",
     "file": "src/bridge/templates/_card.html",
-    "old": "          · as of {{ card.git.cached_at | ago_epoch }} ago",
-    "new": "          · as of {{ card.git.cached_at | ago }} ago",
+    "old": "          \u00b7 as of {{ card.git.cached_at | ago_epoch }} ago",
+    "new": "          \u00b7 as of {{ card.git.cached_at | ago }} ago",
     "tests": [
       "tests/test_api.py::test_a_stale_git_probe_renders_the_last_good_state_and_its_age"
     ],

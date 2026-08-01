@@ -309,6 +309,21 @@ def test_the_cache_round_trips_every_field_of_git_state(store, tmp_path):
     assert state == full
 
 
+def test_a_later_good_probe_replaces_the_cached_state(store, tmp_path):
+    """The cache is one row per project, so the write must be an upsert.
+
+    Without the ON CONFLICT update the first probe wins forever, and every
+    fallback afterwards shows a branch the project left days ago -- which looks
+    exactly like a working cache.
+    """
+    pid = add(store, "/p/upd", "upd", "s-upd", "2026-07-30T10:00:00.000Z")
+    store.put_git_cache(pid, GitState(status="ok", branch="old-branch"), 100)
+    store.put_git_cache(pid, GitState(status="ok", branch="new-branch"), 200)
+    state, probed_at = store.get_git_cache(pid)
+    assert state.branch == "new-branch"
+    assert probed_at == 200
+
+
 def test_get_git_cache_is_none_when_nothing_was_ever_written(store, tmp_path):
     pid = add(store, "/p/empty", "empty", "s-empty", "2026-07-30T10:00:00.000Z")
     assert store.get_git_cache(pid) is None
