@@ -29,10 +29,18 @@ Bridge never writes to a project repository. Its only writes are its own SQLite
 database under `~/.bridge/`. All git access is read-only. It binds to localhost
 only and has no authentication.
 
-Phases 1–3 (read-only dashboard, handoff capture, session launching) are merged.
-Phase 4 (live updates: an `agents` probe, cached git state, sparklines, diagnostics
-and SSE) is planned but not started. Every phase's plan is in
-`docs/superpowers/plans/`.
+Phases 1–4 are merged: a read-only dashboard, handoff capture, session launching,
+and live updates (a liveness sensor, cached git state, sparklines, diagnostics and
+SSE). Every phase's plan is in `docs/superpowers/plans/`.
+
+Phase 4 adds one thing that reaches outside `~/.bridge`, and only when you ask for
+it: three `type: "http"` hooks in `~/.claude/settings.json` (`Notification`,
+`SessionStart`, `SessionEnd`) that POST to `http://127.0.0.1:8787/api/hooks`. They
+are what make a `needs_input` card possible — no JSONL entry records a permission
+prompt, so nothing else can see that a session is waiting on you. Each carries an
+explicit `timeout: 2`, because the HTTP hook path awaits the response and the
+default is ten minutes. Bridge not running costs nothing: the connection is
+refused immediately.
 
 ## The handoff loop
 

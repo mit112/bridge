@@ -1,5 +1,14 @@
 # Bridge Phase 4 — Amendments from competitive research
 
+> **STATUS 2026-08-01: Phase 4 is complete.** All nine tasks shipped on branch
+> `phase4-live`; 485 tests, 108 Phase 4 mutations, all caught. Task 0 merged to
+> `main` and the data rebuild has been run (measured 2.733× inflation removed
+> across 7,706 sessions, zero sessions increased).
+>
+> **Building it corrected this document three times.** See
+> "Measured while building" at the foot of this file before trusting the
+> `--permission-mode` list or the sensor cost figure above.
+
 **Amends:** `2026-07-31-bridge-phase4-live.md`. That plan is otherwise intact; this document
 changes named tasks and adds two. Where they disagree, this document wins, and says why.
 
@@ -49,7 +58,13 @@ survived *precisely for running sessions*, the ones Phase 4 puts on a card.
 
 Shipped: 7 tests, 6 mutations, all caught. `assistant_msgs` deliberately still counts entries.
 
-> **Operational step, not yet run.** The fix corrects new scans only; existing rows keep their
+> **Operational step — RUN 2026-08-01.** Merged to `main` at `474baf5`, then
+> `DELETE FROM scan_state` + `bridge index` (7,616 files, 0 parse errors, 10 s).
+> Measured across the 7,706 sessions present before and after: **111,889,062 →
+> 40,940,856 tokens, an inflation factor of 2.733×, and zero sessions went up.**
+> That lines up with the 2.99× predicted from the 60-transcript sample.
+>
+> The original note, for the record: The fix corrects new scans only; existing rows keep their
 > inflated totals until the files are re-read. After merge:
 > `sqlite3 ~/.bridge/bridge.db 'DELETE FROM scan_state;' && bridge index`
 > `upsert_session` overwrites totals with `excluded.*`, so this recomputes cleanly. It re-reads
@@ -177,7 +192,19 @@ separate bugs from conflating terminal identity with UI visibility, with auth-to
 with browser connection state. Gating poll *cadence* on connected SSE clients is fine; deriving
 *status* from it is not.
 
-## Task 9 — Hooks for `needs_input` **[DECIDED 2026-08-01: global, minimal set]**
+## Task 9 — Hooks for `needs_input` **[INSTALLED 2026-08-01]**
+
+> Shipped exactly as decided. `POST /api/hooks` built and tested first (28
+> tests, 12 mutations), then `~/.claude/settings.json` written additively —
+> the three new events, each `type: "http"` with `timeout: 2`, plus
+> `allowedHttpHookUrls` pinned to `http://127.0.0.1:8787/api/hooks`. The four
+> pre-existing hook events were verified byte-identical afterwards, and a
+> backup sits at `~/.claude/settings.json.bridge-backup`.
+>
+> Verified end to end against a real session: posting a `permission_prompt`
+> put `needs_input` on the bridge card and on the SSE wire; `agent_completed`
+> cleared it. The running `bridge serve` was restarted, because the instance
+> that was up predated the route and answered the new hook URL with a 404.
 
 **Mit's decision, taken with the measured risk below in hand. Do not relitigate it.** Install into
 `~/.claude/settings.json`: **`Notification`, `SessionStart`, `SessionEnd` only** — all non-blocking
@@ -267,3 +294,58 @@ alternatives are all transcript continuity (fork, resume, copy the session dir).
 guarded prompt-file → stdin path — Conductor passes the prompt as the final positional argv and
 inserts `--` only when `--mcp-config` is present, so a prompt beginning with `-` can be misparsed.
 Both differentiators survived contact with the actual code.
+
+---
+
+## Measured while building (2026-08-01)
+
+This document corrected the plan; implementing it corrected this document. Each
+row below was measured against the installed 2.1.220 binary, and the first
+would have failed every launch that used the control it describes.
+
+| This document says | Measured reality | Consequence |
+|---|---|---|
+| Offer the enum `default` / `plan` / `acceptEdits` / `bypassPermissions` | 2.1.220 accepts exactly **`acceptEdits`, `auto`, `bypassPermissions`, `manual`, `dontAsk`, `plan`**, and rejects `default` with *"Allowed choices are…"* | `default` belongs to **settings.json's `permissions.defaultMode`** (`"default" \| "plan" \| "acceptEdits" \| "dontAsk"`, extracted from the binary) — a different, smaller set. The two are easy to conflate and the flag fails outright. Task 2 offers the six real modes plus a no-flag entry that emits nothing |
+| The CLI documents `--dangerously-skip-permissions` as *"Alias for `--permission-mode bypassPermissions`"* | Its help text reads only *"Bypass all permission checks."* | Cosmetic. The alias behaviour is right; the citation was not |
+| Registry read is 0.1 ms, ~3000× cheaper than the subprocess | 0.1 ms is the *file read*. The PID-reuse guard needs `ps`, a subprocess — **5.5 ms** for a single session, and once **per session** | Fixed by batching every pid into one `ps -o pid=,lstart=`. Measured **2.3 ms** against **790 ms**: ~340×, not ~3000×, but flat in the number of sessions. The unbatched version would have handed most of the advantage back on every SSE tick |
+
+`procStart` UTC vs `ps` local reproduced exactly as documented: the same process
+reads `Sat Aug  1 07:44:58 2026` in the registry and `Sat Aug  1 02:44:58 2026`
+from `ps`.
+
+### Four tests that passed against their own mutations
+
+Each was a test asserting nothing, found only because the mutation survived:
+
+1. **The SSE store-lock test** — TestClient consumes a streaming body by
+   *pulling*, so between frames the generator is parked on its yield and has
+   never reached the sleep. A concurrent request cannot overlap it. Replaced by
+   a probe inside a stubbed `sleep` that tries the lock **from another thread**:
+   `Store._lock` is an RLock, so a same-thread check proves nothing.
+2. **`model_options` aliasing** — passed an off-catalog suggestion, which takes
+   the prepend branch and builds a fresh list anyway, never reaching the
+   `return list(catalog)` it meant to pin.
+3. **The hysteresis flap test** — the gap was shorter than the hold, so the
+   stale timer had not expired either way.
+4. **The nonzero-exit test** — empty stdout fails JSON parsing regardless, so it
+   passed with no returncode check at all.
+
+One mutation was **equivalent code**: `0 <= bucket` in `token_series` was
+unreachable given the SQL window. The redundant guard was removed rather than
+the mutation weakened.
+
+### A falsification trap the plan did not have
+
+A mutation that removes a **loop bound** can make a test *hang* rather than
+fail, which takes the falsifier down with it — dropping the SSE time cap left
+an `interval=0` stream running forever. Any test exercising a termination
+condition needs an independent backstop (here, `max_ticks`) so the mutation
+fails fast instead of hanging.
+
+### Known debt, deliberately not fixed here
+
+Seven mutation anchors are **zero-match on `main`** and therefore silently test
+nothing: one in `task1-store-and-spool`, four in `task2-api`, one in
+`task3-cli`, one in `task5-card-ui`. They pre-date this branch. The two that
+*this* branch invalidated (`phase3-task6`, `task5-card-ui`'s sort-key mutation)
+were re-anchored in the same commit as the change that broke them.
