@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Diagnostics</h1>
+
+{# Status is never colour alone: each row says what it is in words. #}
+<p class="{{ 'risk' if alert else 'muted' }}">
+  {% if alert %}⚠ Something needs attention{% else %}Nothing is wrong{% endif %}
+</p>
+
+<table class="diag">
+  <caption class="muted">What Bridge last observed. Every probe here is
+    best-effort, so "unavailable" means the probe failed, not that nothing is
+    running.</caption>
+  <tbody>
+    <tr>
+      <th scope="row">Parse errors (last index)</th>
+      <td>{{ diag.parse_errors }}</td>
+    </tr>
+    <tr>
+      <th scope="row">Spool depth</th>
+      {# Undrained files only. `spool/drained/` is history, not backlog. #}
+      <td>{{ diag.spool_depth }}</td>
+    </tr>
+    <tr>
+      <th scope="row">Queued handoffs</th>
+      <td>{{ diag.queued_handoffs }}</td>
+    </tr>
+    <tr>
+      <th scope="row">Liveness sensor</th>
+      <td>{{ diag.live }} · via {{ diag.live_source }}</td>
+    </tr>
+    <tr>
+      <th scope="row">Running sessions</th>
+      <td>{{ diag.running_sessions }}</td>
+    </tr>
+    <tr>
+      <th scope="row">claude version seen</th>
+      {# Recorded because when the schema next drifts this is the difference
+         between a diagnosis and a bisect. #}
+      <td>{{ diag.claude_version or "unknown" }}</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>Last index run</h2>
+{% if diag.last_index %}
+  <table class="diag">
+    <tbody>
+      <tr><th scope="row">Ran</th><td>{{ diag.last_index.ran_at | ago_epoch }} ago</td></tr>
+      <tr><th scope="row">Files seen</th><td>{{ diag.last_index.files_seen }}</td></tr>
+      <tr><th scope="row">Files scanned</th><td>{{ diag.last_index.files_scanned }}</td></tr>
+      <tr><th scope="row">Lines parsed</th><td>{{ diag.last_index.lines_parsed }}</td></tr>
+      <tr><th scope="row">Sessions upserted</th><td>{{ diag.last_index.sessions_upserted }}</td></tr>
+      <tr><th scope="row">Duration</th><td>{{ diag.last_index.duration_ms }} ms</td></tr>
+    </tbody>
+  </table>
+{% else %}
+  <p class="card__note">Nothing indexed yet.</p>
+{% endif %}
+
+<p><a href="/">Back to the panel</a></p>
+{% endblock %}

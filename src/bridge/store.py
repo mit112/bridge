@@ -112,6 +112,18 @@ SCHEMA = [
     "ON launches(project_id, launched_at)",
     "CREATE INDEX IF NOT EXISTS idx_launches_session ON launches(session_id)",
     """
+    CREATE TABLE IF NOT EXISTS index_runs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ran_at INTEGER NOT NULL,
+        files_seen INTEGER,
+        files_scanned INTEGER,
+        lines_parsed INTEGER,
+        parse_errors INTEGER,
+        sessions_upserted INTEGER,
+        duration_ms INTEGER
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS git_cache (
         project_id INTEGER PRIMARY KEY REFERENCES projects(id),
         payload_json TEXT NOT NULL,
@@ -402,6 +414,15 @@ class Store:
                 "SELECT COUNT(*) AS n FROM handoffs"
             ).fetchone()["n"]
 
+    def queued_handoff_count(self) -> int:
+        """Only the ones still waiting. `handoff_count` counts history too, and
+        diagnostics reporting every handoff ever written as a backlog would be
+        the same mistake as counting drained spool files as depth."""
+        with self._lock:
+            return self.conn.execute(
+                "SELECT COUNT(*) AS n FROM handoffs WHERE status='queued'"
+            ).fetchone()["n"]
+
     # --- launches: what Bridge spawned. The row is written before the spawn, so
     # --- a failed launch is still a fact the panel can show.
 
@@ -470,6 +491,31 @@ class Store:
                 "parsed_offset=excluded.parsed_offset, session_id=excluded.session_id",
                 (path, size, mtime, offset, session_id),
             )
+
+    # --- index_runs ---------------------------------------------------------
+    #
+    # `record_index_run` takes the stats dict the indexer already returns, so
+    # the indexer's return shape stays the contract and nothing new is invented
+    # for diagnostics to read.
+
+    _RUN_FIELDS = ("files_seen", "files_scanned", "lines_parsed",
+                   "parse_errors", "sessions_upserted")
+
+    def record_index_run(self, stats: dict, ran_at: int, duration_ms: int) -> None:
+        with self._lock:
+            self.conn.execute(
+                "INSERT INTO index_runs (ran_at, files_seen, files_scanned, "
+                "lines_parsed, parse_errors, sessions_upserted, duration_ms) "
+                "VALUES (?,?,?,?,?,?,?)",
+                (ran_at, *(int(stats.get(f) or 0) for f in self._RUN_FIELDS),
+                 duration_ms),
+            )
+
+    def latest_index_run(self):
+        with self._lock:
+            return self.conn.execute(
+                "SELECT * FROM index_runs ORDER BY ran_at DESC, id DESC LIMIT 1"
+            ).fetchone()
 
     # --- git_cache ----------------------------------------------------------
     #

@@ -990,3 +990,130 @@ def test_a_stale_git_probe_renders_the_last_good_state_and_its_age(tmp_path):
     finally:
         cards_mod.gitprobe.probe = orig
         store.close()
+
+
+# --- Phase 4 Task 7: diagnostics ---------------------------------------------
+
+
+def test_diagnostics_survives_never_having_indexed(client):
+    """A fresh install has no runs; the route must answer, not 500."""
+    c, _, _ = client
+    r = c.get("/api/diagnostics")
+    assert r.status_code == 200
+    assert r.json()["last_index"] is None
+    assert r.json()["parse_errors"] == 0
+
+
+def test_an_index_run_is_recorded_so_diagnostics_has_something_to_read(client):
+    c, _, _ = client
+    c.post("/api/refresh")
+    body = c.get("/api/diagnostics").json()
+    assert body["last_index"] is not None
+    assert body["last_index"]["duration_ms"] >= 0
+
+
+def test_diagnostics_reports_parse_errors_from_the_last_run(client):
+    c, store, _ = client
+    store.record_index_run({"parse_errors": 3, "files_seen": 9},
+                           ran_at=100, duration_ms=5)
+    assert c.get("/api/diagnostics").json()["parse_errors"] == 3
+
+
+def test_diagnostics_reads_the_LATEST_run_not_the_first(client):
+    c, store, _ = client
+    store.record_index_run({"parse_errors": 7}, ran_at=100, duration_ms=1)
+    store.record_index_run({"parse_errors": 0}, ran_at=200, duration_ms=1)
+    assert c.get("/api/diagnostics").json()["parse_errors"] == 0
+
+
+def test_diagnostics_counts_undrained_spool_files(tmp_path):
+    cfg = load({"db_path": tmp_path / "d.db", "spool_dir": tmp_path / "spool"})
+    store = Store(cfg.db_path)
+    c = TestClient(create_app(store, cfg))
+    # The live outbox IS `spool_dir`; `drained/` and `bad/` sit under it.
+    cfg.spool_dir.mkdir(parents=True, exist_ok=True)
+    (cfg.spool_dir / "x.json").write_text("{}")
+    assert c.get("/api/diagnostics").json()["spool_depth"] == 1
+    store.close()
+
+
+def test_drained_spool_files_are_not_counted_as_depth(tmp_path):
+    """`spool/drained/` is history, not backlog. Counting it makes the depth
+    grow forever and permanently claim a backlog that was drained."""
+    cfg = load({"db_path": tmp_path / "d2.db", "spool_dir": tmp_path / "spool"})
+    store = Store(cfg.db_path)
+    c = TestClient(create_app(store, cfg))
+    (cfg.spool_dir / "drained").mkdir(parents=True, exist_ok=True)
+    (cfg.spool_dir / "drained" / "x.json").write_text("{}")
+    assert c.get("/api/diagnostics").json()["spool_depth"] == 0
+    store.close()
+
+
+def test_diagnostics_records_which_sensor_answered_and_what_version(client):
+    """When the schema next drifts this is the difference between a diagnosis
+    and a bisect."""
+    body = client[0].get("/api/diagnostics").json()
+    assert body["live_source"] in ("registry", "subprocess", "none")
+    assert "claude_version" in body
+
+
+def test_diagnostics_counts_only_still_queued_handoffs(client):
+    c, store, pid = client
+    store.create_handoff(Handoff(id="dq1", project_path=DEMO,
+                                 next_prompt="p", created_at=1), pid)
+    assert c.get("/api/diagnostics").json()["queued_handoffs"] == 1
+    store.set_handoff_status("dq1", "consumed")
+    assert c.get("/api/diagnostics").json()["queued_handoffs"] == 0
+
+
+def test_the_header_links_to_diagnostics_only_when_something_is_wrong(client):
+    """A permanent link would train the eye to ignore it."""
+    c, store, _ = client
+    store.record_index_run({"parse_errors": 0}, ran_at=1, duration_ms=1)
+    assert "data-diagnostics-alert" not in c.get("/").text
+    store.record_index_run({"parse_errors": 2}, ran_at=2, duration_ms=1)
+    assert "data-diagnostics-alert" in c.get("/").text
+
+
+def test_the_diagnostics_page_renders_and_says_so_in_words(client):
+    c, store, _ = client
+    store.record_index_run({"parse_errors": 2, "files_seen": 4},
+                           ran_at=2, duration_ms=7)
+    text = c.get("/diagnostics").text
+    assert "Diagnostics" in text
+    assert "Parse errors" in text
+    # Status is never colour alone.
+    assert "needs attention" in text
+
+
+def test_a_diagnostics_write_failure_cannot_fail_an_index(client, monkeypatch):
+    """Indexing is the one thing that must always work."""
+    c, store, _ = client
+
+    def boom(*a, **k):
+        raise RuntimeError("diagnostics exploded")
+
+    monkeypatch.setattr(store, "record_index_run", boom)
+    assert c.post("/api/refresh").status_code == 200
+
+
+def test_diagnostics_reports_terminal_agents_as_not_running(tmp_path, monkeypatch):
+    """A background agent that is `done` occupies nothing. Counting it would
+    inflate "running sessions" forever after the work finished."""
+    from bridge import agents
+    from bridge.models import AgentsState, LiveSession
+
+    def fake_probe(*a, **k):
+        return AgentsState(status="ok", source="registry", sessions=[
+            LiveSession(session_id="aaaaaaaa-0000-0000-0000-000000000001",
+                        cwd="/p", kind="background", status="done"),
+            LiveSession(session_id="aaaaaaaa-0000-0000-0000-000000000002",
+                        cwd="/p", kind="background", status="working"),
+        ])
+
+    monkeypatch.setattr(agents, "probe", fake_probe)
+    cfg = load({"db_path": tmp_path / "t.db", "spool_dir": tmp_path / "spool"})
+    store = Store(cfg.db_path)
+    c = TestClient(create_app(store, cfg))
+    assert c.get("/api/diagnostics").json()["running_sessions"] == 1
+    store.close()

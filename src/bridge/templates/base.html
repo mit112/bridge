@@ -9,6 +9,13 @@
 <body>
   <header class="topbar">
     <h1>Bridge</h1>
+    {# Shown only when something is actually wrong. A permanent link would
+       train the eye to ignore it, which is exactly the signal it exists to
+       carry. Undefined on pages that do not compute it, which Jinja treats as
+       falsy -- so those pages simply omit it rather than erroring. #}
+    {% if diag_alert %}
+      <a class="risk" href="/diagnostics" data-diagnostics-alert>⚠ Diagnostics</a>
+    {% endif %}
     {% block topbar %}{% endblock %}
   </header>
   <main>{% block content %}{% endblock %}</main>

@@ -1,0 +1,102 @@
+[
+  {
+    "name": "index [0] of the runs instead of handling none, so a fresh install 500s",
+    "file": "src/bridge/api.py",
+    "old": "        last_index = dict(run) if run is not None else None",
+    "new": "        last_index = dict(run)",
+    "tests": [
+      "tests/test_api.py::test_diagnostics_survives_never_having_indexed"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "read the OLDEST index run, so a fixed problem is reported forever",
+    "file": "src/bridge/store.py",
+    "old": "                \"SELECT * FROM index_runs ORDER BY ran_at DESC, id DESC LIMIT 1\"",
+    "new": "                \"SELECT * FROM index_runs ORDER BY ran_at ASC, id ASC LIMIT 1\"",
+    "tests": [
+      "tests/test_api.py::test_diagnostics_reads_the_LATEST_run_not_the_first"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "count the spool recursively, so drained history is reported as backlog forever",
+    "file": "src/bridge/spool.py",
+    "old": "    return sorted(p for p in live.glob(\"*.json\") if p.is_file())",
+    "new": "    return sorted(p for p in live.rglob(\"*.json\") if p.is_file())",
+    "tests": [
+      "tests/test_api.py::test_drained_spool_files_are_not_counted_as_depth"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "always show the diagnostics affordance, so the one signal that something is wrong becomes furniture",
+    "file": "src/bridge/api.py",
+    "old": "        return bool(diag[\"parse_errors\"] or diag[\"spool_depth\"]\n                    or diag[\"live\"] == \"unavailable\")",
+    "new": "        return True",
+    "tests": [
+      "tests/test_api.py::test_the_header_links_to_diagnostics_only_when_something_is_wrong"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "never show the diagnostics affordance, so parse errors are silent",
+    "file": "src/bridge/api.py",
+    "old": "        return bool(diag[\"parse_errors\"] or diag[\"spool_depth\"]\n                    or diag[\"live\"] == \"unavailable\")",
+    "new": "        return False",
+    "tests": [
+      "tests/test_api.py::test_the_header_links_to_diagnostics_only_when_something_is_wrong"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "let a diagnostics write failure fail the whole index -- the one thing that must always work",
+    "file": "src/bridge/indexer.py",
+    "old": "    except Exception:  # noqa: BLE001\n        pass\n\n    return stats",
+    "new": "    except Exception:  # noqa: BLE001\n        raise\n\n    return stats",
+    "tests": [
+      "tests/test_api.py::test_a_diagnostics_write_failure_cannot_fail_an_index"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "stop recording index runs at all, so diagnostics has nothing to read",
+    "file": "src/bridge/indexer.py",
+    "old": "        store.record_index_run(\n            dataclasses.asdict(stats),\n            ran_at=now_epoch(),\n            duration_ms=int((time.monotonic() - started) * 1000),\n        )",
+    "new": "        pass",
+    "tests": [
+      "tests/test_api.py::test_an_index_run_is_recorded_so_diagnostics_has_something_to_read"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "count every handoff ever written as queued, reporting drained history as a backlog",
+    "file": "src/bridge/store.py",
+    "old": "                \"SELECT COUNT(*) AS n FROM handoffs WHERE status='queued'\"",
+    "new": "                \"SELECT COUNT(*) AS n FROM handoffs\"",
+    "tests": [
+      "tests/test_api.py::test_diagnostics_counts_only_still_queued_handoffs"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "drop the sensor provenance, losing the difference between a diagnosis and a bisect",
+    "file": "src/bridge/api.py",
+    "old": "            \"live_source\": live.source,\n            \"claude_version\": live.version,",
+    "new": "            \"live_source\": \"\",",
+    "tests": [
+      "tests/test_api.py::test_diagnostics_records_which_sensor_answered_and_what_version"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "count terminal background agents as running, so finished work inflates the count forever",
+    "file": "src/bridge/api.py",
+    "old": "                1 for s in live.sessions if not agents.is_terminal(s.status)",
+    "new": "                1 for s in live.sessions",
+    "tests": [
+      "tests/test_api.py::test_diagnostics_reports_terminal_agents_as_not_running"
+    ],
+    "expect_count": 1
+  }
+]

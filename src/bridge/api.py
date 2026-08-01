@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, field_validator, model_validator
 
-from bridge import launcher, spool
+from bridge import agents, launcher, spool
 from bridge.cards import LivenessDebouncer, build_cards, spark_points
 from bridge.config import Config
 from bridge.indexer import reindex
@@ -143,6 +143,50 @@ def create_app(
     # and the hysteresis would never fire.
     debouncer = LivenessDebouncer()
 
+    def _diagnostics() -> dict:
+        """Everything the diagnostics view shows, as plain data.
+
+        Shared by the JSON route and the HTML one so the two can never disagree
+        about what is wrong.
+        """
+        run = store.latest_index_run()
+        last_index = dict(run) if run is not None else None
+        # A fresh install has no runs at all; the route must answer, not 500.
+        parse_errors = int((last_index or {}).get("parse_errors") or 0)
+
+        live = agents.probe()
+        return {
+            "last_index": last_index,
+            "parse_errors": parse_errors,
+            "spool_depth": spool.pending_count(cfg.spool_dir),
+            "live": live.status,
+            "running_sessions": sum(
+                1 for s in live.sessions if not agents.is_terminal(s.status)
+            ),
+            # Recorded so a future schema drift is a diagnosis rather than a
+            # bisect: which sensor answered, and what version it reported.
+            "live_source": live.source,
+            "claude_version": live.version,
+            "queued_handoffs": store.queued_handoff_count(),
+        }
+
+    def _needs_attention(diag: dict) -> bool:
+        """A permanent "diagnostics" link would train the eye to ignore it."""
+        return bool(diag["parse_errors"] or diag["spool_depth"]
+                    or diag["live"] == "unavailable")
+
+    @app.get("/api/diagnostics")
+    def api_diagnostics():
+        return _diagnostics()
+
+    @app.get("/diagnostics", response_class=HTMLResponse)
+    def diagnostics_view(request: Request):
+        diag = _diagnostics()
+        return templates.TemplateResponse(
+            request, "diagnostics.html",
+            {"diag": diag, "alert": _needs_attention(diag)},
+        )
+
     @app.get("/", response_class=HTMLResponse)
     def dashboard(request: Request):
         cards = build_cards(store, cfg, debouncer=debouncer)
@@ -151,6 +195,7 @@ def create_app(
             "dashboard.html",
             {
                 "cards": cards,
+                "diag_alert": _needs_attention(_diagnostics()),
                 "totals": {
                     "today": sum(c.tokens_today for c in cards),
                     "last_5h": sum(c.tokens_5h for c in cards),
