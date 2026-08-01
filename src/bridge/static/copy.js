@@ -7,6 +7,44 @@
 // still reject — denied permission, or a document that is not focused. The
 // affordance must not dead-end there, so the fallback selects the text and says
 // which key finishes the job.
+
+// Shared with launch.js, which has to put the prompt on the clipboard when a
+// launch fails. Extracted rather than duplicated: one clipboard behaviour, one
+// fallback, one set of words.
+//
+// Returns the message to announce, so both callers report the same thing.
+window.bridgeCopy = async function bridgeCopy(text, source) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return "✓ Copied to clipboard";
+  } catch (error) {
+    if (source) bridgeSelectAll(source);
+    return "⚠ Selected — press ⌘C to copy";
+  }
+};
+
+// The prompt is a <textarea> now, and `textContent` on a textarea is the
+// server-rendered text, NOT what the user has typed. Reading `.value` is what
+// keeps Copy from handing over a stale prompt.
+window.bridgeText = function bridgeText(element) {
+  return "value" in element ? element.value : element.textContent;
+};
+
+function bridgeSelectAll(element) {
+  // A form control selects itself; ranges are for the non-form case.
+  if (typeof element.select === "function") {
+    element.focus();
+    element.select();
+    return;
+  }
+  const range = document.createRange();
+  range.selectNodeContents(element);
+  const selection = window.getSelection();
+  selection.removeAllRanges();
+  selection.addRange(range);
+  element.focus();
+}
+
 document.addEventListener("click", async (event) => {
   const button = event.target.closest("[data-copy-target]");
   if (!button) return;
@@ -16,20 +54,6 @@ document.addEventListener("click", async (event) => {
   const status = document.querySelector(`[data-copy-status="${id}"]`);
   if (!source) return;
 
-  const announce = (message) => {
-    if (status) status.textContent = message;
-  };
-
-  try {
-    await navigator.clipboard.writeText(source.textContent);
-    announce("✓ Copied to clipboard");
-  } catch (error) {
-    const range = document.createRange();
-    range.selectNodeContents(source);
-    const selection = window.getSelection();
-    selection.removeAllRanges();
-    selection.addRange(range);
-    source.focus();
-    announce("⚠ Selected — press ⌘C to copy");
-  }
+  const message = await window.bridgeCopy(window.bridgeText(source), source);
+  if (status) status.textContent = message;
 });

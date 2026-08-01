@@ -149,6 +149,9 @@ def create_app(
                 "project": row,
                 "sessions": store.sessions(project_id),
                 "handoffs": store.handoffs(project_id),
+                # Task 7 added the launch-history table to the template but
+                # nothing ever passed it, so the block was inert in the live app.
+                "launches": store.launches(project_id),
             },
         )
 

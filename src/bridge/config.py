@@ -5,7 +5,10 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 DEFAULT_MODELS = ["opus", "sonnet", "haiku"]
-DEFAULT_EFFORTS = ["low", "medium", "high"]
+# The full set `claude --effort` accepts. Phase 3 is the first phase to surface
+# the list in the UI, so the two values nothing read before are added here rather
+# than left implicit. The spec's `~/.bridge/config.toml` is still out of scope.
+DEFAULT_EFFORTS = ["low", "medium", "high", "xhigh", "max"]
 
 # Projects move, and a transcript records the cwd it was written under, so one
 # logical project can appear under several paths with its history split between

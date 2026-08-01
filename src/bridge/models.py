@@ -97,3 +97,9 @@ class Card:
     # The queued handoff, as a plain dict. A card carries at most one: the store
     # supersedes the rest, so "what next" is never ambiguous.
     handoff: dict | None = None
+    # The launch band's option lists, copied off `Config` by `build_cards`. They
+    # live on the card because the launch band renders per card and the template
+    # only ever sees the card, so this is what keeps the configured vocabulary
+    # out of the template as a literal.
+    launch_models: list[str] = field(default_factory=list)
+    launch_efforts: list[str] = field(default_factory=list)

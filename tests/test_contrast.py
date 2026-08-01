@@ -23,6 +23,13 @@ PAIRS = [
     # Non-text UI: the focus ring and the block's border need 3:1 (WCAG 1.4.11).
     ("--accent", "--card", 3.0, "focus ring against a card"),
     ("--queued-line", "--queued-bg", 3.0, "queued block border"),
+    # Phase 3: a form control's visible boundary. `--line` measures 1.34:1 light
+    # and 1.28:1 dark against --card, so the selects and the prompt field get
+    # their own token and it is computed here rather than eyeballed.
+    ("--field-line", "--card", 3.0, "form control border"),
+    # The prompt field's border is adjacent to two surfaces: its own --card fill
+    # and the queued block it sits in, so both sides are held to 3:1.
+    ("--field-line", "--queued-bg", 3.0, "prompt field border in a queued block"),
 ]
 
 

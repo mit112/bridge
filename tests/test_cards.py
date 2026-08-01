@@ -150,3 +150,22 @@ def test_a_queued_handoff_sorts_above_a_dirty_and_stale_project(tmp_path):
     )
     assert cards[0].handoff["summary"] == "a summary"
     assert cards[1].handoff is None
+
+
+# --- Phase 3: the launcher ---------------------------------------------------
+
+
+def test_a_card_carries_the_configured_launch_options(store, tmp_path):
+    """The launch band's selects render per card, so the card carries the lists.
+
+    `xhigh` and `max` are asserted explicitly: `claude --effort` accepts them and
+    Phase 3 is the first phase to surface the list, so a shortened list would
+    silently make two valid efforts unreachable from the panel.
+    """
+    add(store, "/p/opts", "opts", "s-opts", "2026-07-30T10:00:00.000Z")
+    cfg = load({"db_path": tmp_path / "c.db"})
+    card = build_cards(store, cfg, probe_fn=lambda p: GitState(status="ok"))[0]
+
+    assert card.launch_models == cfg.models
+    assert card.launch_efforts == cfg.efforts
+    assert card.launch_efforts == ["low", "medium", "high", "xhigh", "max"]

@@ -2,6 +2,11 @@
   color-scheme: light dark;
   --bg: #ffffff; --fg: #16191d; --muted: #5c636b;
   --line: #d8dce1; --card: #fbfcfd;
+  /* Form-control boundaries only. `--line` is a 1.34:1 hairline against --card,
+     which is fine for a table rule and fails WCAG 1.4.11's 3:1 for a control's
+     visible boundary. Measured 3.51:1 here. Kept as 6-digit lowercase hex
+     because that is the only form test_contrast.py's parser can see. */
+  --field-line: #7f888f;
   --risk-fg: #8a3a00; --risk-bg: #fff4e8; --accent: #0b5fb0;
   --queued-fg: #0a5236; --queued-bg: #eef8f2; --queued-line: #2f7d5a;
   --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -10,6 +15,9 @@
   :root {
     --bg: #14171a; --fg: #e8eaed; --muted: #a2abb4;
     --line: #2c3238; --card: #1b1f24;
+    /* Lightened rather than inverted, and desaturated for the dark surface.
+       Measured 3.34:1 against --card. */
+    --field-line: #68717a;
     --risk-fg: #ffcf9e; --risk-bg: #3a2508; --accent: #7fb6f0;
     /* Desaturated and lightened for the dark surface, not inverted. */
     --queued-fg: #a9e5c6; --queued-bg: #10281d; --queued-line: #4f9a74;
@@ -85,19 +93,32 @@ main { padding: 1.5rem; }
   color: var(--queued-fg);
 }
 .handoff__summary { margin: 0 0 .45rem; font-size: .9rem; }
+/* Now a <textarea>: the same object the <pre> was, still editable. The <pre>'s
+   scroll cap becomes the field's starting height, and the user can grow it. */
 .handoff__prompt {
   margin: 0;
-  max-height: 9.5rem;
-  overflow: auto;
+  display: block;
+  width: 100%;
+  min-height: 9.5rem;
+  resize: vertical;
   padding: .5rem;
+  color: var(--fg);
   font-family: var(--mono);
   font-size: .78rem;
   line-height: 1.45;
   white-space: pre-wrap;
   word-break: break-word;
   background: var(--card);
-  border: 1px solid var(--line);
+  /* A control's boundary, so 3:1 (WCAG 1.4.11), not the hairline --line. */
+  border: 1px solid var(--field-line);
   border-radius: 4px;
+}
+/* Labels stay visible before, during and after editing — never a placeholder. */
+.handoff__label {
+  display: block;
+  margin: 0 0 .2rem;
+  font-size: .74rem;
+  color: var(--queued-fg);
 }
 .handoff__actions {
   display: flex;
@@ -117,10 +138,52 @@ main { padding: 1.5rem; }
   cursor: pointer;
 }
 .btn:hover { border-color: var(--accent); }
+/* An in-flight launch: "acting, wait", distinct from hover and from default.
+   The label stays readable (--muted clears 4.5:1 on --card) rather than being
+   dimmed into illegibility, because the button is only ever briefly disabled. */
+.btn:disabled {
+  color: var(--muted);
+  border-color: var(--field-line);
+  cursor: default;
+}
+.btn:disabled:hover { border-color: var(--field-line); }
+/* Icon-only: min-height alone leaves the target narrow, so the width is held
+   explicitly to keep the 24x24 CSS px floor (WCAG 2.5.8) in both dimensions. */
+.btn--icon {
+  min-width: 1.75rem;
+  padding: .35rem .5rem;
+  line-height: 1;
+}
 .handoff__status { font-size: .8rem; color: var(--queued-fg); }
 
-.handoffs { width: 100%; border-collapse: collapse; margin-top: 1.5rem; }
-.handoffs th, .handoffs td {
+/* --- Phase 3: the launch band ---------------------------------------------- */
+
+/* Outside the handoff block, so on the card surface rather than --queued-bg. */
+.launch {
+  display: flex;
+  align-items: flex-end;
+  gap: .6rem;
+  flex-wrap: wrap;
+  margin: 0 0 .9rem;
+}
+.launch__field { display: flex; flex-direction: column; gap: .2rem; }
+.launch__label { font-size: .74rem; color: var(--muted); }
+.launch__select {
+  font: inherit;
+  font-size: .82rem;
+  min-height: 1.75rem;
+  padding: .25rem .4rem;
+  color: var(--fg);
+  background: var(--card);
+  border: 1px solid var(--field-line);
+  border-radius: 5px;
+}
+.launch__status { font-size: .8rem; color: var(--fg); }
+
+/* The launch history table shares the handoff table's shape: same page, same
+   density, and it only starts rendering now that the route passes `launches`. */
+.handoffs, .launches { width: 100%; border-collapse: collapse; margin-top: 1.5rem; }
+.handoffs th, .handoffs td, .launches th, .launches td {
   text-align: left;
   padding: .4rem .5rem;
   border-bottom: 1px solid var(--line);

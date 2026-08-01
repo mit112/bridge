@@ -1,4 +1,5 @@
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -7,7 +8,7 @@ from fastapi.testclient import TestClient
 from bridge import launcher, spool
 from bridge.api import create_app
 from bridge.config import load
-from bridge.models import Handoff, SessionRecord
+from bridge.models import Handoff, Launch, SessionRecord
 from bridge.registry import resolve_project
 from bridge.store import Store
 
@@ -720,3 +721,147 @@ def test_an_unknown_mode_is_422_and_never_reaches_the_launcher(launch_app):
     # And the default is terminal, so the CLI and the card can both omit it.
     c.post("/api/launch", json={"project_path": DEMO})
     assert fake.calls[0][0].mode == "terminal"
+
+
+# --- Phase 3: the launch band on the card ------------------------------------
+
+
+def test_the_editable_prompt_is_html_escaped_in_the_textarea(launch_app):
+    """A textarea escapes differently from a <pre>, so this is its own test.
+
+    An unescaped `</textarea>` closes the field early and everything after it
+    becomes live markup in the document — the same injection the <pre> test
+    covers, through a hole that test cannot see.
+    """
+    c, _, _, _ = launch_app
+    prompt = "before </textarea><script>alert('xss')</script> after"
+    c.post("/api/handoff", json=body("h1", prompt=prompt))
+
+    html = c.get("/").text
+
+    assert "</textarea><script>" not in html, "the prompt closed its own field"
+    assert "&lt;/textarea&gt;&lt;script&gt;" in html
+    assert html.count("</textarea>") == 1, "exactly one field was opened and closed"
+
+
+def test_both_launch_selects_are_labelled_and_preselect_the_suggestion(launch_app):
+    c, _, _, _ = launch_app
+    pid = c.post(
+        "/api/handoff",
+        json=body("h1", suggested_model="sonnet", suggested_effort="xhigh"),
+    ).json()["project_id"]
+
+    html = c.get("/").text
+    lid = f"launch-{pid}"
+
+    assert f'<label class="launch__label" for="{lid}-model">Model</label>' in html
+    assert f'<label class="launch__label" for="{lid}-effort">Effort</label>' in html
+    assert f'id="{lid}-model"' in html
+    assert f'id="{lid}-effort"' in html
+    assert '<option value="sonnet" selected>sonnet</option>' in html
+    assert '<option value="xhigh" selected>xhigh</option>' in html
+    assert html.count(" selected>") == 2, "one preselection per select, no more"
+
+
+def test_a_suggestion_the_config_does_not_list_is_still_preselected(launch_app):
+    """The suggestion comes from a real session's model string, which need not be
+    one of the configured short names. Dropping it would silently launch a
+    different model than the one being suggested."""
+    c, _, _, _ = launch_app
+    pid = c.post("/api/handoff", json=body("h1")).json()["project_id"]
+    assert "claude-opus-5" not in load({}).models
+
+    html = c.get("/").text
+
+    assert '<option value="claude-opus-5" selected>claude-opus-5</option>' in html
+    assert f'id="launch-{pid}-model"' in html
+
+
+def test_two_cards_produce_no_duplicate_element_id(launch_app):
+    """Ids are keyed off `project_id`; keying them off the handoff id would emit a
+    bare prefix on the card with nothing queued and collide across cards."""
+    c, store, _, _ = launch_app
+    c.post("/api/handoff", json=body("h1", path=DEMO))
+    store.upsert_project("/Users/mitsheth/dev/second", "second")
+
+    html = c.get("/").text
+
+    ids = re.findall(r'\sid="([^"]+)"', html)
+    assert len(ids) == len(set(ids)), f"duplicate ids: {sorted(ids)}"
+    assert len([i for i in ids if i.startswith("launch-")]) == 4, (
+        "two selects on each of the two cards"
+    )
+
+
+def test_a_card_with_no_queued_handoff_still_renders_a_launch_band(launch_app):
+    """Nothing queued is not the same as nothing to launch."""
+    c, store, _, _ = launch_app
+    pid = store.upsert_project("/Users/mitsheth/dev/quiet", "quiet")
+
+    html = c.get("/").text
+
+    assert f'data-launch="launch-{pid}"' in html
+    assert f'id="launch-{pid}-model"' in html
+    assert f'data-launch-status="launch-{pid}"' in html
+    # ...and no empty prompt block, no orphan copy affordance, no handoff id.
+    assert "Next step queued" not in html
+    assert "<textarea" not in html
+    assert "data-copy-target" not in html
+    assert "data-launch-handoff" not in html
+
+
+def test_every_new_control_is_labelled_and_none_leaves_the_tab_order(launch_app):
+    """Keyboard operability asserted structurally rather than by hand."""
+    c, _, _, _ = launch_app
+    c.post("/api/handoff", json=body("h1"))
+
+    html = c.get("/").text
+
+    assert 'tabindex="-1"' not in html
+    labelled = set(re.findall(r'<label[^>]*\sfor="([^"]+)"', html))
+    fields = re.findall(r"<(?:select|textarea)\b[^>]*>", html)
+    assert len(fields) == 3, "two selects and the prompt field"
+    for tag in fields:
+        ident = re.search(r'\sid="([^"]+)"', tag)
+        assert (ident and ident.group(1) in labelled) or "aria-label=" in tag, tag
+    # The ▶ has no text node of its own, so its accessible name is explicit.
+    assert re.search(
+        r'<button[^>]*data-launch-button[^>]*aria-label="Launch a session for [^"]+"',
+        html,
+    )
+    # The launch status is a live region with a key of its own, so it and the
+    # copy status cannot overwrite each other.
+    assert 'data-launch-status="launch-' in html
+    assert "data-copy-status=" in html
+
+
+def test_the_project_page_lists_launch_history_with_its_linked_session(launch_app):
+    """Task 7 added the table; the route never passed `launches`, so it was inert."""
+    c, store, _, _ = launch_app
+    pid = store.upsert_project(DEMO, "demo")
+    store.upsert_session(
+        SessionRecord(session_id=SESSION_ID, transcript_path="/t/launched.jsonl",
+                      title="Launched work", ended_at="2026-07-30T10:00:00.000Z"),
+        pid,
+    )
+    store.create_launch(
+        Launch(id="l-linked", project_id=pid, mode="terminal", model="opus",
+               effort="xhigh", prompt="go", session_id=SESSION_ID,
+               launched_at=2000, outcome="started")
+    )
+    store.create_launch(
+        Launch(id="l-orphan", project_id=pid, mode="background", model="sonnet",
+               effort="low", prompt="go too", launched_at=1000, outcome="started")
+    )
+
+    html = c.get(f"/project/{pid}").text
+
+    assert "Launches, most recent first" in html
+    assert "terminal" in html
+    assert "background" in html
+    assert "opus/xhigh" in html
+    assert "sonnet/low" in html
+    assert "started" in html
+    assert "Launched work" in html, "the linked session is shown as its own title"
+    # A launch whose session never appeared is not an error; it stays visible.
+    assert "no session yet" in html
