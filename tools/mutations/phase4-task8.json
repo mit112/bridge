@@ -71,12 +71,42 @@
     "expect_count": 1
   },
   {
-    "name": "put unattributed sessions into the wire payload, so a session in no registered project patches an unrelated card",
+    "name": "drop unattributed sessions from the wire again, losing every session with no project row",
     "file": "src/bridge/api.py",
-    "old": "            if path == agents.UNATTRIBUTED or not sessions:",
-    "new": "            if not sessions:",
+    "old": "            if path == agents.UNATTRIBUTED:",
+    "new": "            if True:",
     "tests": [
-      "tests/test_api.py::test_the_wire_payload_excludes_unattributed_sessions"
+      "tests/test_api.py::test_the_wire_payload_keys_unattributed_sessions_by_their_own_cwd"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "leak the grouping sentinel onto the wire as if it were a directory",
+    "file": "src/bridge/api.py",
+    "old": "                for s in sessions:\n                    if s.cwd in live:\n                        continue\n                    live[s.cwd] = {\"status\": s.status,\n                                   \"started_at\": s.started_at}\n                    unattributed.append(s.cwd)\n                continue",
+    "new": "                live[path] = {\"status\": sessions[0].status,\n                              \"started_at\": sessions[0].started_at}\n                unattributed.append(path)\n                continue",
+    "tests": [
+      "tests/test_api.py::test_the_wire_payload_keys_unattributed_sessions_by_their_own_cwd"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "report the oldest session in a directory rather than the newest",
+    "file": "src/bridge/api.py",
+    "old": "                    if s.cwd in live:\n                        continue",
+    "new": "                    if False:\n                        continue",
+    "tests": [
+      "tests/test_api.py::test_two_sessions_in_the_same_directory_report_the_newest"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "never surface the unattributed directories, so the page cannot render their bands",
+    "file": "src/bridge/api.py",
+    "old": "            \"unattributed\": unattributed,\n            \"unavailable\": state.status == \"unavailable\",",
+    "new": "            \"unattributed\": [],\n            \"unavailable\": state.status == \"unavailable\",",
+    "tests": [
+      "tests/test_api.py::test_a_session_outside_any_project_is_shown_with_its_directory"
     ],
     "expect_count": 1
   },

@@ -1215,10 +1215,23 @@ def test_a_delta_carries_a_tombstone_when_a_session_ends(tmp_path, monkeypatch):
     assert frames[1][1]["removed"] == ["/p/gone"]
 
 
-def test_the_wire_payload_excludes_unattributed_sessions(tmp_path, monkeypatch):
-    """A session in no registered project has no card to patch. Putting it on
-    the wire keyed by its own cwd would make the client look for a band that
-    does not exist -- or, worse, find an unrelated one."""
+def test_the_wire_payload_keys_unattributed_sessions_by_their_own_cwd(
+    tmp_path, monkeypatch
+):
+    """Supersedes an earlier decision to exclude them, whose two reasons no
+    longer hold.
+
+    It excluded them because "a session in no registered project has no card to
+    patch" and keying by cwd would make the client hunt for a band that does not
+    exist, "or, worse, find an unrelated one". The dashboard now renders those
+    bands itself, so the first is false; and an unattributed cwd cannot equal
+    any card's `data-live-path`, because `by_project` only puts a session in the
+    bucket after it has failed both an exact and a prefix match against every
+    registered path — so the second cannot happen either.
+
+    What the exclusion did cost was real: the topbar counts these sessions as
+    running, so the count and the cards disagreed with nothing to explain it.
+    """
     from bridge import agents
     from bridge.models import AgentsState, LiveSession
 
@@ -1238,8 +1251,11 @@ def test_the_wire_payload_excludes_unattributed_sessions(tmp_path, monkeypatch):
         payload = _frames("".join(r.iter_text()))[0][1]
     store.close()
 
-    assert list(payload["live"]) == ["/p/real"]
+    assert sorted(payload["live"]) == ["/p/real", "/somewhere/unregistered"]
+    # The sentinel itself must never reach the wire: it is a grouping key, not
+    # a path, and a client would try to patch a band named "\x00unattributed".
     assert agents.UNATTRIBUTED not in payload["live"]
+    assert payload["unattributed"] == ["/somewhere/unregistered"]
 
 
 def test_the_stream_never_holds_the_store_lock_while_it_sleeps(client, monkeypatch):
@@ -1535,3 +1551,69 @@ def test_the_topbar_reports_the_last_index_time_once_there_is_one(client):
     c, store, _ = client
     store.record_index_run({"files_seen": 1}, ran_at=now_epoch(), duration_ms=1)
     assert re.search(r"<dt>indexed</dt><dd>0m</dd>", c.get("/").text)
+
+
+# --- Live sessions with no project row ----------------------------------------
+
+
+def _live_elsewhere(monkeypatch, *cwds):
+    """A probe reporting busy sessions in directories with no project row."""
+    from bridge import agents
+    from bridge.models import AgentsState, LiveSession
+
+    monkeypatch.setattr(agents, "probe", lambda *a, **k: AgentsState(
+        status="ok",
+        sessions=[LiveSession(session_id=f"u{i}", cwd=c, kind="interactive",
+                              status="busy", started_at=1_785_000_000 + i)
+                  for i, c in enumerate(cwds)],
+    ))
+
+
+def test_a_session_outside_any_project_is_not_dropped_from_the_stream(
+    client, monkeypatch
+):
+    """`agents.py:300` says these must not be lost, and both consumers lost
+    them: the stream skipped the bucket and `build_cards` only ever looks up
+    exact project paths."""
+    c, _, _ = client
+    _live_elsewhere(monkeypatch, "/Users/mitsheth/scratch")
+
+    frames = c.get("/events?max_ticks=1&interval=0").text
+    assert "/Users/mitsheth/scratch" in frames, (
+        "the session vanished from the live stream entirely"
+    )
+
+
+def test_a_session_outside_any_project_is_shown_with_its_directory(
+    client, monkeypatch
+):
+    """The topbar's running count already includes it, so without this the
+    count and the cards disagree and nothing says where the difference went."""
+    c, _, _ = client
+    _live_elsewhere(monkeypatch, "/Users/mitsheth/scratch")
+
+    body = c.get("/").text
+    assert "Running outside any project" in body
+    assert "/Users/mitsheth/scratch" in body
+    # The same hook the cards use, so live.js patches it knowing nothing about
+    # whether it is a project.
+    assert 'data-live-path="/Users/mitsheth/scratch"' in body
+    # And the count it has to agree with.
+    assert re.search(r"<dt>running</dt><dd>1</dd>", body)
+
+
+def test_a_session_inside_a_project_stays_on_its_card(client, monkeypatch):
+    """The bucket must not swallow attributed sessions."""
+    c, _, _ = client
+    _live_elsewhere(monkeypatch, DEMO)
+
+    body = c.get("/").text
+    assert "Running outside any project" not in body
+    assert f'data-live-path="{DEMO}"' in body
+
+
+def test_two_sessions_in_the_same_directory_report_the_newest(client, monkeypatch):
+    c, _, _ = client
+    _live_elsewhere(monkeypatch, "/Users/mitsheth/scratch", "/Users/mitsheth/scratch")
+    body = c.get("/").text
+    assert body.count('data-live-path="/Users/mitsheth/scratch"') == 1

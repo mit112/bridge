@@ -210,6 +210,19 @@ main { padding: 1.5rem; }
 }
 .handoffs .status--queued { color: var(--queued-fg); font-weight: 600; }
 
+/* --- Live sessions with no project ------------------------------------------ */
+
+.unattributed { margin: 1.5rem 0 0; font-size: .85rem; }
+.unattributed h2 {
+  font-size: .74rem; letter-spacing: .05em; text-transform: uppercase;
+  color: var(--muted); margin: 0 0 .5rem;
+}
+.unattributed ul { list-style: none; margin: 0; padding: 0; }
+.unattributed li {
+  display: flex; align-items: center; gap: .6rem; padding: .25rem 0;
+}
+.unattributed code { font-family: var(--mono); font-size: .8rem; }
+
 /* --- Hidden projects -------------------------------------------------------- */
 
 /* Sits in the card header beside the title, so `align-items: baseline` on

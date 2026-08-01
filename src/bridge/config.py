@@ -2,9 +2,15 @@
 
 `aliases` and `archived_paths` name directories on one particular machine, so
 they live in `~/.bridge/config.toml` and not in version-controlled source:
-adding an alias should not mean editing Python. Everything else in this module
-is a fact about the `claude` CLI rather than about the user, and stays a
-constant. Overrides are for tests.
+adding an alias should not mean editing Python. Overrides are for tests.
+
+The model catalog, the effort list and the permission modes stay constants here
+because they are facts about the `claude` CLI rather than about the user.
+
+Known divergence, recorded rather than silently kept: the design spec also puts
+`stale_hours` (spec line 366) and `models`/`efforts` (spec lines 375-378) in
+this file. Neither has moved. The reader below now makes both cheap, so this is
+a decision left open, not an obstacle.
 """
 
 import os
@@ -43,8 +49,8 @@ DEFAULT_MODELS = [
 ]
 # The full set `claude --effort` accepts. Phase 3 is the first phase to surface
 # the list in the UI, so the two values nothing read before are added here rather
-# than left implicit. A fact about the CLI, so it stays here rather than moving
-# to `config.toml`: nothing about it varies by machine.
+# than left implicit. Spec line 377 puts this list in `config.toml`; it has not
+# moved, and the module docstring records that as an open decision.
 DEFAULT_EFFORTS = ["low", "medium", "high", "xhigh", "max"]
 
 

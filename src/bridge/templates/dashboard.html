@@ -24,6 +24,29 @@
   </ul>
 {% endif %}
 
+{# Live sessions whose cwd matches no project row. The topbar's `running` count
+   already includes them, so without this the count and the cards disagree and
+   nothing on the page says where the difference went. `data-live-path` is the
+   same hook the cards use, keyed by cwd, so live.js patches these bands with no
+   knowledge that they are not projects. #}
+{% if unattributed %}
+  <section class="unattributed">
+    <h2>Running outside any project</h2>
+    <ul>
+      {% for s in unattributed %}
+        <li>
+          <span class="live live--{{ s.status }}">
+            <span class="live__dot" aria-hidden="true">●</span>
+            <span data-live-path="{{ s.cwd }}">{{ s.status }}</span>
+          </span>
+          <code>{{ s.cwd }}</code>
+          <span class="card__note">{{ s.started_at | ago_epoch }}</span>
+        </li>
+      {% endfor %}
+    </ul>
+  </section>
+{% endif %}
+
 {# Rendered even when empty, and hidden with the `hidden` attribute rather than
    omitted, so that hiding the FIRST project has somewhere to put it. Omitting
    the block until a reload produced one would leave that project unreachable in

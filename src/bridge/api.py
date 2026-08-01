@@ -230,8 +230,24 @@ def create_app(
             state, store.alias_map(), [row["path"] for row in rows]
         )
         live = {}
+        unattributed = []
         for path, sessions in grouped.items():
-            if path == agents.UNATTRIBUTED or not sessions:
+            if not sessions:
+                continue
+            if path == agents.UNATTRIBUTED:
+                # Keyed by their own cwd rather than skipped. `agents.py:300`
+                # says these must not be lost, and both consumers were losing
+                # them anyway: this loop dropped the bucket and `build_cards`
+                # only ever looks up exact project paths. The topbar's running
+                # count does include them, so dropping them here made the count
+                # and the cards disagree with nothing on the page to explain it.
+                # `by_project` sorted most-recent-first, so the first cwd wins.
+                for s in sessions:
+                    if s.cwd in live:
+                        continue
+                    live[s.cwd] = {"status": s.status,
+                                   "started_at": s.started_at}
+                    unattributed.append(s.cwd)
                 continue
             session = sessions[0]
             live[path] = {"status": session.status,
@@ -239,6 +255,10 @@ def create_app(
         run = store.latest_index_run()
         return {
             "live": live,
+            # Which of `live`'s keys are directories rather than projects. Only
+            # the server render needs this: `_delta` diffs `live`, which already
+            # carries their appearance and disappearance.
+            "unattributed": unattributed,
             "unavailable": state.status == "unavailable",
             "index": {"ran_at": run["ran_at"],
                       "parse_errors": run["parse_errors"]} if run else None,
@@ -353,6 +373,13 @@ def create_app(
         # the topbar's running count has to be the same number the alert beside
         # it was computed from.
         diag = _diagnostics()
+        # Built from the same snapshot the SSE stream sends, so the block below
+        # and the live ticks that patch it can never disagree about what is
+        # running where -- the same reason the overlay is shared at line 218.
+        snapshot = _live_snapshot()
+        unattributed = [
+            dict(snapshot["live"][cwd], cwd=cwd) for cwd in snapshot["unattributed"]
+        ]
         last_5h = sum(c.tokens_5h for c in cards)
         return templates.TemplateResponse(
             request,
@@ -360,6 +387,7 @@ def create_app(
             {
                 "cards": cards,
                 "hidden": hidden,
+                "unattributed": unattributed,
                 "diag_alert": _needs_attention(diag),
                 "totals": {
                     "today": sum(c.tokens_today for c in cards),
