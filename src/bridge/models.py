@@ -152,6 +152,11 @@ class Card:
     tokens_5h: int
     spark: list[int] = field(default_factory=list)
     is_stale: bool = False
+    # The live session on this project, most recently started first if several.
+    live: LiveSession | None = None
+    # The sensor failed, as distinct from `live is None` meaning nothing is
+    # running. Collapsing the two asserts quiescence from a broken read.
+    live_unavailable: bool = False
     # The queued handoff, as a plain dict. A card carries at most one: the store
     # supersedes the rest, so "what next" is never ambiguous.
     handoff: dict | None = None

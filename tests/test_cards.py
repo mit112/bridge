@@ -363,3 +363,214 @@ def test_the_x_axis_spans_the_full_width():
     points = [p.split(",") for p in spark_points([1, 2, 3], width=72).split()]
     assert float(points[0][0]) == 0.0
     assert float(points[-1][0]) == 72.0
+
+
+# --- Phase 4 Task 5: the live band, attribution and rank ---------------------
+
+from bridge.cards import (  # noqa: E402
+    RANK_HANDOFF, RANK_OTHER, RANK_RECENT, RANK_RUNNING, RANK_STALE,
+    LivenessDebouncer, live_priority,
+)
+from bridge.models import AgentsState, Handoff, LiveSession  # noqa: E402
+
+LIVE_SID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+
+
+def live_session(cwd, status="busy", sid=LIVE_SID, started=1000):
+    return LiveSession(session_id=sid, cwd=cwd, kind="interactive",
+                       status=status, started_at=started)
+
+
+def ok(*sessions):
+    return lambda: AgentsState(status="ok", sessions=list(sessions))
+
+
+def test_a_busy_session_lands_on_its_project_card(store, tmp_path):
+    add(store, "/p/runs", "runs", "s-runs", "2026-07-30T10:00:00.000Z")
+    cfg = load({"db_path": tmp_path / "c.db"})
+    card = build_cards(store, cfg, probe_fn=lambda p: GitState(status="ok"),
+                       agents_fn=ok(live_session("/p/runs")))[0]
+    assert card.live is not None
+    assert card.live.status == "busy"
+    assert card.live_unavailable is False
+
+
+def test_an_idle_session_is_distinguished_from_a_busy_one(store, tmp_path):
+    add(store, "/p/quiet", "quiet", "s-q", "2026-07-30T10:00:00.000Z")
+    cfg = load({"db_path": tmp_path / "c.db"})
+    card = build_cards(store, cfg, probe_fn=lambda p: GitState(status="ok"),
+                       agents_fn=ok(live_session("/p/quiet", status="idle")))[0]
+    assert card.live.status == "idle"
+
+
+def test_a_failed_liveness_probe_leaves_cards_intact_and_says_unavailable(store, tmp_path):
+    add(store, "/p/x", "x", "s-x", "2026-07-30T10:00:00.000Z")
+    cfg = load({"db_path": tmp_path / "c.db"})
+    cards = build_cards(store, cfg, probe_fn=lambda p: GitState(status="ok"),
+                        agents_fn=lambda: AgentsState(status="unavailable"))
+    assert len(cards) == 1              # the card is NOT removed
+    assert cards[0].live is None
+    assert cards[0].live_unavailable is True
+
+
+def test_a_raising_liveness_probe_cannot_take_down_the_dashboard(store, tmp_path):
+    add(store, "/p/boom", "boom", "s-b", "2026-07-30T10:00:00.000Z")
+    cfg = load({"db_path": tmp_path / "c.db"})
+
+    def boom():
+        raise RuntimeError("probe exploded")
+
+    cards = build_cards(store, cfg, probe_fn=lambda p: GitState(status="ok"),
+                        agents_fn=boom)
+    assert len(cards) == 1
+    assert cards[0].live_unavailable is True
+
+
+def test_the_liveness_probe_runs_once_for_the_whole_dashboard(store, tmp_path):
+    """Not once per card: 30 projects must not mean 30 sensor reads."""
+    for n in range(5):
+        add(store, f"/p/n{n}", f"n{n}", f"s-n{n}", "2026-07-30T10:00:00.000Z")
+    cfg = load({"db_path": tmp_path / "c.db"})
+    calls = []
+
+    def counting():
+        calls.append(1)
+        return AgentsState(status="ok", sessions=[])
+
+    build_cards(store, cfg, probe_fn=lambda p: GitState(status="ok"),
+                agents_fn=counting)
+    assert len(calls) == 1
+
+
+def test_nothing_running_is_not_the_same_as_a_failed_probe(store, tmp_path):
+    add(store, "/p/none", "none", "s-none", "2026-07-30T10:00:00.000Z")
+    cfg = load({"db_path": tmp_path / "c.db"})
+    card = build_cards(store, cfg, probe_fn=lambda p: GitState(status="ok"),
+                       agents_fn=ok())[0]
+    assert card.live is None
+    assert card.live_unavailable is False
+
+
+def test_a_session_in_a_subdirectory_still_lands_on_the_project_card(store, tmp_path):
+    add(store, "/p/proj", "proj", "s-p", "2026-07-30T10:00:00.000Z")
+    cfg = load({"db_path": tmp_path / "c.db"})
+    card = build_cards(store, cfg, probe_fn=lambda p: GitState(status="ok"),
+                       agents_fn=ok(live_session("/p/proj/src/deep")))[0]
+    assert card.live is not None
+
+
+def test_a_session_in_no_registered_project_does_not_appear_on_a_card(store, tmp_path):
+    """It goes to the unattributed bucket, not onto an unrelated card."""
+    add(store, "/p/real", "real", "s-r", "2026-07-30T10:00:00.000Z")
+    cfg = load({"db_path": tmp_path / "c.db"})
+    card = build_cards(store, cfg, probe_fn=lambda p: GitState(status="ok"),
+                       agents_fn=ok(live_session("/somewhere/else")))[0]
+    assert card.live is None
+
+
+# --- rank --------------------------------------------------------------------
+
+
+def test_a_running_project_sorts_above_stale_but_below_a_queued_handoff(tmp_path):
+    """A handoff outranks a running session because a running session needs
+    nothing from you; a queued one is waiting on you."""
+    cfg = load({"db_path": tmp_path / "rank.db", "spool_dir": tmp_path / "spool",
+                "stale_hours": 1})
+    store = Store(cfg.db_path)
+    paths = {"handoff": "/Users/mitsheth/dev/zzz-handoff",
+             "running": "/Users/mitsheth/dev/mmm-running",
+             "stale": "/Users/mitsheth/dev/aaa-stale"}
+    pids = {}
+    for key, path in paths.items():
+        pids[key] = store.upsert_project(path, path.rsplit("/", 1)[-1])
+        store.upsert_session(
+            SessionRecord(session_id=f"s-{key}", transcript_path=f"/t/{key}",
+                          title="work", ended_at="2026-07-30T10:00:00.000Z"),
+            pids[key],
+        )
+    store.create_handoff(
+        Handoff(id="h-rank", project_path=paths["handoff"],
+                next_prompt="next", created_at=1), pids["handoff"])
+
+    def probe(path):
+        if path == paths["stale"]:
+            return GitState(status="ok", branch="main", dirty_count=9,
+                            oldest_uncommitted_at=1)
+        return GitState(status="ok", branch="main")
+
+    cards = build_cards(store, cfg, probe_fn=probe,
+                        agents_fn=ok(live_session(paths["running"])))
+    store.close()
+    assert [c.name for c in cards] == ["zzz-handoff", "mmm-running", "aaa-stale"]
+
+
+def test_the_rank_ladder_keeps_handoff_above_running_above_the_rest():
+    assert RANK_HANDOFF < RANK_RUNNING < RANK_STALE < RANK_RECENT < RANK_OTHER
+
+
+def test_the_attention_ladder_puts_blocked_above_working_above_idle():
+    assert live_priority("blocked") < live_priority("working")
+    assert live_priority("working") < live_priority("idle")
+    assert live_priority("failed") < live_priority("busy")
+
+
+def test_unknown_ranks_with_idle_not_above_it():
+    """muxara's deliberate rank collision: equal-priority rows then hold a
+    stable secondary sort instead of reshuffling on every poll."""
+    assert live_priority("unknown") == live_priority("idle")
+    assert live_priority("something-new") == live_priority("idle")
+
+
+# --- hysteresis --------------------------------------------------------------
+
+
+def test_busy_to_idle_is_held_for_about_a_second_and_a_half():
+    d = LivenessDebouncer(hold_s=1.5)
+    busy = live_session("/p", status="busy")
+    idle = live_session("/p", status="idle")
+
+    assert d.apply([busy], now=100.0)[0].status == "busy"
+    # The sensor says idle, but a single quiet sample is not quiescence. The
+    # hold runs from HERE -- the first quiet sample, not the last busy one --
+    # so it expires at 102.0, not 101.5.
+    assert d.apply([idle], now=100.5)[0].status == "busy"
+    assert d.apply([idle], now=101.9)[0].status == "busy"
+    assert d.apply([idle], now=102.1)[0].status == "idle"
+
+
+def test_becoming_busy_is_adopted_instantly():
+    """The hold exists to avoid claiming quiescence too early, never to delay
+    showing work."""
+    d = LivenessDebouncer(hold_s=1.5)
+    d.apply([live_session("/p", status="idle")], now=100.0)
+    assert d.apply([live_session("/p", status="busy")], now=100.1)[0].status == "busy"
+
+
+def test_a_flap_back_to_busy_resets_the_hold():
+    d = LivenessDebouncer(hold_s=1.5)
+    d.apply([live_session("/p", status="busy")], now=100.0)
+    d.apply([live_session("/p", status="idle")], now=100.9)
+    d.apply([live_session("/p", status="busy")], now=101.0)
+    # The earlier quiet sample must not count toward a later hold.
+    assert d.apply([live_session("/p", status="idle")], now=101.9)[0].status == "busy"
+
+
+def test_a_first_observation_of_idle_is_not_held():
+    """There is no prior busy to protect, so holding would invent one."""
+    d = LivenessDebouncer(hold_s=1.5)
+    assert d.apply([live_session("/p", status="idle")], now=100.0)[0].status == "idle"
+
+
+def test_a_non_idle_status_is_never_damped():
+    d = LivenessDebouncer(hold_s=1.5)
+    d.apply([live_session("/p", status="busy")], now=100.0)
+    assert d.apply([live_session("/p", status="failed")], now=100.1)[0].status == "failed"
+
+
+def test_the_debouncer_forgets_sessions_that_are_gone():
+    """Otherwise it leaks one dict entry per session ever seen."""
+    d = LivenessDebouncer(hold_s=1.5)
+    d.apply([live_session("/p", status="busy")], now=100.0)
+    d.apply([], now=101.0)
+    assert d._shown == {}
+    assert d._quiet_since == {}

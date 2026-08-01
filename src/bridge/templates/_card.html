@@ -17,6 +17,23 @@
     <p class="card__note">No indexed sessions.</p>
   {% endif %}
 
+  {% if card.live %}
+    {# Colour plus a word, never colour alone. `data-live-path` is the node the
+       SSE client patches; it deliberately contains only the status word, so a
+       live tick never has to touch anything structural. #}
+    <p class="live live--{{ card.live.status }}">
+      <span class="live__dot" aria-hidden="true">●</span>
+      <span data-live-path="{{ card.path }}">{{ card.live.status }}</span>
+      <span>· {{ card.live.started_at | ago_epoch }}</span>
+      {# model/effort come from OUR tables: the liveness sensor has neither. #}
+      {% if card.session and card.session.model %}
+        <span>· {{ card.session.model }}{% if card.session.effort %}/{{ card.session.effort }}{% endif %}</span>
+      {% endif %}
+    </p>
+  {% elif card.live_unavailable %}
+    <p class="live live--unknown"><span>live status unavailable</span></p>
+  {% endif %}
+
   <p class="card__git">
     {% if card.git.status == "ok" %}
       <span>{{ card.git.branch }}</span>

@@ -74,6 +74,27 @@ def never_touch_the_real_bridge_dir(monkeypatch):
         )
 
 
+@pytest.fixture(autouse=True)
+def never_read_the_real_session_registry(tmp_path, monkeypatch):
+    """Point the liveness sensor at an empty directory for every test.
+
+    `agents.probe` defaults to `~/.claude/sessions`, so without this the suite
+    reads whatever Claude sessions happen to be running on the developer's
+    machine: results would differ between a laptop with three sessions open and
+    CI with none, and a card could gain a live band nobody put there.
+
+    An empty *existing* directory, not a missing one, because those mean
+    different things -- missing is `unavailable`, empty is "nothing running" --
+    and "nothing running" is the neutral default a test should start from.
+    Tests that care pass `agents_fn` explicitly.
+    """
+    from bridge import agents
+
+    empty = tmp_path / "empty-sessions"
+    empty.mkdir(exist_ok=True)
+    monkeypatch.setattr(agents, "SESSIONS_DIR", empty)
+
+
 @pytest.fixture
 def write_transcript(tmp_path):
     """Write JSONL lines to a file and return its path."""

@@ -17,7 +17,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, field_validator, model_validator
 
 from bridge import launcher, spool
-from bridge.cards import build_cards, spark_points
+from bridge.cards import LivenessDebouncer, build_cards, spark_points
 from bridge.config import Config
 from bridge.indexer import reindex
 from bridge.models import Handoff
@@ -138,9 +138,14 @@ def create_app(
     templates.env.filters["spark_points"] = spark_points
     app.mount("/static", StaticFiles(directory=str(HERE / "static")), name="static")
 
+    # One debouncer for the whole app, because the busy -> idle hold is state
+    # ACROSS requests: a per-request instance would have nothing to remember
+    # and the hysteresis would never fire.
+    debouncer = LivenessDebouncer()
+
     @app.get("/", response_class=HTMLResponse)
     def dashboard(request: Request):
-        cards = build_cards(store, cfg)
+        cards = build_cards(store, cfg, debouncer=debouncer)
         return templates.TemplateResponse(
             request,
             "dashboard.html",
