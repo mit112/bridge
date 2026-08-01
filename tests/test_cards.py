@@ -547,12 +547,20 @@ def test_becoming_busy_is_adopted_instantly():
 
 
 def test_a_flap_back_to_busy_resets_the_hold():
+    """The gap is deliberately wider than the hold.
+
+    With a shorter one the stale timer has not expired yet either, so the test
+    passes whether or not it was cleared -- and the bug it exists to catch (a
+    later quiet period inheriting an old timer and expiring instantly) walks
+    straight through.
+    """
     d = LivenessDebouncer(hold_s=1.5)
     d.apply([live_session("/p", status="busy")], now=100.0)
-    d.apply([live_session("/p", status="idle")], now=100.9)
-    d.apply([live_session("/p", status="busy")], now=101.0)
-    # The earlier quiet sample must not count toward a later hold.
-    assert d.apply([live_session("/p", status="idle")], now=101.9)[0].status == "busy"
+    d.apply([live_session("/p", status="idle")], now=100.9)   # hold starts here
+    d.apply([live_session("/p", status="busy")], now=102.5)   # ...and is cancelled
+    # A fresh hold starts now, so this is still inside it. Reusing the 100.9
+    # timer would make it 2.1 s old and let idle through immediately.
+    assert d.apply([live_session("/p", status="idle")], now=103.0)[0].status == "busy"
 
 
 def test_a_first_observation_of_idle_is_not_held():
