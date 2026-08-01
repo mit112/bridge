@@ -1170,8 +1170,15 @@ def test_an_unchanged_tick_emits_nothing_after_the_snapshot(client):
 
 
 def test_a_capped_stream_ends_with_a_named_refresh_rather_than_running_forever(client):
+    """`max_ticks` is a BACKSTOP, not the thing under test.
+
+    Without it, a build that has lost the time cap streams forever at
+    interval=0 and this test hangs instead of failing -- which is exactly what
+    it did under mutation, taking the falsifier down with it. With the backstop
+    the cap is still what produces the `refresh`, and its absence fails fast.
+    """
     c, _, _ = client
-    with c.stream("GET", "/events?interval=0&max_seconds=0") as r:
+    with c.stream("GET", "/events?interval=0&max_seconds=0&max_ticks=5") as r:
         frames = _frames("".join(r.iter_text()))
     assert [n for n, _ in frames] == ["snapshot", "refresh"]
 
