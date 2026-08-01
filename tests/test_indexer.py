@@ -7,7 +7,7 @@ from bridge.config import load
 from bridge.indexer import reindex
 from bridge.registry import transcript_files
 from bridge.store import Store
-from tests.conftest import jline
+from tests.conftest import jline, launch_by_session
 
 SID = "22222222-2222-2222-2222-222222222222"
 
@@ -331,7 +331,7 @@ def test_a_terminal_launch_joins_to_its_transcript_by_its_pre_assigned_uuid(env)
 
     reindex(store, cfg)
 
-    row = store.launch_by_session(SID)
+    row = launch_by_session(store, SID)
     assert row is not None, "the pre-assigned UUID must find the indexed session"
     assert row["id"] == "L1"
     session = store.session_row(SID)
@@ -352,7 +352,7 @@ def test_a_background_launch_resolves_its_short_id_to_a_full_session_id(env):
     row = store.launches(pid)[0]
     assert row["session_id"] == SID
     assert row["short_id"] == SID[:8], "the handle is kept, not overwritten"
-    assert store.launch_by_session(SID)["id"] == "L1"
+    assert launch_by_session(store, SID)["id"] == "L1"
 
 
 def test_two_sessions_sharing_a_short_id_prefix_leave_the_launch_unlinked(env):
@@ -369,8 +369,8 @@ def test_two_sessions_sharing_a_short_id_prefix_leave_the_launch_unlinked(env):
     assert len(store.sessions(pid)) == 2, "both candidates must be indexed"
     assert stats.launches_linked == 0
     assert store.launches(pid)[0]["session_id"] is None
-    assert store.launch_by_session(SID) is None
-    assert store.launch_by_session(SID_TWIN) is None
+    assert launch_by_session(store, SID) is None
+    assert launch_by_session(store, SID_TWIN) is None
 
 
 def test_a_launch_whose_session_never_appears_stays_started_and_unlinked(env):

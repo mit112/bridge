@@ -5,6 +5,7 @@ import pytest
 
 from bridge.models import Handoff, Launch, SessionRecord
 from bridge.store import Store, to_epoch
+from tests.conftest import launch_by_session
 
 
 @pytest.fixture
@@ -369,15 +370,15 @@ def test_upsert_project_does_not_reset_an_existing_status(store):
 def test_a_launch_round_trips_and_is_found_by_its_session_id(store):
     """The terminal-mode path: the id is pre-assigned, so the row is the join.
 
-    Two launches exist so `launch_by_session` has to *select* rather than return
-    the only row there is.
+    Two launches exist so the join has to *select* rather than return the only
+    row there is.
     """
     pid = store.upsert_project("/d", "d")
     store.create_handoff(handoff("h1"), pid)
     store.create_launch(launch(pid, "l1"))
     store.create_launch(launch(pid, "l2", session_id=SID_B, launched_at=3000))
 
-    row = store.launch_by_session(SID_A)
+    row = launch_by_session(store, SID_A)
     assert row["id"] == "l1"
     assert (row["project_id"], row["handoff_id"], row["mode"]) == (pid, "h1", "terminal")
     assert (row["model"], row["effort"]) == ("claude-opus-5", "high")
@@ -386,8 +387,8 @@ def test_a_launch_round_trips_and_is_found_by_its_session_id(store):
     assert row["outcome"] == "pending", "the row is written before the spawn"
 
     store.set_launch_outcome("l1", "started")
-    assert store.launch_by_session(SID_A)["outcome"] == "started"
-    assert store.launch_by_session(SID_B)["outcome"] == "pending", "one row moved"
+    assert launch_by_session(store, SID_A)["outcome"] == "started"
+    assert launch_by_session(store, SID_B)["outcome"] == "pending", "one row moved"
     assert [r["id"] for r in store.launches(pid)] == ["l2", "l1"]
 
 
@@ -395,7 +396,7 @@ def test_a_launch_needs_no_handoff_behind_it(store):
     """An ad-hoc prompt typed into the panel has no queued handoff to consume."""
     pid = store.upsert_project("/d", "d")
     store.create_launch(launch(pid, "l1", handoff_id=None))
-    assert store.launch_by_session(SID_A)["handoff_id"] is None
+    assert launch_by_session(store, SID_A)["handoff_id"] is None
 
 
 def test_a_launch_cannot_reference_a_handoff_that_does_not_exist(store):
@@ -417,10 +418,10 @@ def test_set_launch_session_fills_in_both_ids_after_a_background_spawn(store):
     )
     row = store.launches(pid)[0]
     assert (row["session_id"], row["short_id"]) == (None, None)
-    assert store.launch_by_session(SID_A) is None
+    assert launch_by_session(store, SID_A) is None
 
     store.set_launch_session("l1", SID_A, SID_A[:8])
-    row = store.launch_by_session(SID_A)
+    row = launch_by_session(store, SID_A)
     assert row["id"] == "l1"
     assert row["short_id"] == "aaaaaaaa"
 

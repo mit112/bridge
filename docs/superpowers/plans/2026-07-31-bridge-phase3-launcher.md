@@ -233,7 +233,9 @@ test `tests/test_store.py`, `tests/test_spool.py`
   `effort`, `prompt`, `launched_at`, `outcome`.
 - Produces `Store.create_launch(l: Launch) -> str`, `Store.set_launch_outcome(id, outcome)`,
   `Store.launches(project_id, limit) -> list[Row]`,
-  `Store.launch_by_session(session_id) -> Row | None`.
+  ~~`Store.launch_by_session(session_id) -> Row | None`~~ — built, then removed: nothing the panel
+  renders ever looked a launch up by session id. The join it expressed is still asserted, from
+  `tests/conftest.py::launch_by_session`.
 - Produces `spool.journal_status(handoff_id, status, at, spool_dir) -> Path`.
 - Schema (additive): `launches(id TEXT PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES
   projects(id), handoff_id TEXT REFERENCES handoffs(id), session_id TEXT, short_id TEXT, mode TEXT
@@ -264,9 +266,11 @@ test `tests/test_store.py`, `tests/test_spool.py`
       existing `# --- Phase 2: handoff routes ---` convention.
 
 **Tests (each requires an observed failure from a mutation):**
-- [x] `create_launch` then `set_launch_outcome('started')` round-trips, and `launch_by_session`
-      finds the row by its pre-assigned session id.
-      *Mutation: drop the `WHERE session_id=?` clause → the wrong row returns.*
+- [x] `create_launch` then `set_launch_outcome('started')` round-trips, and the row is found by its
+      pre-assigned session id.
+      *Mutation: drop the `WHERE session_id=?` clause → the wrong row returns. Retired with
+      `Store.launch_by_session`; the query now lives in the test helper, where there is nothing to
+      mutate.*
 - [x] A launch with `handoff_id=None` inserts.
       *Mutation: declare the column `NOT NULL` → the insert raises.*
 - [x] A launch referencing a handoff that does not exist is refused by the foreign key.
@@ -597,7 +601,7 @@ test `tests/test_indexer.py`
       sessions, so require a **unique** prefix match and leave it null on ambiguity rather than
       guessing. This is the only place Phase 3 touches `indexer.py`.
 - [x] After indexing a transcript whose filename and `sessionId` are a launched UUID,
-      `launch_by_session` joins to a real session row and the detail page shows the launch and the
+      the launch joins to a real session row and the detail page shows the launch and the
       session as one thing.
 - [x] A launch whose session never appears — a spawn that started nothing, or a session quit before
       it wrote a transcript — stays visible as `started` with no session. Not an error; the panel

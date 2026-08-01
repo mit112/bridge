@@ -37,8 +37,7 @@
     "old": "    return int(value) // 1000",
     "new": "    return int(value)",
     "tests": [
-      "tests/test_agents.py::test_the_registry_reads_camelcase_keys_and_converts_milliseconds",
-      "tests/test_agents.py::test_the_subprocess_reads_the_real_recorded_payload"
+      "tests/test_agents.py::test_the_registry_reads_camelcase_keys_and_converts_milliseconds"
     ],
     "expect_count": 1
   },
@@ -48,7 +47,6 @@
     "old": "    session_id = str(entry.get(\"sessionId\") or entry.get(\"id\") or \"\").lower()",
     "new": "    session_id = str(entry.get(\"session_id\") or \"\").lower()",
     "tests": [
-      "tests/test_agents.py::test_the_subprocess_reads_sessionId_not_session_id",
       "tests/test_agents.py::test_the_registry_reads_camelcase_keys_and_converts_milliseconds"
     ],
     "expect_count": 1
@@ -142,26 +140,6 @@
     "new": "        except (OSError, ValueError):\n            raise",
     "tests": [
       "tests/test_agents.py::test_one_malformed_registry_file_is_skipped_not_fatal"
-    ],
-    "expect_count": 1
-  },
-  {
-    "name": "accept any parse from the subprocess, so a null payload claims nothing is running",
-    "file": "src/bridge/agents.py",
-    "old": "    if not isinstance(data, (list, dict)):\n        return UNAVAILABLE",
-    "new": "    if False:\n        return UNAVAILABLE",
-    "tests": [
-      "tests/test_agents.py::test_malformed_subprocess_output_is_unavailable"
-    ],
-    "expect_count": 1
-  },
-  {
-    "name": "report a nonzero exit as ok-with-nothing-running",
-    "file": "src/bridge/agents.py",
-    "old": "        if proc.returncode != 0:\n            return UNAVAILABLE",
-    "new": "        if False:\n            return UNAVAILABLE",
-    "tests": [
-      "tests/test_agents.py::test_a_nonzero_exit_is_unavailable_not_empty"
     ],
     "expect_count": 1
   },

@@ -112,6 +112,13 @@ staleness input Task 5's hysteresis needs — plus `version`, which is the schem
 survey rightly recommends. This is consistent with Bridge's existing bet: it already depends
 wholesale on `~/.claude/projects/**/*.jsonl` internals.
 
+*Amended 2026-08-01: the corroborator is gone.* `agents.probe_subprocess` shipped and then acquired
+zero callers — nothing ever ran it on a slow cadence or on any cadence, so it corroborated nothing
+and was deleted along with its tests. What it left behind is a second parser of the same records,
+free to drift from the registry path that actually answers. If corroboration is wanted back, it
+needs a caller and a cadence decided first, and it should reuse `_session_from` rather than
+re-derive the shape.
+
 Two guards the subprocess was giving away free:
 - **Stale pid files.** `os.kill(pid, 0)` checks existence and sends no signal, so it does not breach
   "Bridge never supervises". Cross-check `procStart` against the live process start time to defeat

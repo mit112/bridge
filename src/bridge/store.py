@@ -479,12 +479,6 @@ class Store:
                 )
             )
 
-    def launch_by_session(self, session_id: str) -> sqlite3.Row | None:
-        with self._lock:
-            return self.conn.execute(
-                "SELECT * FROM launches WHERE session_id=?", (session_id,)
-            ).fetchone()
-
     def get_scan_state(self, path: str) -> sqlite3.Row | None:
         with self._lock:
             return self.conn.execute(

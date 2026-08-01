@@ -50,7 +50,7 @@ from bridge.launcher import (
 from bridge.models import Handoff
 from bridge.registry import resolve_project
 from bridge.store import Store
-from tests.conftest import RealBridgeDirTouched
+from tests.conftest import RealBridgeDirTouched, launch_by_session
 
 # --- Phase 3: the launcher ---------------------------------------------------
 
@@ -828,7 +828,7 @@ def test_a_resolvable_handle_becomes_a_full_session_id(store, cfg, project,
     assert (result.short_id, result.session_id) == ("deadbeef", BG_SESSION_ID)
     row = only_launch(store, str(project))
     assert row["session_id"] == BG_SESSION_ID
-    assert store.launch_by_session(BG_SESSION_ID)["id"] == result.launch_id
+    assert launch_by_session(store, BG_SESSION_ID)["id"] == result.launch_id
     assert result.note is None
 
 

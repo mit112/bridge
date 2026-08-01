@@ -1,16 +1,5 @@
 [
   {
-    "name": "drop the WHERE clause from launch_by_session, so the wrong row returns",
-    "file": "src/bridge/store.py",
-    "old": "                \"SELECT * FROM launches WHERE session_id=?\", (session_id,)",
-    "new": "                \"SELECT * FROM launches WHERE 1=1 OR session_id=?\", (session_id,)",
-    "tests": [
-      "tests/test_store.py::test_a_launch_round_trips_and_is_found_by_its_session_id",
-      "tests/test_store.py::test_set_launch_session_fills_in_both_ids_after_a_background_spawn"
-    ],
-    "expect_count": 1
-  },
-  {
     "name": "declare handoff_id NOT NULL, so an ad-hoc launch cannot be recorded",
     "file": "src/bridge/store.py",
     "old": "        handoff_id TEXT REFERENCES handoffs(id),",

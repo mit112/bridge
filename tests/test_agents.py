@@ -30,23 +30,6 @@ REAL_REGISTRY = {
     "statusUpdatedAt": 1785570464356,
 }
 
-# Recorded verbatim from `claude agents --json`.
-REAL_PAYLOAD = json.dumps([
-    {"pid": 10210, "cwd": "/Users/mitsheth/dev/projectY", "kind": "interactive",
-     "startedAt": 1785536395229, "sessionId": SID_BG,
-     "name": "projecty-80", "status": "idle"},
-    {"pid": 19145, "cwd": "/Users/mitsheth/dev/bridge", "kind": "interactive",
-     "startedAt": 1785548714710, "sessionId": SID_B,
-     "name": "Built Bridge Phase 3", "status": "busy"},
-])
-
-
-def fake_run(code: int, out: str):
-    def run(*a, **k):
-        return subprocess.CompletedProcess(a[0] if a else [], code, out, "")
-    return run
-
-
 def always_alive(pid, proc_start, **kw):
     return True
 
@@ -240,58 +223,6 @@ def test_a_missing_proc_start_leaves_the_session_alive():
 @pytest.mark.parametrize("pid", [None, 0, -1, "53458"])
 def test_a_nonsense_pid_is_not_alive(pid):
     assert agents.pid_is_alive(pid, "Sat Aug  1 07:44:58 2026") is False
-
-
-# --- the subprocess corroborator ---------------------------------------------
-
-
-def test_the_subprocess_reads_the_real_recorded_payload():
-    state = agents.probe_subprocess(claude="/bin/claude", run=fake_run(0, REAL_PAYLOAD))
-    assert state.status == "ok"
-    assert state.source == "subprocess"
-    live = {s.session_id: s for s in state.sessions}
-    assert live[SID_B].status == "busy"
-    assert live[SID_B].started_at == 1785548714
-
-
-def test_a_nonzero_exit_is_unavailable_not_empty():
-    """The payload is deliberately VALID JSON.
-
-    With empty stdout the JSON parse fails anyway, so the test would pass with
-    no returncode check at all -- and a `claude` that exits nonzero while still
-    printing a plausible list would be believed.
-    """
-    state = agents.probe_subprocess(claude="/bin/claude", run=fake_run(1, REAL_PAYLOAD))
-    assert state.status == "unavailable"
-    assert state.sessions == []
-
-
-@pytest.mark.parametrize("payload", ["not json", "", "null", "[[]]", "3"])
-def test_malformed_subprocess_output_is_unavailable(payload):
-    assert agents.probe_subprocess(
-        claude="/bin/claude", run=fake_run(0, payload)
-    ).status == "unavailable"
-
-
-def test_a_subprocess_timeout_is_unavailable():
-    def boom(*a, **k):
-        raise subprocess.TimeoutExpired(cmd="claude", timeout=3.0)
-
-    assert agents.probe_subprocess(claude="/bin/claude", run=boom).status == "unavailable"
-
-
-def test_an_entry_missing_its_session_id_is_skipped_not_fatal():
-    payload = json.dumps([{"cwd": "/p"}, json.loads(REAL_PAYLOAD)[1]])
-    state = agents.probe_subprocess(claude="/bin/claude", run=fake_run(0, payload))
-    assert state.status == "ok"
-    assert len(state.sessions) == 1
-
-
-def test_the_subprocess_reads_sessionId_not_session_id():
-    """Reading `session_id` returns zero sessions against real output, which is
-    the exact bug the design spec would have caused."""
-    state = agents.probe_subprocess(claude="/bin/claude", run=fake_run(0, REAL_PAYLOAD))
-    assert len(state.sessions) == 2
 
 
 # --- attribution -------------------------------------------------------------

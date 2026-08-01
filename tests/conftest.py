@@ -21,6 +21,21 @@ def jline(**kw) -> str:
     return json.dumps(kw) + "\n"
 
 
+def launch_by_session(store, session_id: str):
+    """The launch-to-session join, read straight from the table.
+
+    `Store` carries no query for this: nothing the panel renders looks a launch
+    up by session id, so the method that used to live here was dead code. The
+    correlation itself is the thing Phase 3 is most careful about, so the tests
+    that assert it do the SELECT here rather than infer the answer from a row's
+    position in `store.launches()` -- a launch that linked to the WRONG session
+    would still be in position 0.
+    """
+    return store.conn.execute(
+        "SELECT * FROM launches WHERE session_id=?", (session_id,)
+    ).fetchone()
+
+
 @pytest.fixture(autouse=True)
 def never_touch_the_real_bridge_dir(monkeypatch):
     """Refuse any spool or launcher operation against the user's real `~/.bridge`.
