@@ -373,6 +373,19 @@ class Store:
                 (status, status, now_epoch(), handoff_id),
             )
 
+    def update_handoff_prompt(self, handoff_id: str, next_prompt: str) -> None:
+        """Persist an inline edit. `status` is deliberately left alone.
+
+        Editing a queued prompt must leave it queued, and `create_handoff` cannot
+        do this job: its `ON CONFLICT(id) DO NOTHING` is what makes a re-drained
+        spool file idempotent, so an upsert of the same id changes nothing.
+        """
+        with self._lock:
+            self.conn.execute(
+                "UPDATE handoffs SET next_prompt=? WHERE id=?",
+                (next_prompt, handoff_id),
+            )
+
     def handoff_count(self) -> int:
         with self._lock:
             return self.conn.execute(
