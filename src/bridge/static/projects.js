@@ -11,17 +11,15 @@
 // JavaScript would mean duplicating the template, which is the innerHTML pattern
 // live.js exists to avoid.
 
-// Only the fields actually being changed are sent. The server rejects a body
-// with neither, and sending `status: undefined` alongside a pin would drop out
-// of JSON.stringify anyway — this makes that explicit rather than incidental.
-async function setProjectStatus(projectId, status, pinned) {
-  const body = {};
-  if (status !== undefined) body.status = status;
-  if (pinned !== undefined) body.pinned = pinned;
+// Only the fields actually being changed reach the server: JSON.stringify drops
+// keys whose value is `undefined`, so an omitted argument omits the key. Guarding
+// each one by hand was measurably equivalent to this — falsify proved it — and
+// the server rejects a body that ends up with neither.
+async function patchProject(projectId, status, pinned) {
   const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+    body: JSON.stringify({ status, pinned }),
   });
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
 }
@@ -74,7 +72,7 @@ document.addEventListener("click", async (event) => {
     // second copy kept somewhere else that could disagree with it.
     const next = pin.getAttribute("aria-pressed") !== "true";
     try {
-      await setProjectStatus(id, undefined, next);
+      await patchProject(id, undefined, next);
       pin.setAttribute("aria-pressed", String(next));
       // Not reordered here. A pinned card belongs at the top, but placing it
       // there client-side would use a different tiebreak from the server's and
@@ -94,7 +92,7 @@ document.addEventListener("click", async (event) => {
     const card = hide.closest("[data-project-card]");
     const name = card ? card.querySelector("h2").textContent.trim() : id;
     try {
-      await setProjectStatus(id, "hidden");
+      await patchProject(id, "hidden");
       const list = document.querySelector("[data-hidden-list]");
       if (list) list.append(hiddenRow(id, name));
       bumpHiddenCount(1);
@@ -112,7 +110,7 @@ document.addEventListener("click", async (event) => {
 
   const id = restore.getAttribute("data-project-restore");
   try {
-    await setProjectStatus(id, "active");
+    await patchProject(id, "active");
     const row = document.querySelector(`[data-hidden-project="${id}"]`);
     if (row) row.remove();
     bumpHiddenCount(-1);
