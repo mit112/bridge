@@ -216,3 +216,99 @@ def test_the_card_carries_model_choices_not_bare_strings(store, tmp_path):
     cfg = load({"db_path": tmp_path / "c.db"})
     card = build_cards(store, cfg, probe_fn=lambda p: GitState(status="ok"))[0]
     assert all(isinstance(m, ModelChoice) for m in card.launch_models)
+
+
+# --- Phase 4 Task 4: last good git state, with its age -----------------------
+
+
+def test_a_timed_out_probe_shows_the_last_good_state_with_its_age(store, tmp_path):
+    cfg = load({"db_path": tmp_path / "c.db"})
+    add(store, "/p/cache", "cache", "s-cache", "2026-07-30T10:00:00.000Z")
+    good = GitState(status="ok", branch="main", dirty_count=2)
+    build_cards(store, cfg, probe_fn=lambda p: good)      # populates the cache
+
+    card = build_cards(store, cfg, probe_fn=lambda p: GitState(status="unavailable"))[0]
+    assert card.git.status == "ok"
+    assert card.git.branch == "main"
+    assert card.git.dirty_count == 2
+    assert card.git.cached_at is not None   # and the template renders its age
+
+
+def test_an_unavailable_probe_never_overwrites_the_cache(store, tmp_path):
+    """Otherwise the first timeout destroys the very state it should fall back to."""
+    cfg = load({"db_path": tmp_path / "c.db"})
+    pid = add(store, "/p/keep", "keep", "s-keep", "2026-07-30T10:00:00.000Z")
+    build_cards(store, cfg, probe_fn=lambda p: GitState(status="ok", branch="main"))
+    build_cards(store, cfg, probe_fn=lambda p: GitState(status="unavailable"))
+    build_cards(store, cfg, probe_fn=lambda p: GitState(status="unavailable"))
+    state, _ = store.get_git_cache(pid)
+    assert state.branch == "main"
+
+
+def test_not_a_repo_is_reported_not_papered_over(store, tmp_path):
+    """A deleted repo must be allowed to say so rather than showing a fossil."""
+    cfg = load({"db_path": tmp_path / "c.db"})
+    add(store, "/p/gone", "gone", "s-gone", "2026-07-30T10:00:00.000Z")
+    build_cards(store, cfg, probe_fn=lambda p: GitState(status="ok", branch="main"))
+    card = build_cards(store, cfg, probe_fn=lambda p: GitState(status="not_a_repo"))[0]
+    assert card.git.status == "not_a_repo"
+    assert card.git.cached_at is None
+
+
+def test_not_a_repo_does_not_overwrite_a_good_cached_state(store, tmp_path):
+    """It neither reads nor WRITES: a repo that briefly looks absent must not
+    destroy the state a later `unavailable` would want to fall back to."""
+    cfg = load({"db_path": tmp_path / "c.db"})
+    pid = add(store, "/p/nr", "nr", "s-nr", "2026-07-30T10:00:00.000Z")
+    build_cards(store, cfg, probe_fn=lambda p: GitState(status="ok", branch="main"))
+    build_cards(store, cfg, probe_fn=lambda p: GitState(status="not_a_repo"))
+    state, _ = store.get_git_cache(pid)
+    assert state.branch == "main"
+
+
+def test_a_cache_payload_from_another_version_does_not_crash(store, tmp_path):
+    """The cache is JSON on disk; a field we no longer have must not raise."""
+    pid = add(store, "/p/drift", "drift", "s-drift", "2026-07-30T10:00:00.000Z")
+    store.put_git_cache(pid, GitState(status="ok", branch="main"), 1)
+    store.conn.execute(
+        "UPDATE git_cache SET payload_json=? WHERE project_id=?",
+        ('{"status": "ok", "branch": "main", "a_field_from_the_future": 7}', pid),
+    )
+    state, _ = store.get_git_cache(pid)
+    assert state.branch == "main"
+
+
+def test_no_cache_and_an_unavailable_probe_stays_unavailable(store, tmp_path):
+    cfg = load({"db_path": tmp_path / "c.db"})
+    add(store, "/p/none", "none", "s-none", "2026-07-30T10:00:00.000Z")
+    card = build_cards(store, cfg, probe_fn=lambda p: GitState(status="unavailable"))[0]
+    assert card.git.status == "unavailable"
+    assert card.git.cached_at is None
+
+
+def test_a_live_ok_state_is_never_labelled_as_cached(store, tmp_path):
+    """`cached_at` is the discriminator the template keys off, so a live state
+    carrying one would claim a fresh probe was a fossil."""
+    cfg = load({"db_path": tmp_path / "c.db"})
+    add(store, "/p/live", "live", "s-live", "2026-07-30T10:00:00.000Z")
+    build_cards(store, cfg, probe_fn=lambda p: GitState(status="ok", branch="main"))
+    card = build_cards(store, cfg, probe_fn=lambda p: GitState(status="ok", branch="main"))[0]
+    assert card.git.cached_at is None
+
+
+def test_the_cache_round_trips_every_field_of_git_state(store, tmp_path):
+    """A partial round-trip would silently drop `dirty_count` or `ahead`, so the
+    fallback would render a state that never existed."""
+    pid = add(store, "/p/full", "full", "s-full", "2026-07-30T10:00:00.000Z")
+    full = GitState(status="ok", branch="feature/x", dirty_count=3, ahead=2,
+                    behind=1, last_commit_summary="did a thing",
+                    last_commit_at=1700, oldest_uncommitted_at=1600)
+    store.put_git_cache(pid, full, 42)
+    state, probed_at = store.get_git_cache(pid)
+    assert probed_at == 42
+    assert state == full
+
+
+def test_get_git_cache_is_none_when_nothing_was_ever_written(store, tmp_path):
+    pid = add(store, "/p/empty", "empty", "s-empty", "2026-07-30T10:00:00.000Z")
+    assert store.get_git_cache(pid) is None

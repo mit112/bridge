@@ -43,6 +43,9 @@ class GitState:
     last_commit_summary: str | None = None
     last_commit_at: int | None = None
     oldest_uncommitted_at: int | None = None
+    # Set ONLY on a cache hit; None means this state came from a live probe.
+    # It is the discriminator the template keys off to render "as of … ago".
+    cached_at: int | None = None
 
 
 @dataclass

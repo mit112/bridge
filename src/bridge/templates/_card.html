@@ -25,6 +25,14 @@
       {% if card.is_stale %}
         <span class="risk" title="Uncommitted work is older than the staleness threshold">⚠ uncommitted for {{ card.git.oldest_uncommitted_at | ago_epoch }}</span>
       {% endif %}
+      {# `ago_epoch`, not `ago`: `cached_at` is an epoch int, and `ago` takes an
+         ISO-8601 string. Both emit a bare duration, so the word comes from here
+         exactly as at every other call site. #}
+      {% if card.git.cached_at %}
+        <span class="muted" title="The git probe timed out; this is the last state Bridge saw">
+          · as of {{ card.git.cached_at | ago_epoch }} ago
+        </span>
+      {% endif %}
     {% elif card.git.status == "not_a_repo" %}
       <span class="card__note">not a git repo</span>
     {% else %}

@@ -5,6 +5,8 @@ Phase 4 running sessions above rank 0 by shifting these values; `sort_key`
 returning a rank-first tuple is the contract that makes that a local change.
 """
 
+from dataclasses import replace
+
 from bridge import gitprobe
 from bridge.config import Config, ModelChoice
 from bridge.models import Card, GitState, SessionRecord
@@ -48,6 +50,19 @@ def build_cards(store: Store, cfg: Config, probe_fn=None) -> list[Card]:
             git = probe_fn(row["path"])
         except Exception:  # noqa: BLE001 - a broken probe must not hide a card
             git = GitState(status="unavailable")
+
+        if git.status == "ok":
+            store.put_git_cache(row["id"], git, now)
+        elif git.status == "unavailable":
+            # Only `unavailable` is transient, and it deliberately does not
+            # write: caching it would overwrite the good state this fallback
+            # exists to return, so the first timeout would break the feature
+            # permanently. `not_a_repo` neither reads nor writes and falls
+            # through untouched, so a deleted repo reports honestly.
+            cached = store.get_git_cache(row["id"])
+            if cached is not None:
+                git, probed_at = cached
+                git = replace(git, cached_at=probed_at)
 
         handoff = _handoff(store, row["id"])
         cards.append(

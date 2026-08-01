@@ -955,3 +955,38 @@ def test_the_permission_select_is_labelled_and_marked_dangerous(launch_app):
     assert re.search(r'<label[^>]*for="launch-\d+-perm">Permissions</label>', html)
     # Colour is never the only signal: the option says so in words.
     assert "SKIP ALL CHECKS" in html
+
+
+# --- Phase 4 Task 4: the last good git state renders with its age ------------
+
+
+def test_a_stale_git_probe_renders_the_last_good_state_and_its_age(tmp_path):
+    """Rendered rather than asserted on the dataclass, because the filter choice
+    is the bug: `ago` takes an ISO-8601 string and `cached_at` is an epoch int,
+    so the wrong one either raises or renders nonsense."""
+    from bridge.models import GitState
+
+    import bridge.cards as cards_mod
+
+    cfg = load({"db_path": tmp_path / "g.db", "spool_dir": tmp_path / "spool"})
+    store = Store(cfg.db_path)
+    pid = store.upsert_project("/Users/mitsheth/dev/cached", "cached")
+    store.upsert_session(
+        SessionRecord(session_id="s-cached", transcript_path="/t/s-cached",
+                      title="Work", ended_at="2026-07-30T10:00:00.000Z"),
+        pid,
+    )
+    orig = cards_mod.gitprobe.probe
+    try:
+        cards_mod.gitprobe.probe = lambda p: GitState(status="ok", branch="cached-branch")
+        c = TestClient(create_app(store, cfg))
+        assert "cached-branch" in c.get("/").text
+
+        cards_mod.gitprobe.probe = lambda p: GitState(status="unavailable")
+        text = c.get("/").text
+        assert "cached-branch" in text, "the last good branch was not shown"
+        assert "as of" in text
+        assert "git unavailable" not in text
+    finally:
+        cards_mod.gitprobe.probe = orig
+        store.close()

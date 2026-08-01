@@ -6,12 +6,14 @@ display, once as an epoch int so range queries stay index-friendly.
 """
 
 import contextlib
+import dataclasses
+import json
 import sqlite3
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
-from bridge.models import Handoff, Launch, SessionRecord
+from bridge.models import GitState, Handoff, Launch, SessionRecord
 
 SCHEMA = [
     """
@@ -468,6 +470,49 @@ class Store:
                 "parsed_offset=excluded.parsed_offset, session_id=excluded.session_id",
                 (path, size, mtime, offset, session_id),
             )
+
+    # --- git_cache ----------------------------------------------------------
+    #
+    # The table has existed since Phase 1 and nothing ever read or wrote it.
+    # Only `status == "ok"` is written and only `status == "unavailable"` reads
+    # it back: `unavailable` is the one genuinely transient outcome (timeout,
+    # disk asleep), while `not_a_repo` is stable truth and must be allowed to
+    # say so rather than showing a fossil.
+
+    def put_git_cache(self, project_id: int, git: GitState, probed_at: int) -> None:
+        with self._lock:
+            self.conn.execute(
+                "INSERT INTO git_cache (project_id, payload_json, probed_at) "
+                "VALUES (?, ?, ?) "
+                "ON CONFLICT(project_id) DO UPDATE SET "
+                "payload_json=excluded.payload_json, probed_at=excluded.probed_at",
+                (project_id, json.dumps(dataclasses.asdict(git)), probed_at),
+            )
+
+    def get_git_cache(self, project_id: int) -> tuple[GitState, int] | None:
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT payload_json, probed_at FROM git_cache WHERE project_id=?",
+                (project_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        try:
+            payload = json.loads(row["payload_json"])
+        except (TypeError, ValueError):
+            return None
+        if not isinstance(payload, dict):
+            return None
+        # Filtered to fields `GitState` actually has. The cache is a JSON blob
+        # that outlives any one version of the dataclass, so a field added or
+        # removed between writes must degrade rather than raise -- a bare
+        # `GitState(**payload)` would turn every cache hit into a TypeError and
+        # take the whole dashboard down.
+        known = {f.name for f in dataclasses.fields(GitState)}
+        return (
+            GitState(**{k: v for k, v in payload.items() if k in known}),
+            row["probed_at"],
+        )
 
     def token_totals(self, project_id: int, since_epoch: int) -> int:
         with self._lock:
