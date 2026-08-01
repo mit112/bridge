@@ -23,7 +23,7 @@ from bridge import agents, hooks, launcher, spool
 from bridge.cards import FIVE_HOURS, LivenessDebouncer, build_cards, spark_points
 from bridge.config import Config
 from bridge.indexer import reindex
-from bridge.models import Handoff
+from bridge.models import AgentsState, Handoff
 from bridge.registry import display_name, resolve_project
 from bridge.store import Store, now_epoch
 
@@ -222,10 +222,18 @@ def create_app(
         # anywhere -- which is why the tests assert on it explicitly.
         return f"event: {event}\ndata: {json.dumps(payload)}\n\n"
 
-    def _live_snapshot() -> dict:
+    def _live_snapshot(state: AgentsState | None = None) -> dict:
         """Live state keyed by project path. Acquires the store lock only for
-        the two cheap reads it needs, and never holds it across a sleep."""
-        state = agents.probe()
+        the two cheap reads it needs, and never holds it across a sleep.
+
+        `state` lets a caller that has already probed reuse the result. The
+        dashboard needs liveness three times over -- the cards, the diagnostics
+        alert and the unattributed block -- and three separate probes would
+        observe three different instants, putting three disagreeing pictures of
+        what is running on one page.
+        """
+        if state is None:
+            state = agents.probe()
         # Same overlay the dashboard applies, so a card and a live tick can
         # never disagree about whether a session is waiting on a human.
         if state.status == "ok":
@@ -325,7 +333,7 @@ def create_app(
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
-    def _diagnostics() -> dict:
+    def _diagnostics(state: AgentsState | None = None) -> dict:
         """Everything the diagnostics view shows, as plain data.
 
         Shared by the JSON route and the HTML one so the two can never disagree
@@ -336,7 +344,7 @@ def create_app(
         # A fresh install has no runs at all; the route must answer, not 500.
         parse_errors = int((last_index or {}).get("parse_errors") or 0)
 
-        live = agents.probe()
+        live = agents.probe() if state is None else state
         return {
             "last_index": last_index,
             "parse_errors": parse_errors,
@@ -371,8 +379,15 @@ def create_app(
 
     @app.get("/", response_class=HTMLResponse)
     def dashboard(request: Request):
-        cards = build_cards(store, cfg, debouncer=debouncer,
-                            hook_state=hook_state)
+        # ONE probe for the whole page. `build_cards` guards its own call, so
+        # the guard has to move out here with it: without this a sensor failure
+        # would 500 the dashboard instead of rendering it with no live bands.
+        try:
+            probe = agents.probe()
+        except Exception:  # noqa: BLE001
+            probe = AgentsState(status="unavailable", sessions=[], source="none")
+        cards = build_cards(store, cfg, agents_fn=lambda: probe,
+                            debouncer=debouncer, hook_state=hook_state)
         # `store.projects()` whitelists `active`, so a hidden project is absent
         # from the cards entirely. Without this list, hiding one would be a
         # one-way door: nothing in the panel could name it again, let alone
@@ -383,11 +398,11 @@ def create_app(
         # Called once, not twice: `_diagnostics()` runs the liveness sensor, and
         # the topbar's running count has to be the same number the alert beside
         # it was computed from.
-        diag = _diagnostics()
+        diag = _diagnostics(probe)
         # Built from the same snapshot the SSE stream sends, so the block below
         # and the live ticks that patch it can never disagree about what is
         # running where -- the same reason the overlay is shared at line 218.
-        snapshot = _live_snapshot()
+        snapshot = _live_snapshot(probe)
         unattributed = [
             dict(snapshot["live"][cwd], cwd=cwd) for cwd in snapshot["unattributed"]
         ]

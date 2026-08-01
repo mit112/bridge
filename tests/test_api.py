@@ -1667,3 +1667,34 @@ def test_the_card_reports_its_pin_state_to_assistive_technology(client):
     assert re.search(
         rf'data-project-pin="{pid}"[^>]*aria-pressed="true"', c.get("/").text
     )
+
+
+def test_the_dashboard_probes_liveness_exactly_once(client, monkeypatch):
+    """Three probes would observe three different instants and put three
+    disagreeing pictures of what is running on one page."""
+    from bridge import agents
+    from bridge.models import AgentsState
+
+    calls = []
+    monkeypatch.setattr(agents, "probe", lambda *a, **k: (
+        calls.append(1), AgentsState(status="ok", sessions=[])
+    )[1])
+
+    c, _, _ = client
+    assert c.get("/").status_code == 200
+    assert len(calls) == 1, f"probed {len(calls)} times"
+
+
+def test_a_failing_sensor_renders_the_dashboard_instead_of_500ing(client, monkeypatch):
+    """build_cards guards its own probe, so hoisting the call out had to carry
+    the guard with it."""
+    from bridge import agents
+
+    def boom(*a, **k):
+        raise OSError("sensor down")
+
+    monkeypatch.setattr(agents, "probe", boom)
+    c, _, _ = client
+    r = c.get("/")
+    assert r.status_code == 200
+    assert "demo" in r.text
