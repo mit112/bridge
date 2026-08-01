@@ -194,3 +194,23 @@ def test_a_failed_sensor_does_not_apply_the_overlay(tmp_path):
     assert card.live_unavailable is True
     # And the hook state was NOT reconciled away by a failed read.
     assert state.is_waiting(SID) is True
+
+
+def test_a_bug_inside_record_cannot_escape_into_the_posting_session(tmp_path,
+                                                                    monkeypatch):
+    """The malformed-body cases never reach `record`'s body, so they cannot
+    exercise this guard. A Bridge bug must surface as a Bridge bug, not as a
+    failing hook inside whatever session happened to fire it.
+    """
+    def boom(self, event, now=None):
+        raise RuntimeError("hook state exploded")
+
+    monkeypatch.setattr(hooks.HookState, "record", boom)
+    cfg = load({"db_path": tmp_path / "b.db", "spool_dir": tmp_path / "spool"})
+    store = Store(cfg.db_path)
+    c = TestClient(create_app(store, cfg))
+    r = c.post("/api/hooks", json=notification("permission_prompt"))
+    store.close()
+
+    assert r.status_code == 200
+    assert r.json() == {"ok": True}

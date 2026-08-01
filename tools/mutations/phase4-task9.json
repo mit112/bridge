@@ -87,7 +87,7 @@
     "old": "        try:\n            hook_state.record(event)\n        except Exception:  # noqa: BLE001\n            pass",
     "new": "        hook_state.record(event)",
     "tests": [
-      "tests/test_hooks.py::test_a_malformed_body_still_answers_200"
+      "tests/test_hooks.py::test_a_bug_inside_record_cannot_escape_into_the_posting_session"
     ],
     "expect_count": 1
   },
