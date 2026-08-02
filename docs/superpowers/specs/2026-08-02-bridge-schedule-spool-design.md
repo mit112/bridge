@@ -33,19 +33,34 @@ guarded replay into an empty table.
 - No outbox. `bridge handoff` spools because the panel may be down; a schedule can only be authored
   *through* the panel (`POST /api/schedule` — there is no schedule CLI), so there is no offline
   authoring path to catch. This halves the module: no `write`, no `pending`, no `drain`.
-- No journaling of the `launching` transition. It is not terminal, and losing the database mid-launch
-  is handled correctly by the replay rules below without it.
 - No new config field. The directory derives from the existing `cfg.spool_dir`.
 - No change to when or whether jobs fire in normal operation. This is a recovery path only.
 
-## Why creations plus terminal statuses is sufficient
+## Why claims must be journaled
 
-`scheduled_runs` has nine mutation sites. Journaling all of them means nine places to keep in sync.
-Replay only needs to answer two questions: *what work is still owed*, and *what is already
-finished*. That drops the two claim paths — `claim_one_due` and `claim_specific` — leaving seven
-sites that write to the journal, because `launching` is transient: a database
-lost while a job is in `launching` leaves a creation record with no terminal record, which rule 4
-below resolves to `missed`. Safe, and it needs no journal write on the claim path.
+An earlier draft of this spec excluded the two claim paths (`claim_one_due`, `claim_specific`) on
+the grounds that `launching` is transient and a creation with no terminal record would resolve to
+`missed` anyway. **That was wrong, and it permitted a duplicate launch.**
+
+`claim_specific` has no `scheduled_for` guard (`store.py:737-742`) — `POST /api/schedule/{id}/run-now`
+can fire a job whose scheduled time is still in the future. `_fire_claimed_job` spawns the session
+before recording any terminal status (`api.py:349-384`). So:
+
+1. A job is scheduled for tomorrow. The user hits run-now today. A session spawns.
+2. The database is lost before the terminal status is written.
+3. The journal holds a creation record with `scheduled_for` in the *future* and nothing else.
+4. Replay restores it as `pending`, and the scheduler fires it again tomorrow.
+
+The session runs twice. Nothing in the "never fire retroactively" rule catches it, because the
+scheduled time genuinely has not passed.
+
+The fix is to journal the claim. A `launching` record means *a launch may already have happened*,
+which is exactly what `reconcile_launching` concludes for the in-database version of the same
+situation, and it resolves to `indeterminate` — terminal, and never re-claimed.
+
+That leaves all nine mutation sites journaled. The claim write sits on the scheduler's tick path,
+which is acceptable: schedules are low-volume and the tick already does far more work per job than
+one small file write.
 
 ## Architecture
 
@@ -60,9 +75,9 @@ moving the functions and adding a public alias would change those counts and bre
 nothing and keeps `spool.py` byte-identical.
 
 Records live in `~/.bridge/spool/schedules/`, a sibling of `drained/` and `bad/`. A separate
-directory rather than a shared one is deliberate: `spool._load` globs `drained/*.json` and parses
-anything not ending in `.status.json` as a `Handoff`. Schedule records in that directory would be
-quarantined as corrupt handoffs. The `STATUS_SUFFIX` comment at `spool.py:33-35` already flags this
+directory rather than a shared one is deliberate: `spool.rebuild_if_empty` globs `drained/*.json`
+and hands everything not ending in `.status.json` to `spool._load`, which parses it as a `Handoff`.
+Schedule records in that directory would be quarantined as corrupt handoffs. The `STATUS_SUFFIX` comment at `spool.py:33-35` already flags this
 exact hazard for two record types; a third would compound it.
 
 ### Public surface
@@ -89,21 +104,29 @@ Guarded on `store.count_scheduled_runs() == 0`, the direct analogue of `handoff_
 `spool.py:232`. The guard is the whole point: replaying onto a live table would resurrect finished
 jobs on every `bridge index`.
 
-Creations and status records are loaded separately. For each creation, in `(created_at, id)` order:
+Creations and status records are loaded separately. For each creation, in `(created_at, id)` order,
+where several status records exist for one job the greatest `at` wins:
 
-1. A `pruned` status record exists → **skip entirely; do not insert.**
-2. Any other terminal status exists → insert with that status.
-3. No terminal status and `scheduled_for > now` → insert as `pending`.
-4. No terminal status and `scheduled_for <= now` → insert as `missed`.
+1. A `pruned` record exists → **skip entirely; do not insert.**
+2. The winning record is terminal (`fired`, `failed`, `indeterminate`, `cancelled`) → insert with
+   that status.
+3. The winning record is `launching` → insert as `indeterminate`. A session may already have
+   spawned; this is the only honest answer and it is never re-claimed.
+4. No status record and `scheduled_for > now` → insert as `pending`.
+5. No status record and `scheduled_for <= now` → insert as `missed`.
 
-Where a job has several status records, the one with the greatest `at` wins.
+A record whose `status` is not in the written vocabulary — `launching`, `fired`, `failed`,
+`indeterminate`, `cancelled`, `pruned` — is **quarantined, not ignored**. Shape validation alone
+(what `spool._load_status` does) would let a malformed or future-written record claiming `pending`
+restore a fireable job, which is the one outcome replay must never produce. `missed` is absent from
+that vocabulary on purpose: it is derived here and never written.
 
 **Rule 1** is why `pruned` is journal-only vocabulary and never a database status. Retention already
 judged that row disposable; inserting it and then marking it would put a row back into the table
 that the retention policy had removed. Skipping keeps the journal authoritative about deletions
 without teaching the schema a status no live code path produces.
 
-**Rule 4** is the answer to "a pending job whose time passed while the database was gone." It never
+**Rule 5** is the answer to "a pending job whose time passed while the database was gone." It never
 fires. Firing retroactively would launch a Claude session at an unpredictable time for work the user
 may have long forgotten scheduling — the same reasoning that made `bridge launch` refuse to spool
 (`docs/superpowers/plans/2026-07-31-bridge-phase3-launcher.md:50`). `missed` is terminal and visible
@@ -132,15 +155,48 @@ that is the reason `retry_terminal` exists.
 
 ## Store changes
 
-`prune_scheduled_runs` and `reconcile_launching` currently return `int`. Both are bulk operations
-whose affected rows must be journaled, so both return the list of affected ids instead. Their
-callers at `__main__.py:102` and `__main__.py:109-111` use the value only for a log line and take
-`len(...)`.
+### Bulk operations must journal *before* they mutate
 
-`reconcile_launching` journals `indeterminate` per id. This is fidelity rather than safety: without
-it, a row reconciled to `indeterminate` and later replayed would land in `missed` by rule 4. Both
-are terminal and neither fires, so the system stays correct either way — but the journal is cheap
-once the ids are already in hand for prune, and a faithful replay is worth having.
+`prune_scheduled_runs` and `reconcile_launching` currently mutate and return an `int`. Journaling
+from their return value would write the record *after* the database changed, and since boot errors
+are swallowed, a failed write would leave a row deleted with no `pruned` marker — which replay would
+then resurrect. That breaks the journal-before-write rule the rest of this design follows.
+
+So each gains a read-only companion, and the caller sequences the three steps itself:
+
+| method | returns |
+|---|---|
+| `prunable_scheduled_run_ids(before_epoch)` | ids a prune would delete |
+| `prune_scheduled_runs(ids)` | count actually deleted |
+| `launching_scheduled_run_ids()` | ids currently `launching` |
+| `reconcile_launching(now)` | count flipped (unchanged signature) |
+
+Boot then reads ids → journals each → mutates. **A journal failure skips that row's mutation.**
+Retention is best-effort and can wait for the next boot; journal integrity cannot. This also closes
+the empty-table guard's blind spot: `count_scheduled_runs() == 0` cannot distinguish a lost database
+from one retention emptied, and it does not need to, because every reaped row is guaranteed to carry
+a `pruned` record before it disappears.
+
+`prune_scheduled_runs` taking explicit ids rather than re-deriving the age bound also removes a
+time-of-check/time-of-use gap between the two calls.
+
+### Replay needs its own insert
+
+`create_scheduled_run` inserts twelve columns and **not** `completed_at`, `fired_at`, `launch_id` or
+`error` (`store.py:673-685`) — a newly authored schedule has none of them. Replay does: a restored
+`fired` row with `completed_at = NULL` would never satisfy `prune_scheduled_runs`'s
+`completed_at < ?` bound and would sit in the table forever.
+
+Replay therefore uses a new `restore_scheduled_run(job)` that inserts every column. Keeping it
+separate from `create_scheduled_run` leaves that method — and its mutation anchors — untouched, and
+states plainly that only recovery may write a terminal row directly.
+
+Replay derives `completed_at` from the winning status record's `at`, and for a rule-5 `missed` row
+from `now`.
+
+### `retry_terminal`
+
+Its guard gains `'missed'`, becoming `orig.status IN ('failed','indeterminate','missed')`.
 
 ## Call sites
 
@@ -153,9 +209,15 @@ Journal-before-database-write at every site, matching the existing convention (`
 | `PATCH /api/schedule/{id}` | `api.py:1018-1027` | `journal(updated_job)` |
 | `DELETE /api/schedule/{id}` | `api.py:1029-1033` | `journal_status(id, 'cancelled')` |
 | `POST /api/schedule/{id}/retry` | `api.py:1042-1065` | `journal(new_row)` |
-| `_fire_claimed_job` | `api.py:327-384` | `journal_status(id, outcome)` for `fired` / `failed` / `indeterminate` |
-| boot reconcile | `__main__.py:102` | `journal_status(id, 'indeterminate')` per id |
-| boot prune | `__main__.py:109-111` | `journal_status(id, 'pruned')` per id |
+| `_fire_claimed_job` entry | `api.py:327-343` | `journal_status(id, 'launching')` **before** firing |
+| `_fire_claimed_job` exit | `api.py:375-384` | `journal_status(id, outcome)` for `fired` / `failed` / `indeterminate` |
+| boot reconcile | `__main__.py:102` | `journal_status(id, 'indeterminate')` per id, before the flip |
+| boot prune | `__main__.py:109-111` | `journal_status(id, 'pruned')` per id, before the delete |
+
+The claim is journaled at the top of `_fire_claimed_job` rather than at the two `claim_*` store
+methods, because that function is the single shared tail for all three claim paths — the scheduler
+tick, `run-now`, and `retry` (whose row arrives already `launching`). One call site covers all of
+them, and it sits after the claim succeeded and before anything can spawn.
 | `bridge index` | `__main__.py:65` | `schedspool.rebuild_if_empty(...)` |
 
 Hooking at call sites rather than inside `store.py` keeps the store a pure database layer with no
@@ -172,9 +234,14 @@ Per-site, following what each existing site already does rather than inventing a
   schedule.
 - **Edit** (`PATCH`): a journal failure propagates, as at `api.py:851-857`. The journal must never
   lag the database it exists to rebuild.
+- **The claim record** at the top of `_fire_claimed_job`: a failure **aborts the fire**, finishing
+  the row as `failed` with a clear error. This is the one place a journal failure must stop the
+  work — the record is what prevents a duplicate launch after database loss, so firing without it
+  is precisely the scenario this spec exists to close.
 - **Terminal statuses** from `_fire_claimed_job`: demoted to a logged warning. A launched session is
   not undone by a filesystem error, matching `launcher.py:595-596`.
-- **Boot reconcile and prune**: logged and swallowed. Neither may block `bridge serve` from starting.
+- **Boot reconcile and prune**: logged, and the row's mutation is **skipped**. Neither may block
+  `bridge serve` from starting, and neither may mutate a row it failed to journal.
 - **Replay**: a record that will not parse is quarantined to `bad/` and the replay continues, as at
   `spool.py:246-248`. One corrupt file never costs the others.
 
@@ -196,9 +263,16 @@ Then asserts, in one scenario covering all four replay rules: a future pending j
 `pending`, a fired job as `fired`, a past-due pending job as `missed`, and a pruned job **not at
 all**.
 
+A second named regression test covers the blocker this spec was revised to fix: a job scheduled for
+the *future*, claimed by `run-now`, whose database is then lost, must replay as `indeterminate` and
+**not** as `pending`. Without the claim record it comes back fireable and the session runs twice.
+
 Further cases: replay is skipped when the table is non-empty; the greatest `at` wins among several
 status records for one job; an edit's re-journal is what replays, not the original text; a corrupt
-record is quarantined and the rest still replay; `retry_terminal` accepts a `missed` row.
+record is quarantined and the rest still replay; a status record with an out-of-vocabulary status
+such as `pending` is quarantined rather than applied; a replayed terminal row carries a
+`completed_at` and is therefore reapable by retention; a boot prune whose journal write fails does
+not delete the row; `retry_terminal` accepts a `missed` row.
 
 `tests/conftest.py`'s autouse `never_touch_the_real_bridge_dir` guard tuple at `conftest.py:76-77`
 grows to cover `schedspool`'s `journal`, `journal_status` and `rebuild_if_empty`. Its own docstring
