@@ -719,8 +719,20 @@ def test_cancelling_the_last_row_closes_the_empty_section(tmp_path):
     """An open <details> reading "Scheduled 0" with nothing under it is what
     the count-only bookkeeping used to leave behind."""
     got = _run_schedule_cancel(tmp_path, remaining=0)
-    assert got["detailsHidden"] is True
     assert got["detailsOpen"] is False
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_the_emptied_section_is_collapsed_but_never_hidden(tmp_path):
+    """Collapsing is safe; hiding is not. The cancel handler has just moved
+    focus to this <summary> and announced "Cancelled" into a live region
+    inside it -- `hidden` takes both out of the accessibility tree in the same
+    task, dropping focus to <body> and swallowing the announcement (WCAG
+    2.4.3, 4.1.3)."""
+    got = _run_schedule_cancel(tmp_path, remaining=0)
+    assert got["detailsHidden"] is False
+    assert got["summaryFocused"] is True
+    assert "Cancelled" in got["sectionStatus"]
 
 
 @pytest.mark.skipif(_node() is None, reason="node is not installed")
@@ -744,22 +756,34 @@ globalThis.window = globalThis;
 let clickHandler = null;
 
 const state = { textContent: "pending" };
+const announceSpan = { name: "announce" };
 const controls = [
   { removed: false, remove() { this.removed = true; } },
   { removed: false, remove() { this.removed = true; } },
   { removed: false, remove() { this.removed = true; } },
 ];
 let queriedAll = null;
-const appended = [];
+const inserted = [];
 const row = {
   className: "scheduled__job scheduled__job--pending",
-  querySelector: (sel) => (sel === "[data-scheduled-state]" ? state : null),
+  getAttribute: (n) =>
+    (n === "data-scheduled-retry-label" ? "Retry demo run scheduled for T" : null),
+  querySelector(sel) {
+    if (sel === "[data-scheduled-state]") return state;
+    if (sel === "[data-scheduled-status]") return announceSpan;
+    if (sel === "[data-scheduled-error]") return this.note ?? null;
+    return null;
+  },
   querySelectorAll(sel) { queriedAll = sel; return controls; },
-  append(el) { appended.push(el); },
+  insertBefore(el, before) {
+    inserted.push({ el, before: before ? before.name ?? "note" : null });
+    if (el.attrs && el.attrs["data-scheduled-error"] !== undefined) this.note = el;
+  },
 };
 const rowStatus = { textContent: "" };
 const summaryCount = { textContent: "1" };
 const topbarCount = { textContent: "1" };
+const summary = { focused: false, focus() { this.focused = true; } };
 
 const nodes = {
   '[data-scheduled-job="sched-7"]': row,
@@ -768,6 +792,7 @@ const nodes = {
   "[data-topbar-scheduled]": topbarCount,
   "[data-scheduled-list]": { children: { length: 1 } },
   "[data-scheduled]": { hidden: false, open: true },
+  "[data-scheduled] summary": summary,
 };
 
 globalThis.document = {
@@ -775,6 +800,7 @@ globalThis.document = {
   querySelector: (sel) => nodes[sel] ?? null,
   createElement: () => ({
     attrs: {}, setAttribute(n, v) { this.attrs[n] = v; },
+    focused: false, focus() { this.focused = true; },
     textContent: "", className: "", type: "",
   }),
 };
@@ -799,9 +825,13 @@ clickHandler({ target: runNowButton }).then(() => {
     state: state.textContent,
     queriedAll,
     removed: controls.map((c) => c.removed),
-    appended: appended.map((el) => ({ text: el.textContent, attrs: el.attrs })),
+    inserted: inserted.map((i) => ({
+      text: i.el.textContent, attrs: i.el.attrs, before: i.before,
+      focused: i.el.focused ?? null, className: i.el.className,
+    })),
     rowStatus: rowStatus.textContent,
     count: summaryCount.textContent,
+    summaryFocused: summary.focused,
   }));
 });
 """
@@ -814,6 +844,14 @@ def _run_settle(tmp_path, status: str) -> dict:
     )
 
 
+def _buttons(got):
+    return [i for i in got["inserted"] if i["text"] == "Retry"]
+
+
+def _notes(got):
+    return [i for i in got["inserted"] if i["className"] == "card__note"]
+
+
 @pytest.mark.skipif(_node() is None, reason="node is not installed")
 def test_run_now_restates_the_row_and_drops_the_pending_only_controls(tmp_path):
     got = _run_settle(tmp_path, "fired")
@@ -822,18 +860,56 @@ def test_run_now_restates_the_row_and_drops_the_pending_only_controls(tmp_path):
     assert all(got["removed"]), "a pending-only control survived the run"
     for control in ("run-now", "edit-toggle", "cancel", "edit-panel"):
         assert f"data-scheduled-{control}" in got["queriedAll"]
-    assert got["appended"] == [], "a fired run has nothing to retry"
+    assert _buttons(got) == [], "a fired run has nothing to retry"
     assert got["count"] == "0"
 
 
 @pytest.mark.skipif(_node() is None, reason="node is not installed")
-def test_a_run_now_that_fails_grows_a_retry_button_naming_its_own_job(tmp_path):
+def test_a_fired_run_now_hands_focus_to_the_section_it_leaves_behind(tmp_path):
+    """The clicked button was just removed. Nothing replaced it on a `fired`
+    row, so focus has to land somewhere that outlives the row rather than
+    silently falling to <body> (WCAG 2.4.3)."""
+    got = _run_settle(tmp_path, "fired")
+    assert got["summaryFocused"] is True
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_a_run_now_that_fails_grows_a_focused_retry_button_naming_its_own_job(tmp_path):
     got = _run_settle(tmp_path, "failed")
-    assert len(got["appended"]) == 1
-    button = got["appended"][0]
-    assert button["text"] == "Retry"
+    buttons = _buttons(got)
+    assert len(buttons) == 1
+    button = buttons[0]
     assert button["attrs"]["data-scheduled-retry"] == "sched-7"
+    # Named, not a bare "Retry": twenty finished rows would otherwise be twenty
+    # identical entries in a screen reader's button list.
+    assert button["attrs"]["aria-label"] == "Retry demo run scheduled for T"
+    # Focus follows the control that replaced the one just removed, and stays
+    # in the row rather than jumping to the section.
+    assert button["focused"] is True and got["summaryFocused"] is False
     assert "spawn boom" in got["rowStatus"]
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_a_failed_run_now_keeps_the_error_on_screen_not_just_in_the_live_region(tmp_path):
+    """A polite announcement is gone the moment anything else is announced. A
+    row marked "failed" whose reason exists nowhere on the page is what this
+    note prevents -- the server renders one, so a settled row must too."""
+    got = _run_settle(tmp_path, "failed")
+    notes = _notes(got)
+    assert len(notes) == 1
+    assert notes[0]["attrs"]["data-scheduled-error"] == ""
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_the_settled_retry_button_lands_before_the_live_region(tmp_path):
+    """Server order is Retry, then the error note, then the announce span. A
+    button appended after the live region would tab differently depending on
+    whether the row was reloaded or settled in place."""
+    got = _run_settle(tmp_path, "failed")
+    assert _buttons(got)[0]["before"] == "note", (
+        "the retry button must precede the error note the server puts after it"
+    )
+    assert _notes(got)[0]["before"] == "announce"
 
 
 @pytest.mark.skipif(_node() is None, reason="node is not installed")
@@ -841,8 +917,7 @@ def test_an_indeterminate_run_now_also_gets_a_retry_button(tmp_path):
     """`run-now` is gated to `pending` and the scheduler never re-claims an
     indeterminate row, so this button is the only recovery it has."""
     got = _run_settle(tmp_path, "indeterminate")
-    assert len(got["appended"]) == 1
-    assert got["appended"][0]["attrs"]["data-scheduled-retry"] == "sched-7"
+    assert _buttons(got)[0]["attrs"]["data-scheduled-retry"] == "sched-7"
 
 
 # --- (f) retry goes to the schedule, not to a bare launch -------------------
@@ -852,12 +927,29 @@ globalThis.window = globalThis;
 let clickHandler = null;
 
 const rowStatus = { textContent: "" };
-const row = { getAttribute: () => "sched-5" };
+const state = { textContent: "failed" };
+const announceSpan = {};
+const inserted = [];
+const row = {
+  className: "scheduled__job scheduled__job--failed",
+  getAttribute: () => "sched-5",
+  querySelector(sel) {
+    if (sel === "[data-scheduled-state]") return state;
+    if (sel === "[data-scheduled-status]") return announceSpan;
+    if (sel === "[data-scheduled-error]") return this.note ?? null;
+    return null;
+  },
+  insertBefore(el) { inserted.push(el); this.note = el; },
+};
 const nodes = { '[data-scheduled-status="sched-5"]': rowStatus };
 
 globalThis.document = {
   addEventListener(type, fn) { if (type === "click") clickHandler = fn; },
   querySelector: (sel) => nodes[sel] ?? null,
+  createElement: () => ({
+    attrs: {}, setAttribute(n, v) { this.attrs[n] = v; },
+    textContent: "", className: "",
+  }),
 };
 
 let sentUrl = null;
@@ -893,6 +985,9 @@ clickHandler({ target: retryButton }).then(() => {
     rowStatus: rowStatus.textContent,
     buttonRemoved: retryButton.removed,
     retryTarget: retryButton.attrs["data-scheduled-retry"],
+    rowClass: row.className,
+    state: state.textContent,
+    note: inserted.map((el) => el.textContent),
   }));
 });
 """
@@ -931,6 +1026,17 @@ def test_a_retry_that_fails_again_repoints_the_button_at_the_new_run(tmp_path):
     assert got["retryTarget"] == "sched-6"
     assert got["buttonRemoved"] is False
     assert "still no claude" in got["rowStatus"]
+    # ...and the row is restated to match, so it never describes run A while
+    # its only control acts on run B.
+    assert got["note"] == ["still no claude"]
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_a_chained_retry_restates_the_row_without_growing_a_second_button(tmp_path):
+    got = _run_retry(tmp_path, {"id": "sched-6", "status": "indeterminate"})
+    assert got["state"] == "indeterminate"
+    assert got["rowClass"] == "scheduled__job scheduled__job--indeterminate"
+    assert got["note"] == [], "no error, so no empty note"
 
 
 @pytest.mark.skipif(_node() is None, reason="node is not installed")

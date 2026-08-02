@@ -66,9 +66,13 @@
      that just disappeared. #}
   <p class="scheduled__section-status" role="status" aria-live="polite"
      data-scheduled-section-status></p>
-  <ul data-scheduled-list>
+  <ul data-scheduled-list {% if scheduled_older %}aria-describedby="scheduled-older"{% endif %}>
     {% for job in scheduled %}
-      <li data-scheduled-job="{{ job.id }}" class="scheduled__job scheduled__job--{{ job.status }}">
+      {# `data-scheduled-retry-label` is carried on the row, not just on the
+         button: `settleRow` builds a Retry button client-side and has to name
+         it the same way the server would. #}
+      <li data-scheduled-job="{{ job.id }}" class="scheduled__job scheduled__job--{{ job.status }}"
+          data-scheduled-retry-label="Retry {{ job.project_name }} run scheduled for {{ job.scheduled_for_utc }}">
         {# `datetime` and the visible text are both UTC, computed once in the
            handler: the server never knows the viewer's timezone, but a raw
            epoch int read before `schedule.js` runs is not a time to anyone.
@@ -107,9 +111,16 @@
              button carries nothing but the id -- the server re-reads the row,
              which is what keeps `source_handoff_id` attached to the retry. #}
           {% if job.retryable %}
-            <button type="button" class="btn" data-scheduled-retry="{{ job.id }}">Retry</button>
+            {# A bare "Retry" is twenty identical entries in a screen reader's
+               button list once the finished-run history fills up. The label is
+               also stashed on the row so `settleRow` can name the button it
+               builds the same way. #}
+            <button type="button" class="btn" data-scheduled-retry="{{ job.id }}"
+                    aria-label="Retry {{ job.project_name }} run scheduled for {{ job.scheduled_for_utc }}">Retry</button>
           {% endif %}
-          {% if job.error %}<span class="card__note">{{ job.error }}</span>{% endif %}
+          {% if job.error %}
+            <span class="card__note" data-scheduled-error>{{ job.error }}</span>
+          {% endif %}
         {% endif %}
         <span class="scheduled__announce" role="status" aria-live="polite"
               data-scheduled-status="{{ job.id }}"></span>
@@ -118,10 +129,14 @@
   </ul>
   {# Said out loud rather than silently truncated: a list that quietly stops at
      twenty looks like the whole history to anyone who does not know there is a
-     cap. `GET /api/schedule` still has all of them. #}
+     cap. `aria-describedby` on the <ul> above is what puts the caveat in reach
+     of someone navigating list-to-list, who would otherwise never enter this
+     paragraph -- and the link is the route to the rows themselves, because
+     naming data you then give no way to reach is worse than not mentioning it. #}
   {% if scheduled_older %}
-    <p class="card__note" data-scheduled-older>{{ scheduled_older }} older finished
-      {{ "run" if scheduled_older == 1 else "runs" }} not shown</p>
+    <p class="card__note" id="scheduled-older" data-scheduled-older>{{ scheduled_older }} older
+      finished {{ "run" if scheduled_older == 1 else "runs" }} not shown —
+      <a href="/api/schedule">see the full history</a></p>
   {% endif %}
 </details>
 

@@ -2346,6 +2346,11 @@ def test_the_retry_button_carries_only_the_id_it_retries(client):
     assert 'data-scheduled-retry="sched-lean"' in body
     assert "data-retry-path" not in body
     assert "data-scheduled-retry-prompt" not in body
+    # Named per row rather than a bare "Retry": once the finished history fills
+    # up, twenty of these are twenty identical entries in a button list. The
+    # row carries the same label so `settleRow` can name the one it builds.
+    assert 'aria-label="Retry demo run scheduled for' in body
+    assert 'data-scheduled-retry-label="Retry demo run scheduled for' in body
 
 
 # --- Follow-up 3: retention and pagination ------------------------------------
@@ -2396,6 +2401,11 @@ def test_the_dashboard_caps_terminal_rows_and_says_how_many_it_held_back(client)
     # Newest first: the three oldest are the ones held back.
     assert "t00" not in shown and shown[0] == f"t{DASHBOARD_TERMINAL_SCHEDULES + 2:02d}"
     assert "3 older" in body
+    # Reachable, not just announced: a note that names data and offers no route
+    # to it is worse than no note. And the <ul> points at it, so someone
+    # navigating list-to-list meets the caveat rather than stepping over it.
+    assert '<a href="/api/schedule">' in body
+    assert 'aria-describedby="scheduled-older"' in body
 
 
 def test_the_dashboard_never_holds_back_an_active_job(client):

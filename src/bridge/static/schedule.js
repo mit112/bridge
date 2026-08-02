@@ -92,26 +92,51 @@ function bumpScheduledCount(delta) {
   // "Scheduled 0" with nothing under it. Emptiness is the LIST's, not the
   // count's -- a finished run still on screen is history worth keeping open,
   // and the count only ever counts the active ones.
+  //
+  // Collapsed, never `hidden`. The cancel handler has just moved focus to the
+  // <summary> and the section's live region is about to announce "Cancelled";
+  // hiding the <details> would take both out of the accessibility tree in the
+  // same task, dropping focus to <body> and swallowing the announcement (WCAG
+  // 2.4.3, 4.1.3) -- exactly what moving them off the row was meant to
+  // prevent. A reload renders the empty section `hidden` anyway.
   if (delta < 0) {
     const list = document.querySelector("[data-scheduled-list]");
     const details = document.querySelector("[data-scheduled]");
-    if (list && details && list.children.length === 0) {
-      details.open = false;
-      details.hidden = true;
-    }
+    if (list && details && list.children.length === 0) details.open = false;
   }
+}
+
+// The visible state of a row, rewritten to match what the server would render
+// for the status it has now: the class, the status word, and the error beside
+// it. Split out from `settleRow` because a chained retry needs exactly this
+// much and no more -- it must NOT grow a second Retry button.
+function restateRow(row, status, error) {
+  row.className = `scheduled__job scheduled__job--${status}`;
+  const state = row.querySelector("[data-scheduled-state]");
+  if (state) state.textContent = status;
+  // Server-rendered rows keep the error in a note beside the status; a row
+  // settled in place had it only in the polite live region, which is gone the
+  // moment anything else is announced. A row marked "failed" with the reason
+  // nowhere on screen is the state this avoids.
+  let note = row.querySelector("[data-scheduled-error]");
+  if (error && !note) {
+    note = document.createElement("span");
+    note.className = "card__note";
+    note.setAttribute("data-scheduled-error", "");
+    row.insertBefore(note, row.querySelector("[data-scheduled-status]"));
+  }
+  if (note) note.textContent = error || "";
 }
 
 // After a run-now the row still carries the controls the server rendered for a
 // `pending` job -- Run now, Edit, Cancel -- and every one of them can now only
 // 409. This is what makes the row agree with the database without a reload:
-// the same shape the server would render for the status it just reached.
-function settleRow(id, status) {
+// the same shape, and the same order, the server would render for the status
+// it just reached.
+function settleRow(id, status, error) {
   const row = document.querySelector(`[data-scheduled-job="${id}"]`);
   if (!row) return;
-  row.className = `scheduled__job scheduled__job--${status}`;
-  const state = row.querySelector("[data-scheduled-state]");
-  if (state) state.textContent = status;
+  restateRow(row, status, error);
   row.querySelectorAll(
     "[data-scheduled-run-now], [data-scheduled-edit-toggle], " +
     "[data-scheduled-cancel], [data-scheduled-edit-panel]",
@@ -123,9 +148,26 @@ function settleRow(id, status) {
     button.type = "button";
     button.className = "btn";
     button.setAttribute("data-scheduled-retry", id);
+    // Named like the server's, and for the same reason: twenty rows of a bare
+    // "Retry" are twenty identical entries in a screen reader's button list.
+    const label = row.getAttribute("data-scheduled-retry-label");
+    button.setAttribute("aria-label", label || "Retry");
     button.textContent = "Retry";
-    row.append(button);
+    // Before the error note and the live region, matching the server's order
+    // -- otherwise the same row tabs differently depending on whether you
+    // reloaded or settled it in place.
+    row.insertBefore(button, row.querySelector("[data-scheduled-error]")
+      || row.querySelector("[data-scheduled-status]"));
+    // The button that had focus was just removed. Focus goes to the control
+    // that replaced it, in the same row (WCAG 2.4.3).
+    button.focus();
+    return;
   }
+  // Nothing replaced the removed button, so focus falls back to the section's
+  // own <summary> -- the same target the cancel path uses, and the one node
+  // here that outlives every row.
+  const summary = document.querySelector("[data-scheduled] summary");
+  if (summary) summary.focus();
 }
 
 document.addEventListener("DOMContentLoaded", () => paintScheduledTimes());
@@ -341,7 +383,7 @@ document.addEventListener("click", async (event) => {
       // `pending`/`launching`, so the active count drops regardless of
       // which the response reports.
       bumpScheduledCount(-1);
-      settleRow(id, data.status);
+      settleRow(id, data.status, data.error);
       announce(
         key,
         data.status === "fired"
@@ -395,8 +437,11 @@ document.addEventListener("click", async (event) => {
       announce(key, `⚠ Retry ${data.status}${data.error ? " — " + data.error : ""}`);
       // The retry is its own row, and the server allows exactly one retry per
       // row. Repointing the button at the new run is what keeps the recovery
-      // loop working before a reload renders that row for itself.
+      // loop working before a reload renders that row for itself -- and the
+      // row is restated to match, so its visible status never describes one
+      // run while its only control acts on another.
       retryButton.setAttribute("data-scheduled-retry", data.id);
+      if (row) restateRow(row, data.status, data.error);
     } catch (error) {
       console.error("bridge: schedule retry failed", error);
       announce(key, "⚠ Retry failed — the panel did not answer");

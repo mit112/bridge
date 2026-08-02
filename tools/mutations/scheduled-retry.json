@@ -106,21 +106,122 @@
   {
     "name": "run-now stops restating the row, leaving pending-only buttons that can only 409",
     "file": "src/bridge/static/schedule.js",
-    "old": "      settleRow(id, data.status);\n",
+    "old": "      settleRow(id, data.status, data.error);\n",
     "new": "",
     "tests": [
       "tests/test_static_js.py::test_run_now_restates_the_row_and_drops_the_pending_only_controls",
-      "tests/test_static_js.py::test_a_run_now_that_fails_grows_a_retry_button_naming_its_own_job"
+      "tests/test_static_js.py::test_a_run_now_that_fails_grows_a_focused_retry_button_naming_its_own_job"
     ],
     "expect_count": 1
   },
   {
     "name": "the section collapses on any cancel, hiding finished rows that are still on screen",
     "file": "src/bridge/static/schedule.js",
-    "old": "if (list && details && list.children.length === 0) {",
-    "new": "if (list && details) {",
+    "old": "if (list && details && list.children.length === 0) details.open = false;",
+    "new": "if (list && details) details.open = false;",
     "tests": [
       "tests/test_static_js.py::test_a_cancel_that_leaves_a_row_behind_keeps_the_section_open"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "the emptied section is hidden as well as collapsed, dropping focus and swallowing the announcement",
+    "file": "src/bridge/static/schedule.js",
+    "old": "if (list && details && list.children.length === 0) details.open = false;",
+    "new": "if (list && details && list.children.length === 0) { details.open = false; details.hidden = true; }",
+    "tests": [
+      "tests/test_static_js.py::test_the_emptied_section_is_collapsed_but_never_hidden"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "a settled row drops the focus the removed button was holding",
+    "file": "src/bridge/static/schedule.js",
+    "old": "    button.focus();\n    return;",
+    "new": "    return;",
+    "tests": [
+      "tests/test_static_js.py::test_a_run_now_that_fails_grows_a_focused_retry_button_naming_its_own_job"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "a fired row drops focus to <body> instead of the section that outlives it",
+    "file": "src/bridge/static/schedule.js",
+    "old": "  if (summary) summary.focus();\n}",
+    "new": "}",
+    "tests": [
+      "tests/test_static_js.py::test_a_fired_run_now_hands_focus_to_the_section_it_leaves_behind"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "the JS-built retry button loses the name that tells twenty of them apart",
+    "file": "src/bridge/static/schedule.js",
+    "old": "    button.setAttribute(\"aria-label\", label || \"Retry\");",
+    "new": "",
+    "tests": [
+      "tests/test_static_js.py::test_a_run_now_that_fails_grows_a_focused_retry_button_naming_its_own_job"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "a settled row keeps its error only in the live region, where it vanishes",
+    "file": "src/bridge/static/schedule.js",
+    "old": "  if (error && !note) {",
+    "new": "  if (false) {",
+    "tests": [
+      "tests/test_static_js.py::test_a_failed_run_now_keeps_the_error_on_screen_not_just_in_the_live_region",
+      "tests/test_static_js.py::test_a_retry_that_fails_again_repoints_the_button_at_the_new_run"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "the settled retry button lands after the live region, tabbing differently than a reload",
+    "file": "src/bridge/static/schedule.js",
+    "old": "    row.insertBefore(button, row.querySelector(\"[data-scheduled-error]\")\n      || row.querySelector(\"[data-scheduled-status]\"));",
+    "new": "    row.insertBefore(button, row.querySelector(\"[data-scheduled-status]\"));",
+    "tests": [
+      "tests/test_static_js.py::test_the_settled_retry_button_lands_before_the_live_region"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "a chained retry leaves the row describing the run its button no longer acts on",
+    "file": "src/bridge/static/schedule.js",
+    "old": "      if (row) restateRow(row, data.status, data.error);",
+    "new": "",
+    "tests": [
+      "tests/test_static_js.py::test_a_chained_retry_restates_the_row_without_growing_a_second_button"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "the server-rendered retry button loses its per-row accessible name",
+    "file": "src/bridge/templates/dashboard.html",
+    "old": "                    aria-label=\"Retry {{ job.project_name }} run scheduled for {{ job.scheduled_for_utc }}\">Retry</button>",
+    "new": "                    >Retry</button>",
+    "tests": [
+      "tests/test_api.py::test_the_retry_button_carries_only_the_id_it_retries"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "the truncation note names hidden history and offers no route to it",
+    "file": "src/bridge/templates/dashboard.html",
+    "old": "      <a href=\"/api/schedule\">see the full history</a></p>",
+    "new": "      see the full history</p>",
+    "tests": [
+      "tests/test_api.py::test_the_dashboard_caps_terminal_rows_and_says_how_many_it_held_back"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "the capped list stops pointing at the note explaining the cap",
+    "file": "src/bridge/templates/dashboard.html",
+    "old": " {% if scheduled_older %}aria-describedby=\"scheduled-older\"{% endif %}",
+    "new": "",
+    "tests": [
+      "tests/test_api.py::test_the_dashboard_caps_terminal_rows_and_says_how_many_it_held_back"
     ],
     "expect_count": 1
   },
