@@ -98,7 +98,8 @@ def test_journal_writes_one_readable_record_named_for_the_job(spool_dir):
 def test_journal_writes_beside_the_handoff_journal_not_into_it(spool_dir):
     schedspool.journal(job(), spool_dir)
 
-    # `spool._load` globs `drained/*.json` and parses each as a Handoff, so a
+    # `spool.rebuild_if_empty` globs `drained/*.json` and parses each via
+    # `spool._load` as a Handoff, so a
     # schedule record landing there would be quarantined as a corrupt handoff.
     assert not (spool_dir / "drained").exists()
 
@@ -165,9 +166,9 @@ authored *through* the panel (`POST /api/schedule`; there is no schedule CLI),
 so there is no offline authoring path to catch and no outbox to drain.
 
 Records live in `spool/schedules/`, deliberately not in `spool/drained/`.
-`spool._load` globs `drained/*.json` and parses everything not ending in
-`.status.json` as a `Handoff`, so a schedule record in that directory would be
-quarantined as a corrupt handoff. A third record type in one directory would
+`spool.rebuild_if_empty` globs `drained/*.json` and hands everything not ending in
+`.status.json` to `spool._load`, which parses it as a `Handoff`, so a schedule
+record in that directory would be quarantined as a corrupt handoff. A third record type in one directory would
 compound the hazard the `STATUS_SUFFIX` comment in `spool.py` already flags.
 
 Two vocabulary rules that the schema does not enforce and reviewers must:
@@ -270,6 +271,11 @@ def _load(path: Path) -> ScheduledRun:
     Unknown keys are ignored so a file written by a newer Bridge still replays.
     The four fields below are `ScheduledRun`'s required positional ones and the
     row cannot be reconstructed without them.
+
+    `scheduled_for` and `created_at` are type-checked here rather than left to
+    the caller. Replay compares `scheduled_for` against `now` *outside* the
+    per-record insert handler, so a record carrying `"tomorrow"` would raise a
+    `TypeError` that aborts the entire recovery instead of quarantining one file.
     """
     data = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
@@ -277,6 +283,8 @@ def _load(path: Path) -> ScheduledRun:
     job = ScheduledRun(**{k: v for k, v in data.items() if k in _FIELDS})
     if not job.id or not job.project_path or not job.prompt or not job.mode:
         raise ValueError(f"{path.name}: missing id, project_path, prompt or mode")
+    if not isinstance(job.scheduled_for, int) or not isinstance(job.created_at, int):
+        raise ValueError(f"{path.name}: scheduled_for and created_at must be ints")
     return job
 
 
@@ -692,6 +700,48 @@ Add to `src/bridge/store.py`, immediately after `create_scheduled_run`:
 Run: `/Users/mitsheth/.local/bin/uv run pytest tests/test_schedspool.py -q`
 Expected: PASS, 16 tests
 
+- [ ] **Step 4b: Add `retry_of` to `ScheduledRun` so replay can carry it**
+
+The column exists in the database via `COLUMN_MIGRATIONS` (`store.py:177`) but not
+on the dataclass, so `dataclasses.asdict` never journals it and replay would
+restore every retry with `retry_of = NULL`. `retry_terminal`'s
+`NOT EXISTS (SELECT 1 ... WHERE r.retry_of = orig.id)` guard would then permit a
+second retry of an original that already has one — a duplicate launch.
+
+In `src/bridge/models.py`, append one field to `ScheduledRun`, after `error`:
+
+```python
+    retry_of: str | None = None
+```
+
+Add `retry_of` to `restore_scheduled_run`'s column list and values tuple from
+Step 3b, making it 18 columns and 18 placeholders:
+
+```python
+                "scheduled_for, status, created_at, claimed_at, completed_at, "
+                "fired_at, launch_id, error, retry_of) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+```
+
+with `job.retry_of` appended after `job.error` in the values.
+
+`create_scheduled_run` stays at twelve columns — a newly authored schedule is
+never a retry, and `retry_terminal` writes `retry_of` through its own
+`INSERT ... SELECT`.
+
+Add the regression test to `tests/test_schedspool.py`:
+
+```python
+def test_a_replayed_retry_keeps_its_provenance(store, spool_dir):
+    """A NULL `retry_of` lets `retry_terminal` grant a second retry."""
+    schedspool.journal(job("r1", scheduled_for=PAST, retry_of="orig"), spool_dir)
+    schedspool.journal_status("r1", "fired", PAST + 1, spool_dir)
+
+    schedspool.rebuild_if_empty(store, spool_dir, now=NOW)
+
+    assert store.get_scheduled_run("r1")["retry_of"] == "orig"
+```
+
 - [ ] **Step 5: Record `missed` in the status vocabulary**
 
 In `src/bridge/models.py`, replace the `ScheduledRun` docstring body at lines
@@ -883,8 +933,31 @@ Add the two read-only companions immediately above their mutating partners:
             ]
 ```
 
-`reconcile_launching` keeps its existing signature and body — it still returns a
-count. Only its *caller* changes, to read ids and journal them first.
+`reconcile_launching` gains an `ids` argument so it can flip only the rows the
+caller managed to journal. Leaving an unjournalled row `launching` is the safe
+failure: the next boot reconciles it again, whereas flipping it without a record
+lets a run-now'd future job replay as `pending` and fire twice.
+
+```python
+    def reconcile_launching(self, now: int, ids: list[str]) -> int:
+        """Flip the named stray `launching` rows to `indeterminate`.
+
+        Takes explicit ids rather than flipping every `launching` row, so the
+        caller can journal first and skip any row whose record would not write.
+        """
+        if not ids:
+            return 0
+        marks = ",".join("?" * len(ids))
+        with self.transaction():
+            cur = self.conn.execute(
+                f"UPDATE scheduled_runs SET status='indeterminate', completed_at=? "
+                f"WHERE status='launching' AND id IN ({marks})", (now, *ids))
+            return cur.rowcount
+```
+
+`test_reconcile_launching_flips_strays_to_indeterminate` at `tests/test_store.py:108`
+calls `store.reconcile_launching(now=9000)` and must become
+`store.reconcile_launching(9000, ["a"])`. It still asserts `== 1`.
 
 - [ ] **Step 4: Make `missed` retryable**
 
@@ -994,8 +1067,26 @@ Expected: PASS, 704 tests
 
 - [ ] **Step 1: Write the failing tests**
 
-Add to `tests/test_api.py`, in the scheduling section near line 1918, using the
-existing `client` fixture (which already overrides `spool_dir` to `tmp_path`):
+**Fixture shapes — verified, do not guess.** Both fixtures yield tuples, and the
+snippets below are written as if they did not. Unpack before use:
+
+- `client` yields `(TestClient, store, pid)` (`tests/test_api.py:18-33`). Its
+  config is `{"db_path": tmp_path/"a.db", "spool_dir": tmp_path/"spool"}`, so
+  journal files land under `tmp_path/"spool"/"schedules"`.
+- `launch_app` yields `(TestClient, store, cfg, fake)` (`tests/test_api.py:571-589`),
+  where `fake` is `recording_launcher()`. Read that helper for the attribute
+  holding recorded launches — `recorder.calls` below is a placeholder.
+
+So each test below opens with an unpacking line, e.g.:
+
+```python
+def test_creating_a_schedule_journals_it(client, tmp_path):
+    c, store, _pid = client
+    r = c.post("/api/schedule", json={...})
+```
+
+Add to `tests/test_api.py`, in the scheduling section near line 1918, adapting
+each snippet to that shape:
 
 ```python
 def test_creating_a_schedule_journals_it(client, tmp_path):
@@ -1134,12 +1225,20 @@ In `retry_schedule`, immediately after the `if row is None:` block and before
 `_fire_claimed_job`:
 
 ```python
-        # The retry is a new row, so it needs its own creation record. Demoted
-        # to a warning: the row already exists and is already `launching`.
+        # The retry is a new row, so it needs its own creation record, and a
+        # failure ABORTS rather than warns. Replay restores creation records and
+        # ignores orphan status records, so a retry that fires without one
+        # vanishes on database loss -- and the user, seeing the original still
+        # failed, retries it again and launches the work twice.
         try:
             schedspool.journal(_row_to_scheduled_run(row), cfg.spool_dir)
-        except OSError:
+        except OSError as exc:
             log.exception("failed to journal retry of scheduled run %r", id)
+            store.finish_scheduled_run(
+                row["id"], status="failed",
+                error=f"could not journal the retry: {exc}",
+            )
+            return dict(store.get_scheduled_run(row["id"]))
 ```
 
 Add this helper next to `_fire_claimed_job` in `src/bridge/api.py`:
@@ -1150,8 +1249,10 @@ def _row_to_scheduled_run(row) -> ScheduledRun:
 
     `retry_terminal` and the fire path both hand back rows rather than models;
     the journal stores `dataclasses.asdict`, so it needs the dataclass.
-    `retry_of` is not a `ScheduledRun` field and is dropped -- provenance lives
-    in the database, and a replayed retry keeps its own prompt either way.
+    `retry_of` must survive. Dropping it would let `retry_terminal`'s
+    `NOT EXISTS (... retry_of = orig.id)` guard stop seeing the retry that
+    already exists, so after a database loss the user could retry the same
+    original a second time and launch the work twice.
     """
     fields = {f.name for f in dataclasses.fields(ScheduledRun)}
     return ScheduledRun(**{k: row[k] for k in row.keys() if k in fields})
@@ -1161,24 +1262,50 @@ Add `import dataclasses` to `src/bridge/api.py` if it is not already imported.
 
 - [ ] **Step 4: Wire the status sites**
 
-In `patch_schedule`, after the successful `edit_pending`:
+Both of these journal **before** the database changes. Journaling afterwards
+leaves a window where the row is already cancelled or edited but the journal
+still describes the old state, and a database loss in that window replays a
+cancelled job as `pending` — fireable.
+
+Replace the body of `patch_schedule` with:
 
 ```python
-        # Re-journal so the journal's prompt never lags the database it
-        # rebuilds. Unlike creation, this failure propagates -- matching
-        # `PATCH /api/handoff/{id}`.
-        schedspool.journal(_row_to_scheduled_run(store.get_scheduled_run(id)),
-                           cfg.spool_dir)
+    @app.patch("/api/schedule/{id}")
+    def patch_schedule(id: str, body: SchedulePatch):
+        patch_fields = body.model_dump(exclude_unset=True)
+        current = store.get_scheduled_run(id)
+        if current is None or current["status"] != "pending":
+            raise _unknown_or_conflict(id)
+        # Journal the intended post-edit state first. The guard above means
+        # `edit_pending` will almost certainly succeed; if it loses a race and
+        # does not, the journal describes an edit that never landed, which only
+        # matters after a database loss and only costs the prompt text.
+        # A journal failure propagates, matching `PATCH /api/handoff/{id}`:
+        # the journal must never lag the database it rebuilds.
+        merged = _row_to_scheduled_run(current)
+        for key, value in patch_fields.items():
+            setattr(merged, key, value)
+        schedspool.journal(merged, cfg.spool_dir)
+        if not store.edit_pending(id, **patch_fields):
+            raise _unknown_or_conflict(id)
         return dict(store.get_scheduled_run(id))
 ```
 
-In `delete_schedule`, after the successful `cancel_pending`:
+Replace the body of `delete_schedule` with:
 
 ```python
-        try:
-            schedspool.journal_status(id, "cancelled", now_epoch(), cfg.spool_dir)
-        except OSError:
-            log.exception("failed to journal cancellation of %r", id)
+    @app.delete("/api/schedule/{id}")
+    def delete_schedule(id: str):
+        current = store.get_scheduled_run(id)
+        if current is None or current["status"] != "pending":
+            raise _unknown_or_conflict(id)
+        # Journal the cancellation before it happens, and let a failure
+        # propagate. Cancelling without the record is the dangerous ordering:
+        # after a database loss the creation record alone replays the job as
+        # `pending`, and a job the user cancelled would fire.
+        schedspool.journal_status(id, "cancelled", now_epoch(), cfg.spool_dir)
+        if not store.cancel_pending(id):
+            raise _unknown_or_conflict(id)
         return dict(store.get_scheduled_run(id))
 ```
 
@@ -1252,7 +1379,7 @@ Expected after repair: PASS, 708 tests
 - Test: `tests/test_main.py`
 
 **Interfaces:**
-- Consumes: `schedspool.journal_status`, `schedspool.rebuild_if_empty`, `store.reconcile_launching() -> list[str]`, `store.prune_scheduled_runs() -> list[str]`
+- Consumes: `schedspool.journal_status`, `schedspool.rebuild_if_empty(store, spool_dir, now)`, `store.launching_scheduled_run_ids() -> list[str]`, `store.reconcile_launching(now, ids) -> int`, `store.prunable_scheduled_run_ids(before_epoch) -> list[str]`, `store.prune_scheduled_runs(ids) -> int`
 - Produces: `bridge index` JSON output gains a `schedules_rebuilt` key.
 
 - [ ] **Step 1: Write the failing tests**
@@ -1323,9 +1450,19 @@ def test_a_run_whose_prune_cannot_be_journalled_is_not_deleted(
         survivor.close()
 ```
 
-Reuse whatever helpers `tests/test_main.py` already has for driving `main(["serve"])`
-and `main(["index"])`; `_run_serve` and `_run_index` above are placeholders for
-those. Read lines 1-120 of that file first and use its real names.
+**`serve_cfg`'s real shape — verified.** It returns `(launches, served)`, **not**
+`(cfg, tmp_path)`, and it does not return `cfg` at all (`tests/test_main.py:23-43`).
+The config it installs is built from `tmp_path`, so derive paths directly:
+
+- database → `tmp_path / "s.db"`
+- spool → `tmp_path / "spool"`, so schedule records are at `tmp_path/"spool"/"schedules"`
+
+It monkeypatches `entry.load` and `uvicorn.run`, so driving a boot is just
+`entry.main(["serve"])`. Rewrite the three snippets above against that shape,
+take `tmp_path` as a fixture argument, and add the imports they need — `json`,
+`Store`, `ScheduledRun`, `schedspool`, and a `DEMO` path constant are all
+referenced above and none are guaranteed to be in that module already. Check the
+file's existing imports first.
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
@@ -1341,18 +1478,22 @@ Both blocks read ids, journal, then mutate — in that order. A row whose journa
 write fails is **left alone** rather than mutated without a record.
 
 ```python
-    # Journal before flipping. `reconcile_launching` is all-or-nothing, so an
-    # unjournalled stray would be flipped anyway; log it and accept that the
-    # replay of that one row degrades from `indeterminate` to `missed`, which
-    # is still terminal and still never fires.
+    # Journal before flipping, and flip only what was journalled. An unjournalled
+    # row must be LEFT `launching`: a future job claimed by run-now, flipped
+    # without its record and then lost to a database failure, replays as
+    # `pending` and fires a second time -- the exact hole this change closes.
+    # Left alone, the next boot reconciles it again.
+    reconcilable = []
     for run_id in store.launching_scheduled_run_ids():
         try:
             schedspool.journal_status(
                 run_id, "indeterminate", now_epoch(), cfg.spool_dir
             )
         except OSError:
-            log.exception("failed to journal reconcile of %r", run_id)
-    stray = store.reconcile_launching(now_epoch())
+            log.exception("failed to journal reconcile of %r; leaving it", run_id)
+            continue
+        reconcilable.append(run_id)
+    stray = store.reconcile_launching(now_epoch(), reconcilable)
     if stray:
         log.info("reconciled %d stray 'launching' scheduled run(s)", stray)
 
@@ -1385,7 +1526,7 @@ In the `index` branch, after the existing `handoffs_rebuilt` line:
 
 ```python
         stats["schedules_rebuilt"] = schedspool.rebuild_if_empty(
-            store, cfg.spool_dir
+            store, cfg.spool_dir, now_epoch()
         ).restored
 ```
 
@@ -1539,12 +1680,25 @@ No gaps.
 `_dirs -> (schedules_dir, bad_dir)`,
 `RebuildStats(restored, missed, skipped_pruned, bad, skipped)`, `_Status(run_id, status, at)` are
 used identically in every task. The status record's key is `run_id` throughout — not `handoff_id`,
-and not `schedule_id`. `prune_scheduled_runs` and `reconcile_launching` return `list[str]` in Task 3
-and are consumed as lists in Tasks 3 and 5. `prune_scheduled_runs(ids) -> int` and
-`reconcile_launching(now) -> int` both return counts; only the new
-`prunable_scheduled_run_ids` and `launching_scheduled_run_ids` return `list[str]`.
+and not `schedule_id`. The store signatures after Task 3 are exactly:
+`prunable_scheduled_run_ids(before_epoch) -> list[str]`,
+`prune_scheduled_runs(ids) -> int`,
+`launching_scheduled_run_ids() -> list[str]`,
+`reconcile_launching(now, ids) -> int`,
+`restore_scheduled_run(job) -> str`.
+Only the two `*_ids` readers return lists; both mutators return counts.
 
-**Revision note.** Tasks 2–6 were revised after a Codex review found that journaling only creations
+**Second revision note.** A follow-up Codex review of the first revision found seven more issues,
+three blocking, all now fixed above: `bridge index` called `rebuild_if_empty` without the required
+`now`; boot reconcile journaled per row but then flipped *every* `launching` row, so an unjournaled
+one was mutated anyway; `PATCH` and `DELETE` journaled after mutating, so a cancelled job could
+replay as `pending` and fire. Also fixed: `retry_of` was dropped on replay, which would let
+`retry_terminal` grant a second retry of an already-retried original; a retry could fire without a
+durable creation record; `_load` did not type-check `scheduled_for`, so one bad record aborted the
+whole replay instead of being quarantined; and the planned tests unpacked `client`, `launch_app` and
+`serve_cfg` incorrectly — all three yield tuples, and `serve_cfg` does not return `cfg` at all.
+
+**First revision note.** Tasks 2–6 were revised after a Codex review found that journaling only creations
 and terminal statuses permitted a duplicate launch: `claim_specific` has no `scheduled_for` guard,
 so a job run-now'd before its scheduled time and then lost to a database failure replayed as
 `pending` and fired twice. The claim is journaled now. The same review found that bulk prune
