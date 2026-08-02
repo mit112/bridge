@@ -1,0 +1,42 @@
+[
+  {
+    "name": "never auto-archive a vanished path, so a deleted project lingers as a dead card forever",
+    "file": "src/bridge/indexer.py",
+    "old": "        if not Path(project[\"path\"]).exists():\n            store.archive_missing(project[\"id\"], now_epoch())",
+    "new": "        pass",
+    "tests": ["tests/test_indexer.py::test_reindex_archives_a_project_whose_path_has_vanished"],
+    "expect_count": 1
+  },
+  {
+    "name": "archive every missing path every run, so restoring a still-gone project is undone at the next index",
+    "file": "src/bridge/indexer.py",
+    "old": "        if project[\"missing_archived_at\"] is not None:\n            continue",
+    "new": "        if False:\n            continue",
+    "tests": ["tests/test_indexer.py::test_a_restored_project_is_not_re_archived_even_though_it_is_still_gone"],
+    "expect_count": 1
+  },
+  {
+    "name": "archive projects whose path still exists, evicting live cards",
+    "file": "src/bridge/store.py",
+    "old": "            \"UPDATE projects SET status='archived', missing_archived_at=? WHERE id=?\",",
+    "new": "            \"UPDATE projects SET missing_archived_at=? WHERE id=?\",",
+    "tests": ["tests/test_store.py::test_archive_missing_sets_status_and_stamps_when_we_acted"],
+    "expect_count": 1
+  },
+  {
+    "name": "skip dev-repo discovery, so a transcript-less repo never gets a card",
+    "file": "src/bridge/indexer.py",
+    "old": "    for repo in backfill.dev_git_repos(cfg):\n        store.upsert_project(str(repo), repo.name)",
+    "new": "    pass",
+    "tests": ["tests/test_indexer.py::test_reindex_cards_a_dev_repo_that_has_no_transcripts"],
+    "expect_count": 1
+  },
+  {
+    "name": "treat every dev child as a repo, carding plain directories that are not git repos",
+    "file": "src/bridge/backfill.py",
+    "old": "        p for p in cfg.dev_dir.iterdir() if p.is_dir() and (p / \".git\").exists()",
+    "new": "        p for p in cfg.dev_dir.iterdir() if p.is_dir()",
+    "tests": ["tests/test_backfill.py::test_dev_git_repos_lists_only_git_repos_under_dev_dir"],
+    "expect_count": 1
+  }
+]
