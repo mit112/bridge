@@ -33,20 +33,10 @@
     "expect_count": 1
   },
   {
-    "name": "prune reaps by age alone, deleting a pending job that is still owed a launch",
-    "file": "src/bridge/store.py",
-    "old": "\"WHERE status NOT IN ('pending','launching') \"",
-    "new": "\"WHERE 1=1 \"",
-    "tests": [
-      "tests/test_store.py::test_prune_scheduled_runs_deletes_only_old_terminal_rows"
-    ],
-    "expect_count": 1
-  },
-  {
     "name": "invert prune's age bound, so it reaps the newest history and keeps the oldest",
     "file": "src/bridge/store.py",
-    "old": "\"  AND completed_at IS NOT NULL AND completed_at < ?\",",
-    "new": "\"  AND completed_at IS NOT NULL AND completed_at > ?\",",
+    "old": "\"  AND completed_at < ?\",",
+    "new": "\"  AND completed_at > ?\",",
     "tests": [
       "tests/test_store.py::test_prune_scheduled_runs_deletes_only_old_terminal_rows"
     ],

@@ -821,16 +821,22 @@ class Store:
 
         Only rows that are done: a `pending` job is still owed a launch no
         matter how long ago it was authored, and a `launching` one is either in
-        flight or waiting for the next boot's `reconcile_launching`. Both are
-        excluded by status, and the `completed_at IS NOT NULL` clause is the
-        second lock on the same door -- a terminal row always carries one, so a
-        row without one is a shape we do not understand and will not delete.
+        flight or waiting for the next boot's `reconcile_launching`.
+
+        The status clause is deliberately unfalsifiable, and there is no
+        mutation for it. `completed_at` is written by exactly one place --
+        finishing, cancelling or reconciling a row, all of which are terminal
+        -- so over every reachable state a non-terminal row carries NULL, and
+        `completed_at < ?` is NULL rather than true for it (SQL three-valued
+        logic) and excludes it anyway. Either clause alone is therefore
+        sufficient, so no test can tell them apart. This one stays because it
+        states the intent the age bound only implies.
         """
         with self.transaction():
             cur = self.conn.execute(
                 "DELETE FROM scheduled_runs "
                 "WHERE status NOT IN ('pending','launching') "
-                "  AND completed_at IS NOT NULL AND completed_at < ?",
+                "  AND completed_at < ?",
                 (before_epoch,))
             return cur.rowcount
 
