@@ -117,10 +117,28 @@ def run_db_command(argv: list[str] | None = None) -> int:
     try:
         uvicorn.run(create_app(store, cfg), host="127.0.0.1", port=cfg.port)
     finally:
-        stop.set()
-        t.join(timeout=5.0)
-        store.close()
+        _shutdown_scheduler(stop, t, store)
     return 0
+
+
+def _shutdown_scheduler(
+    stop: threading.Event, t: threading.Thread, store: Store,
+    join_timeout: float = 30.0,
+) -> None:
+    """Stop the scheduler thread, then close the store -- but only once the
+    thread has actually stopped touching it.
+
+    A tick can be mid-launch (a `create_launch` INSERT, a `finish_scheduled_run`
+    UPDATE) when the timeout expires; closing the connection out from under it
+    then turns a clean shutdown into a closed-connection error on that tick. If
+    the thread is still alive after `join_timeout` -- a hung launch -- skip the
+    close entirely: the daemon dies with the process, and WAL durability does
+    not require an explicit `close()`.
+    """
+    stop.set()
+    t.join(timeout=join_timeout)
+    if not t.is_alive():
+        store.close()
 
 
 def main(argv: list[str] | None = None) -> int:
