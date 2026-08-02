@@ -1983,3 +1983,23 @@ def test_run_now_records_failure_when_the_launcher_raises(launch_app):
     row = store.get_scheduled_run(jid)
     assert row["status"] == "failed"
     assert row["error"] == "no claude on PATH"
+
+
+def test_run_now_records_failure_when_the_launcher_returns_one(launch_app):
+    """Distinct from the `LaunchError`-raised path above: here `launch_fn`
+    returns normally with `outcome=='failed'` (a spawn that was attempted and
+    failed, not one refused before anything ran). Nothing previously drove
+    this branch of `_fire_claimed_job`, so an inverted or collapsed
+    `result.outcome == "started"` check would still pass the whole suite."""
+    c, store, _, fake = launch_app
+    jid = c.post("/api/schedule", json={"project_path": DEMO, "prompt": "go",
+        "scheduled_for": 9_000_000_000, "mode": "background"}).json()["id"]
+    fake.result = launcher.LaunchResult("L9", "failed", error="spawn boom")
+
+    r = c.post(f"/api/schedule/{jid}/run-now")
+
+    assert r.status_code == 200
+    row = store.get_scheduled_run(jid)
+    assert row["status"] == "failed"
+    assert row["launch_id"] == "L9"
+    assert row["error"] == "spawn boom"
