@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from bridge import launcher, spool
 from bridge.api import create_app
 from bridge.config import load
-from bridge.models import GitState, Handoff, Launch, SessionRecord
+from bridge.models import GitState, Handoff, Launch, ScheduledRun, SessionRecord
 from bridge.registry import resolve_project
 from bridge.store import Store, now_epoch
 
@@ -832,7 +832,13 @@ def test_the_editable_prompt_is_html_escaped_in_the_textarea(launch_app):
 
     assert "</textarea><script>" not in html, "the prompt closed its own field"
     assert "&lt;/textarea&gt;&lt;script&gt;" in html
-    assert html.count("</textarea>") == 1, "exactly one field was opened and closed"
+    # Balanced, not a fixed count: Task 5's compose box adds a second, always-
+    # empty textarea to every card, so the number that matters is that every
+    # opened field was also closed -- an unescaped `</textarea>` in the prompt
+    # would leave one dangling open (or one bare close with nothing to match).
+    assert html.count("<textarea") == html.count("</textarea>"), (
+        "every opened field must also be closed"
+    )
 
 
 def test_both_launch_selects_are_labelled_and_preselect_the_suggestion(launch_app):
@@ -855,8 +861,13 @@ def test_both_launch_selects_are_labelled_and_preselect_the_suggestion(launch_ap
     assert '<option value="sonnet" selected>sonnet — latest (Sonnet 5)</option>' in html
     assert '<option value="xhigh" selected>xhigh</option>' in html
     # Three selects now: model, effort, permissions. The permission select is
-    # always preselected on its first option, which is the no-flag one.
-    assert html.count(" selected>") == 3, "one preselection per select, no more"
+    # always preselected on its first option, which is the no-flag one. Scoped
+    # to the launch band itself -- Task 5's compose box and schedule forms add
+    # their own preselected "terminal" mode options elsewhere on the page,
+    # which is not what this assertion is about.
+    band = re.search(rf'<p class="launch" data-launch="{lid}".*?</p>', html, re.S)
+    assert band, "the launch band itself must be present"
+    assert band.group(0).count(" selected>") == 3, "one preselection per select, no more"
     assert '<option value="" selected>Ask as usual</option>' in html
 
 
@@ -922,9 +933,10 @@ def test_a_card_with_no_queued_handoff_still_renders_a_launch_band(launch_app):
     assert f'data-launch="launch-{pid}"' in html
     assert f'id="launch-{pid}-model"' in html
     assert f'data-launch-status="launch-{pid}"' in html
-    # ...and no empty prompt block, no orphan copy affordance, no handoff id.
+    # ...and no queued-handoff artifacts. The compose box's own textarea is
+    # unrelated and expected to be present on every card, handoff or not.
     assert "Next step queued" not in html
-    assert "<textarea" not in html
+    assert "data-prompt-handoff" not in html
     assert "data-copy-target" not in html
     assert "data-launch-handoff" not in html
 
@@ -939,7 +951,10 @@ def test_every_new_control_is_labelled_and_none_leaves_the_tab_order(launch_app)
     assert 'tabindex="-1"' not in html
     labelled = set(re.findall(r'<label[^>]*\sfor="([^"]+)"', html))
     fields = re.findall(r"<(?:select|textarea)\b[^>]*>", html)
-    assert len(fields) == 4, "three selects and the prompt field"
+    # Three launch-band selects and the handoff's own prompt field, plus
+    # Task 5's compose box (its prompt field and its own mode select) and the
+    # handoff's "Schedule…" reveal (one more mode select).
+    assert len(fields) == 7, "three launch selects, two mode selects, two prompts"
     for tag in fields:
         ident = re.search(r'\sid="([^"]+)"', tag)
         assert (ident and ident.group(1) in labelled) or "aria-label=" in tag, tag
@@ -2003,3 +2018,111 @@ def test_run_now_records_failure_when_the_launcher_returns_one(launch_app):
     assert row["status"] == "failed"
     assert row["launch_id"] == "L9"
     assert row["error"] == "spawn boom"
+
+
+# --- Task 5: the Scheduled panel section --------------------------------------
+
+
+def test_dashboard_shows_the_scheduled_section_and_topbar_count_when_a_job_exists(client):
+    """Server-rendered from `store.scheduled_runs()`, like every other section:
+    the count beside `queued` in the topbar and the job itself must both be
+    visible without any JS having run.
+    """
+    c, store, _ = client
+    store.create_scheduled_run(ScheduledRun(
+        id="sched-1", project_path=DEMO, prompt="do the thing",
+        mode="background", scheduled_for=9_000_000_000,
+    ))
+
+    body = c.get("/").text
+
+    assert re.search(r"<dt>scheduled</dt><dd>1</dd>", body)
+    assert 'data-scheduled-job="sched-1"' in body
+    assert "demo" in body  # the job's project is named, not just its id
+    assert "background" in body
+    # Present AND visible -- unlike the empty case below, a real job must not
+    # be hidden behind the `hidden` attribute.
+    assert not re.search(r"<details[^>]*data-scheduled[^>]*\shidden[\s>]", body)
+
+
+def test_the_scheduled_section_is_present_but_collapsed_when_empty(client):
+    """Mirrors `data-hidden-projects`: always rendered, so a client-side insert
+    has somewhere to put the first row, but hidden via the `hidden` attribute
+    rather than omitted so an empty dashboard does not show a dead section.
+    """
+    c, _, _ = client
+
+    body = c.get("/").text
+
+    assert "data-scheduled" in body
+    assert re.search(r"<details[^>]*data-scheduled[^>]*\shidden[\s>]", body), (
+        "the empty schedule list must be present but not visible"
+    )
+    assert re.search(r"<dt>scheduled</dt><dd>0</dd>", body)
+
+
+def test_the_scheduled_section_offers_edit_cancel_and_run_now_on_a_pending_job(client):
+    c, store, _ = client
+    store.create_scheduled_run(ScheduledRun(
+        id="sched-2", project_path=DEMO, prompt="do it later",
+        mode="terminal", scheduled_for=9_000_000_000,
+    ))
+
+    body = c.get("/").text
+
+    assert 'data-scheduled-cancel="sched-2"' in body
+    assert 'data-scheduled-run-now="sched-2"' in body
+    assert 'data-scheduled-edit-toggle="sched-2"' in body
+
+
+def test_the_scheduled_section_offers_a_retry_affordance_on_a_failed_job(client):
+    c, store, _ = client
+    store.create_scheduled_run(ScheduledRun(
+        id="sched-3", project_path=DEMO, prompt="it blew up",
+        mode="terminal", scheduled_for=1000,
+    ))
+    store.claim_one_due(now=2000)
+    store.finish_scheduled_run("sched-3", status="failed", error="no claude on PATH")
+
+    body = c.get("/").text
+
+    assert 'data-scheduled-retry="sched-3"' in body
+    assert 'data-scheduled-job="sched-3" class="scheduled__job scheduled__job--failed"' in body
+
+
+def test_a_cancelled_schedule_does_not_linger_in_the_scheduled_section(client):
+    c, store, _ = client
+    store.create_scheduled_run(ScheduledRun(
+        id="sched-4", project_path=DEMO, prompt="never mind",
+        mode="terminal", scheduled_for=9_000_000_000,
+    ))
+    store.cancel_pending("sched-4")
+
+    body = c.get("/").text
+
+    assert 'data-scheduled-job="sched-4"' not in body
+    assert re.search(r"<dt>scheduled</dt><dd>0</dd>", body)
+
+
+def test_every_card_has_a_compose_box_that_posts_to_launch_and_schedule(client):
+    c, _, pid = client
+
+    body = c.get("/").text
+
+    cid = f"compose-{pid}"
+    assert f'data-compose-run="{cid}"' in body
+    assert f'data-schedule-toggle="schedule-{cid}"' in body
+    assert f'id="{cid}"' in body
+    assert "datetime-local" in body
+
+
+def test_a_queued_handoff_offers_its_own_schedule_affordance(client):
+    c, _, pid = client
+    c.post("/api/handoff", json={
+        "id": "h-sched", "project_path": DEMO, "next_prompt": "next step",
+    })
+
+    body = c.get("/").text
+
+    assert 'data-schedule-toggle="schedule-handoff-h-sched"' in body
+    assert 'data-schedule-handoff="h-sched"' in body

@@ -606,6 +606,21 @@ def create_app(
             dict(snapshot["live"][cwd], cwd=cwd) for cwd in snapshot["unattributed"]
         ]
         last_5h = sum(c.tokens_5h for c in cards)
+        # Server-rendered exactly like `hidden` above: `cancelled` is a schedule
+        # someone dismissed on purpose, the one status this list drops, the same
+        # way a `dismissed` handoff never reappears in the queued list. Every
+        # other terminal status (`fired`, `failed`, `indeterminate`) stays, so a
+        # failed run's retry affordance has somewhere to render.
+        scheduled_rows = store.scheduled_runs()
+        scheduled = [
+            dict(row, project_name=display_name(
+                store.alias_map().get(row["project_path"], row["project_path"])
+            ))
+            for row in scheduled_rows if row["status"] != "cancelled"
+        ]
+        pending_schedule_count = sum(
+            1 for row in scheduled_rows if row["status"] in ("pending", "launching")
+        )
         return templates.TemplateResponse(
             request,
             "dashboard.html",
@@ -613,6 +628,7 @@ def create_app(
                 "cards": cards,
                 "hidden": hidden,
                 "unattributed": unattributed,
+                "scheduled": scheduled,
                 "diag_alert": _needs_attention(diag),
                 "totals": {
                     "today": sum(c.tokens_today for c in cards),
@@ -627,6 +643,7 @@ def create_app(
                     "projects": len(cards),
                     "running": diag["running_sessions"],
                     "queued": diag["queued_handoffs"],
+                    "scheduled": pending_schedule_count,
                     "last_index": (diag["last_index"] or {}).get("ran_at"),
                 },
             },
