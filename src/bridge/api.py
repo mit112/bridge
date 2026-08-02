@@ -146,6 +146,42 @@ class ProjectPatch(BaseModel):
         return self
 
 
+def fire(
+    store: Store,
+    cfg: Config,
+    *,
+    project_path: str,
+    prompt: str,
+    mode: str,
+    model: str | None,
+    effort: str | None,
+    permission_mode: str | None,
+    title: str | None,
+    handoff_id: str | None,
+    launch_fn: LaunchFn,
+) -> launcher.LaunchResult:
+    """Resolve the alias table, build a `LaunchSpec`, and spawn it.
+
+    The one tail `POST /api/launch` and Task 3's scheduler both need: neither
+    caller does prompt/handoff selection or journalling here -- those stay
+    inside `launcher.launch` -- this is only the part that turns an already-
+    chosen prompt into a spawn. A caller with no route in front of it (the
+    scheduler) has nothing else that resolves an aliased path, so that
+    resolution lives here rather than being duplicated at every call site.
+    """
+    effective_path = store.alias_map().get(project_path, project_path)
+    spec = launcher.LaunchSpec(
+        project_path=effective_path,
+        prompt=prompt,
+        model=model,
+        effort=effort,
+        title=title,
+        mode=mode,
+        permission_mode=permission_mode,
+    )
+    return launch_fn(store, cfg, spec, handoff_id)
+
+
 def create_app(
     store: Store, cfg: Config, launch_fn: LaunchFn = launcher.launch
 ) -> FastAPI:
@@ -628,19 +664,22 @@ def create_app(
             # `launches.handoff_id` has a foreign key, so an id the client made up
             # would otherwise surface as an IntegrityError traceback from `launch()`.
             raise HTTPException(status_code=404, detail="unknown handoff")
-        spec = launcher.LaunchSpec(
-            project_path=body.project_path,
-            prompt=prompt,
-            model=body.model,
-            effort=body.effort,
-            title=body.title or launcher.default_title(
-                handoff["summary"] if handoff else None, display_name(canonical)
-            ),
-            mode=body.mode,
-            permission_mode=body.permission_mode,
+        title = body.title or launcher.default_title(
+            handoff["summary"] if handoff else None, display_name(canonical)
         )
         try:
-            result = launch_fn(store, cfg, spec, handoff_id)
+            result = fire(
+                store, cfg,
+                project_path=body.project_path,
+                prompt=prompt,
+                mode=body.mode,
+                model=body.model,
+                effort=body.effort,
+                permission_mode=body.permission_mode,
+                title=title,
+                handoff_id=handoff_id,
+                launch_fn=launch_fn,
+            )
         except launcher.LaunchError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 

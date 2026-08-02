@@ -607,10 +607,12 @@ def test_a_launch_from_an_aliased_path_attaches_to_the_canonical_project(launch_
     assert r.json()["handoff_id"] == "h1"
     assert store.project_by_path("/Users/mitsheth/Documents/projectX") is None
     assert store.project_by_path("/Users/mitsheth/dev/projectX") is not None
-    # The raw path is handed to the launcher unchanged; `launch()` canonicalises
-    # it through the same alias table rather than the route doing it twice.
+    # `fire()` resolves the alias itself (Task 2), so the spec it hands the
+    # launcher already carries the canonical path -- a real terminal launch
+    # `cd`s into `spec.project_path` directly, and `cd`-ing into the OLD path
+    # here would try to enter a directory that no longer exists.
     spec, handoff_id = fake.calls[0]
-    assert spec.project_path == "/Users/mitsheth/Documents/projectX"
+    assert spec.project_path == "/Users/mitsheth/dev/projectX"
     assert handoff_id == "h1"
 
 
@@ -775,6 +777,41 @@ def test_an_unknown_mode_is_422_and_never_reaches_the_launcher(launch_app):
     # And the default is terminal, so the CLI and the card can both omit it.
     c.post("/api/launch", json={"project_path": DEMO})
     assert fake.calls[0][0].mode == "terminal"
+
+
+def test_fire_resolves_alias_and_passes_the_snapshot_to_launch_fn(client, tmp_path):
+    """A future scheduler calls `api.fire` directly, with no route in front of it
+    to resolve the alias table first -- so `fire` has to do that resolution
+    itself before building the `LaunchSpec` the launcher receives.
+    """
+    from bridge import api
+
+    _, store, _ = client
+    cfg = load({"db_path": tmp_path / "fire.db", "spool_dir": tmp_path / "spool"})
+    store.set_alias("/old/path", "/Users/mitsheth/dev/demo")
+    calls = []
+
+    def fake_launch(store, cfg, spec, handoff_id=None, **kwargs):
+        calls.append(spec)
+        return launcher.LaunchResult("L1", "started")
+
+    result = api.fire(
+        store, cfg,
+        project_path="/old/path",
+        prompt="scheduled prompt",
+        mode="terminal",
+        model=None,
+        effort=None,
+        permission_mode="acceptEdits",
+        title="scheduled",
+        handoff_id=None,
+        launch_fn=fake_launch,
+    )
+
+    assert result.outcome == "started"
+    assert calls[0].project_path == "/Users/mitsheth/dev/demo"  # alias resolved
+    assert calls[0].mode == "terminal"
+    assert calls[0].permission_mode == "acceptEdits"
 
 
 # --- Phase 3: the launch band on the card ------------------------------------
