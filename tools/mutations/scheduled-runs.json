@@ -1,5 +1,15 @@
 [
   {
+    "name": "loosen claim_one_due's due bound, so a job due exactly at now is silently skipped",
+    "file": "src/bridge/store.py",
+    "old": "scheduled_for<=? ",
+    "new": "scheduled_for<? ",
+    "tests": [
+      "tests/test_store.py::test_claim_one_due_fires_a_job_due_exactly_at_now"
+    ],
+    "expect_count": 1
+  },
+  {
     "name": "drop finish_scheduled_run's launching guard, so a finish clobbers a cancelled/indeterminate row",
     "file": "src/bridge/store.py",
     "old": "\"completed_at=? WHERE id=? AND status='launching'\",",

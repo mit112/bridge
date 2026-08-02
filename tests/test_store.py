@@ -74,6 +74,12 @@ def test_claim_one_due_is_a_single_winner_under_a_repeat_claim(store):
     assert store.claim_one_due(now=1500) is None     # already launching, not re-claimed
 
 
+def test_claim_one_due_fires_a_job_due_exactly_at_now(store):
+    _job(store, "a", scheduled_for=1500)      # due exactly at `now`
+    row = store.claim_one_due(now=1500)
+    assert row is not None and row["id"] == "a"   # `<=`, not `<`: due-now must fire
+
+
 def test_finish_requires_a_prior_launching_and_records_terminal_fields(store):
     _job(store, "a", scheduled_for=1000)
     store.claim_one_due(now=1500)
