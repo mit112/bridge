@@ -1,8 +1,9 @@
+import threading
 import time
 
 import pytest
 
-from bridge.__main__ import main
+from bridge.__main__ import _shutdown_scheduler, main
 
 
 def test_index_subcommand_runs_and_reports(tmp_path, capsys):
@@ -81,3 +82,52 @@ def test_an_uncollectable_launches_dir_does_not_stop_the_panel(serve_cfg,
     monkeypatch.setattr(launcher, "gc_prompt_files", boom)
     assert main(["serve"]) == 0
     assert served, "the failure must not have reached uvicorn"
+
+
+class _FakeThread:
+    """A `threading.Thread` double whose `is_alive()` is set by the test,
+    independent of whether `join()` actually blocked -- what makes a
+    30-second-timeout race exercisable without waiting 30 real seconds."""
+
+    def __init__(self, alive: bool):
+        self._alive = alive
+        self.joined_with: float | None = None
+
+    def join(self, timeout=None):
+        self.joined_with = timeout
+
+    def is_alive(self):
+        return self._alive
+
+
+class _FakeStore:
+    def __init__(self):
+        self.closed = False
+
+    def close(self):
+        self.closed = True
+
+
+def test_shutdown_does_not_close_the_store_while_the_thread_is_still_alive():
+    """A tick mid-launch when the join times out must not have its connection
+    yanked out from under it. `join_timeout` is set tiny here -- not the real
+    30s -- since this is exercising the guard, not the timeout duration."""
+    stop = threading.Event()
+    t = _FakeThread(alive=True)
+    store = _FakeStore()
+
+    _shutdown_scheduler(stop, t, store, join_timeout=0.01)
+
+    assert stop.is_set()
+    assert t.joined_with == 0.01
+    assert not store.closed, "closing while the thread is alive is the race"
+
+
+def test_shutdown_closes_the_store_once_the_thread_has_terminated():
+    stop = threading.Event()
+    t = _FakeThread(alive=False)
+    store = _FakeStore()
+
+    _shutdown_scheduler(stop, t, store, join_timeout=0.01)
+
+    assert store.closed

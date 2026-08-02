@@ -53,6 +53,81 @@ def launch(project_id, lid="l1", **kw):
     return Launch(**base)
 
 
+def _job(store, sid="j1", scheduled_for=1000, **kw):
+    from bridge.models import ScheduledRun
+    job = ScheduledRun(id=sid, project_path="/p", prompt="go", mode="background",
+                       scheduled_for=scheduled_for, created_at=500, **kw)
+    return store.create_scheduled_run(job)
+
+
+def test_claim_one_due_claims_exactly_one_pending_job_at_or_before_now(store):
+    _job(store, "a", scheduled_for=1000)
+    _job(store, "b", scheduled_for=2000)          # future
+    row = store.claim_one_due(now=1500)
+    assert row["id"] == "a" and row["status"] == "launching" and row["claimed_at"] == 1500
+    assert store.claim_one_due(now=1500) is None    # b is future; a already launching
+
+
+def test_claim_one_due_is_a_single_winner_under_a_repeat_claim(store):
+    _job(store, "a", scheduled_for=1000)
+    assert store.claim_one_due(now=1500)["id"] == "a"
+    assert store.claim_one_due(now=1500) is None     # already launching, not re-claimed
+
+
+def test_claim_one_due_fires_a_job_due_exactly_at_now(store):
+    _job(store, "a", scheduled_for=1500)      # due exactly at `now`
+    row = store.claim_one_due(now=1500)
+    assert row is not None and row["id"] == "a"   # `<=`, not `<`: due-now must fire
+
+
+def test_finish_requires_a_prior_launching_and_records_terminal_fields(store):
+    _job(store, "a", scheduled_for=1000)
+    store.claim_one_due(now=1500)
+    store.finish_scheduled_run("a", status="fired", launch_id="L1", fired_at=1600)
+    r = store.get_scheduled_run("a")
+    assert r["status"] == "fired" and r["launch_id"] == "L1" and r["fired_at"] == 1600
+    assert r["completed_at"] is not None
+
+
+def test_edit_and_cancel_only_touch_pending(store):
+    _job(store, "a", scheduled_for=1000)
+    assert store.edit_pending("a", prompt="new", scheduled_for=1200) is True
+    assert store.get_scheduled_run("a")["prompt"] == "new"
+    store.claim_one_due(now=1500)
+    assert store.edit_pending("a", prompt="later") is False   # launching, immutable
+    assert store.cancel_pending("a") is False
+
+
+def test_cancel_pending_marks_cancelled(store):
+    _job(store, "a", scheduled_for=1000)
+    assert store.cancel_pending("a") is True
+    assert store.get_scheduled_run("a")["status"] == "cancelled"
+    assert store.claim_one_due(now=1500) is None              # cancelled never claimed
+
+
+def test_reconcile_launching_flips_strays_to_indeterminate(store):
+    _job(store, "a", scheduled_for=1000)
+    store.claim_one_due(now=1500)                             # leaves it 'launching'
+    assert store.reconcile_launching(now=9000) == 1
+    assert store.get_scheduled_run("a")["status"] == "indeterminate"
+
+
+def test_claim_specific_claims_a_pending_job_by_id(store):
+    _job(store, "a", scheduled_for=9999)                      # far future
+    assert store.claim_specific("a")["status"] == "launching"
+    assert store.claim_specific("a") is None                 # not pending anymore
+
+
+def test_finish_scheduled_run_is_a_noop_when_not_launching(store):
+    _job(store, "a", scheduled_for=1000)
+    assert store.cancel_pending("a") is True                 # status is now 'cancelled'
+    store.finish_scheduled_run("a", status="fired", launch_id="L1", fired_at=1600)
+    r = store.get_scheduled_run("a")
+    assert r["status"] == "cancelled"
+    assert r["launch_id"] is None
+    assert r["fired_at"] is None
+
+
 def test_pragmas_are_set(store):
     assert store.conn.execute("pragma journal_mode").fetchone()[0].lower() == "wal"
     assert store.conn.execute("pragma foreign_keys").fetchone()[0] == 1

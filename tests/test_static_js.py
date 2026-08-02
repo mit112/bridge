@@ -14,6 +14,7 @@ adding a JS test framework, a bundler, or a dependency.
 """
 
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -449,3 +450,250 @@ def test_a_refused_pin_leaves_the_announced_state_alone(tmp_path):
     got = _run_projects(tmp_path, "pin", ok=False, pressed="false")
     assert got["pressed"] == "false", "the button claimed a pin the server refused"
     assert "\u26a0" in got["cardStatus"]
+
+
+# --- Task 5: schedule.js — the datetime<->epoch math and the click flows ----
+#
+# The highest-risk code in Task 5: a timezone or seconds/milliseconds mistake
+# here schedules a session at the wrong time with no test anywhere to catch
+# it. Every subprocess pins `TZ=UTC` so `Date`'s local-time behaviour (which
+# `localInputToEpoch`/`epochToDatetimeLocalValue` both lean on) is the same on
+# every machine this runs on, not just the author's.
+
+SCHEDULE_JS = Path(__file__).resolve().parent.parent / "src" / "bridge" / "static" / "schedule.js"
+
+UTC_ENV = {**os.environ, "TZ": "UTC"}
+
+
+def _run_node(tmp_path, name: str, script: str, target: Path) -> dict:
+    harness = tmp_path / name
+    harness.write_text(script)
+    proc = subprocess.run(
+        [_node(), str(harness), str(target)],
+        capture_output=True, text=True, env=UTC_ENV,
+    )
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout)
+
+
+PURE_MATH_HARNESS = """
+globalThis.window = globalThis;
+globalThis.document = { addEventListener() {} };
+const fs = require("fs");
+eval(fs.readFileSync(process.argv[2], "utf8"));
+console.log(JSON.stringify({
+  // A `Math.round` regression would make these two disagree: rounding up
+  // ".999" of a second crosses into the next whole second, floor does not.
+  onTheSecond: window.localInputToEpoch("2026-06-01T10:00:00.000"),
+  flooredNotRounded: window.localInputToEpoch("2026-06-01T10:00:00.999"),
+  // No seconds at all -- the actual precision a real <input type=
+  // "datetime-local"> ever produces.
+  minutePrecision: window.localInputToEpoch("2026-06-01T10:00"),
+  roundTrip: window.localInputToEpoch(
+    window.epochToDatetimeLocalValue(1780308000)) === 1780308000,
+  epoch: window.epochToDatetimeLocalValue(0),
+  empty: window.localInputToEpoch(""),
+}));
+"""
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_local_input_to_epoch_floors_seconds_rather_than_rounding(tmp_path):
+    """(a) A `Math.round`/milliseconds regression must fail this."""
+    got = _run_node(tmp_path, "pure_math.js", PURE_MATH_HARNESS, SCHEDULE_JS)
+    assert got["onTheSecond"] == got["flooredNotRounded"], (
+        "flooring must land on the SAME second regardless of the fractional "
+        "remainder -- rounding would push .999 into the next second"
+    )
+    assert got["minutePrecision"] == 1780308000, (
+        "2026-06-01T10:00:00 UTC, the only precision a real datetime-local "
+        "input ever produces"
+    )
+    assert got["empty"] is None
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_epoch_to_datetime_local_value_round_trips(tmp_path):
+    """(b) Formats a known epoch to its wall-clock value and back."""
+    got = _run_node(tmp_path, "pure_math.js", PURE_MATH_HARNESS, SCHEDULE_JS)
+    assert got["epoch"] == "1970-01-01T00:00"
+    assert got["roundTrip"] is True
+
+
+# --- (c) The schedule-submit handler: seconds, and source_handoff_id --------
+
+SCHEDULE_SUBMIT_HARNESS = """
+globalThis.window = globalThis;
+let clickHandler = null;
+
+const promptField = { value: "do the thing" };
+const whenInput = { value: "2026-06-01T10:00" };
+const modeSelect = { value: "background" };
+const toggleButton = { focus() {}, setAttribute() {}, getAttribute: () => null };
+const summaryCount = { textContent: "0" };
+const topbarCount = { textContent: "0" };
+
+const panel = {
+  hidden: false,
+  getAttribute(name) {
+    if (name === "data-schedule-path") return "/Users/mitsheth/dev/demo";
+    if (name === "data-schedule-prompt") return "compose-1";
+    if (name === "data-schedule-handoff") return HANDOFF_ID;
+    return null;
+  },
+  querySelector(sel) {
+    if (sel === "[data-schedule-when]") return whenInput;
+    if (sel === "[data-schedule-mode]") return modeSelect;
+    return null;
+  },
+};
+
+globalThis.document = {
+  addEventListener(type, fn) { if (type === "click") clickHandler = fn; },
+  getElementById: (id) => {
+    if (id === "schedule-panel-1") return panel;
+    if (id === "compose-1") return promptField;
+    return null;
+  },
+  querySelector(sel) {
+    if (sel === '[data-schedule-toggle="schedule-panel-1"]') return toggleButton;
+    if (sel === "[data-scheduled-count]") return summaryCount;
+    if (sel === "[data-topbar-scheduled]") return topbarCount;
+    return null;
+  },
+};
+
+let sentUrl = null;
+let sentMethod = null;
+let sentBody = null;
+globalThis.fetch = async (url, init) => {
+  sentUrl = url;
+  sentMethod = init.method;
+  sentBody = JSON.parse(init.body);
+  return { ok: true, status: 201, json: async () => ({ id: "new-job" }) };
+};
+
+const fs = require("fs");
+eval(fs.readFileSync(process.argv[2], "utf8"));
+
+const submitButton = {
+  getAttribute: () => "schedule-panel-1",
+  closest: (sel) => (sel === "[data-schedule-submit]" ? submitButton : null),
+  disabled: false,
+};
+
+clickHandler({ target: submitButton }).then(() => {
+  console.log(JSON.stringify({ sentUrl, sentMethod, sentBody }));
+});
+"""
+
+
+def _run_schedule_submit(tmp_path, handoff_id) -> dict:
+    script = SCHEDULE_SUBMIT_HARNESS.replace("HANDOFF_ID", json.dumps(handoff_id))
+    return _run_node(tmp_path, "schedule_submit.js", script, SCHEDULE_JS)
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_schedule_submit_posts_seconds_and_a_null_source_for_the_compose_box(tmp_path):
+    got = _run_schedule_submit(tmp_path, handoff_id=None)
+    assert got["sentUrl"] == "/api/schedule"
+    assert got["sentMethod"] == "POST"
+    body = got["sentBody"]
+    assert body["project_path"] == "/Users/mitsheth/dev/demo"
+    assert body["prompt"] == "do the thing"
+    assert body["mode"] == "background"
+    # Seconds, not milliseconds: `new Date().getTime()` is milliseconds, and a
+    # regression that dropped the `/ 1000` would schedule 1000x too far out.
+    assert body["scheduled_for"] == 1780308000
+    assert body["source_handoff_id"] is None
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_schedule_submit_carries_the_handoff_id_for_the_handoff_path(tmp_path):
+    got = _run_schedule_submit(tmp_path, handoff_id="h1")
+    assert got["sentBody"]["source_handoff_id"] == "h1"
+
+
+# --- (d) The Scheduled section's cancel handler -----------------------------
+
+SCHEDULE_CANCEL_HARNESS = """
+globalThis.window = globalThis;
+let clickHandler = null;
+
+const row = { removed: false, remove() { this.removed = true; } };
+const summary = { focused: false, focus() { this.focused = true; } };
+const sectionStatus = { textContent: "" };
+const rowStatus = { textContent: "" };
+const summaryCount = { textContent: "2" };
+const topbarCount = { textContent: "2" };
+
+const nodes = {
+  '[data-scheduled-job="sched-9"]': row,
+  "[data-scheduled] summary": summary,
+  "[data-scheduled-section-status]": sectionStatus,
+  '[data-scheduled-status="sched-9"]': rowStatus,
+  "[data-scheduled-count]": summaryCount,
+  "[data-topbar-scheduled]": topbarCount,
+  "[data-scheduled]": null,
+};
+
+globalThis.document = {
+  addEventListener(type, fn) { if (type === "click") clickHandler = fn; },
+  querySelector: (sel) => nodes[sel] ?? null,
+};
+
+let sentUrl = null;
+let sentMethod = null;
+globalThis.fetch = async (url, init) => {
+  sentUrl = url;
+  sentMethod = init.method;
+  return { ok: true, status: 200, json: async () => ({}) };
+};
+
+const fs = require("fs");
+eval(fs.readFileSync(process.argv[2], "utf8"));
+
+const cancelButton = {
+  getAttribute: () => "sched-9",
+  closest: (sel) => (sel === "[data-scheduled-cancel]" ? cancelButton : null),
+  disabled: false,
+};
+
+clickHandler({ target: cancelButton }).then(() => {
+  console.log(JSON.stringify({
+    sentUrl, sentMethod,
+    rowRemoved: row.removed,
+    summaryFocused: summary.focused,
+    sectionStatus: sectionStatus.textContent,
+    count: summaryCount.textContent,
+    topbarCount: topbarCount.textContent,
+  }));
+});
+"""
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_scheduled_cancel_deletes_the_right_job(tmp_path):
+    got = _run_node(tmp_path, "schedule_cancel.js", SCHEDULE_CANCEL_HARNESS, SCHEDULE_JS)
+    assert got["sentUrl"] == "/api/schedule/sched-9"
+    assert got["sentMethod"] == "DELETE"
+    assert got["rowRemoved"] is True
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_scheduled_cancel_moves_focus_and_announces_before_the_row_is_gone(tmp_path):
+    """WCAG 2.4.3/4.1.3: the row (and its own status span) is removed in the
+    same tick, so both the focus target and the announcement have to live
+    somewhere that outlives it."""
+    got = _run_node(tmp_path, "schedule_cancel.js", SCHEDULE_CANCEL_HARNESS, SCHEDULE_JS)
+    assert got["summaryFocused"] is True
+    assert "Cancelled" in got["sectionStatus"]
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_scheduled_cancel_decrements_both_stale_counts(tmp_path):
+    """The topbar count and the section's own summary count are rendered
+    once, on load. Without this fix they read "2" forever after a cancel."""
+    got = _run_node(tmp_path, "schedule_cancel.js", SCHEDULE_CANCEL_HARNESS, SCHEDULE_JS)
+    assert got["count"] == "1"
+    assert got["topbarCount"] == "1"

@@ -22,8 +22,8 @@
   {
     "name": "let an unreadable launches dir stop the panel from booting",
     "file": "src/bridge/__main__.py",
-    "old": "    except OSError:\n        pass\n\n    uvicorn.run(",
-    "new": "    except OSError:\n        raise\n\n    uvicorn.run(",
+    "old": "    except OSError:\n        pass\n\n    # Any row still",
+    "new": "    except OSError:\n        raise\n\n    # Any row still",
     "tests": [
       "tests/test_main.py::test_an_uncollectable_launches_dir_does_not_stop_the_panel"
     ],

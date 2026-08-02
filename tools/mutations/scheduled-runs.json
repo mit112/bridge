@@ -1,0 +1,62 @@
+[
+  {
+    "name": "loosen claim_one_due's due bound, so a job due exactly at now is silently skipped",
+    "file": "src/bridge/store.py",
+    "old": "scheduled_for<=? ",
+    "new": "scheduled_for<? ",
+    "tests": [
+      "tests/test_store.py::test_claim_one_due_fires_a_job_due_exactly_at_now"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "drop finish_scheduled_run's launching guard, so a finish clobbers a cancelled/indeterminate row",
+    "file": "src/bridge/store.py",
+    "old": "\"completed_at=? WHERE id=? AND status='launching'\",",
+    "new": "\"completed_at=? WHERE id=?\",",
+    "tests": [
+      "tests/test_store.py::test_finish_scheduled_run_is_a_noop_when_not_launching"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "drop cancel_pending's pending guard, so cancelling a launching job silently succeeds",
+    "file": "src/bridge/store.py",
+    "old": "\"UPDATE scheduled_runs SET status='cancelled', completed_at=? \"\n                \"WHERE id=? AND status='pending'\", (now_epoch(), id))",
+    "new": "\"UPDATE scheduled_runs SET status='cancelled', completed_at=? \"\n                \"WHERE id=?\", (now_epoch(), id))",
+    "tests": [
+      "tests/test_store.py::test_edit_and_cancel_only_touch_pending"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "reconcile_launching sweeps the wrong status, so a stray 'launching' row is never cleaned up",
+    "file": "src/bridge/store.py",
+    "old": "\"WHERE status='launching'\", (now,))",
+    "new": "\"WHERE status='pending'\", (now,))",
+    "tests": [
+      "tests/test_store.py::test_reconcile_launching_flips_strays_to_indeterminate"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "invert _fire_claimed_job's started check, so a returned failure is recorded as fired",
+    "file": "src/bridge/api.py",
+    "old": "if result.outcome == \"started\":",
+    "new": "if result.outcome != \"started\":",
+    "tests": [
+      "tests/test_scheduler.py::test_tick_marks_a_returned_failure_failed_not_crashed"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "drop claim_specific's pending guard, so run-now re-claims a no-longer-pending job instead of 409ing",
+    "file": "src/bridge/store.py",
+    "old": "\"UPDATE scheduled_runs SET status='launching', claimed_at=? \"\n                \"WHERE id=? AND status='pending'\", (now_epoch(), id))",
+    "new": "\"UPDATE scheduled_runs SET status='launching', claimed_at=? \"\n                \"WHERE id=?\", (now_epoch(), id))",
+    "tests": [
+      "tests/test_api.py::test_run_now_claims_and_fires_via_fire"
+    ],
+    "expect_count": 1
+  }
+]

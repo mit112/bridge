@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from bridge import launcher, spool
 from bridge.api import create_app
 from bridge.config import load
-from bridge.models import GitState, Handoff, Launch, SessionRecord
+from bridge.models import GitState, Handoff, Launch, ScheduledRun, SessionRecord
 from bridge.registry import resolve_project
 from bridge.store import Store, now_epoch
 
@@ -607,10 +607,12 @@ def test_a_launch_from_an_aliased_path_attaches_to_the_canonical_project(launch_
     assert r.json()["handoff_id"] == "h1"
     assert store.project_by_path("/Users/mitsheth/Documents/projectX") is None
     assert store.project_by_path("/Users/mitsheth/dev/projectX") is not None
-    # The raw path is handed to the launcher unchanged; `launch()` canonicalises
-    # it through the same alias table rather than the route doing it twice.
+    # `fire()` resolves the alias itself (Task 2), so the spec it hands the
+    # launcher already carries the canonical path -- a real terminal launch
+    # `cd`s into `spec.project_path` directly, and `cd`-ing into the OLD path
+    # here would try to enter a directory that no longer exists.
     spec, handoff_id = fake.calls[0]
-    assert spec.project_path == "/Users/mitsheth/Documents/projectX"
+    assert spec.project_path == "/Users/mitsheth/dev/projectX"
     assert handoff_id == "h1"
 
 
@@ -777,6 +779,41 @@ def test_an_unknown_mode_is_422_and_never_reaches_the_launcher(launch_app):
     assert fake.calls[0][0].mode == "terminal"
 
 
+def test_fire_resolves_alias_and_passes_the_snapshot_to_launch_fn(client, tmp_path):
+    """A future scheduler calls `api.fire` directly, with no route in front of it
+    to resolve the alias table first -- so `fire` has to do that resolution
+    itself before building the `LaunchSpec` the launcher receives.
+    """
+    from bridge import api
+
+    _, store, _ = client
+    cfg = load({"db_path": tmp_path / "fire.db", "spool_dir": tmp_path / "spool"})
+    store.set_alias("/old/path", "/Users/mitsheth/dev/demo")
+    calls = []
+
+    def fake_launch(store, cfg, spec, handoff_id=None, **kwargs):
+        calls.append(spec)
+        return launcher.LaunchResult("L1", "started")
+
+    result = api.fire(
+        store, cfg,
+        project_path="/old/path",
+        prompt="scheduled prompt",
+        mode="terminal",
+        model=None,
+        effort=None,
+        permission_mode="acceptEdits",
+        title="scheduled",
+        handoff_id=None,
+        launch_fn=fake_launch,
+    )
+
+    assert result.outcome == "started"
+    assert calls[0].project_path == "/Users/mitsheth/dev/demo"  # alias resolved
+    assert calls[0].mode == "terminal"
+    assert calls[0].permission_mode == "acceptEdits"
+
+
 # --- Phase 3: the launch band on the card ------------------------------------
 
 
@@ -795,7 +832,13 @@ def test_the_editable_prompt_is_html_escaped_in_the_textarea(launch_app):
 
     assert "</textarea><script>" not in html, "the prompt closed its own field"
     assert "&lt;/textarea&gt;&lt;script&gt;" in html
-    assert html.count("</textarea>") == 1, "exactly one field was opened and closed"
+    # Balanced, not a fixed count: Task 5's compose box adds a second, always-
+    # empty textarea to every card, so the number that matters is that every
+    # opened field was also closed -- an unescaped `</textarea>` in the prompt
+    # would leave one dangling open (or one bare close with nothing to match).
+    assert html.count("<textarea") == html.count("</textarea>"), (
+        "every opened field must also be closed"
+    )
 
 
 def test_both_launch_selects_are_labelled_and_preselect_the_suggestion(launch_app):
@@ -818,8 +861,13 @@ def test_both_launch_selects_are_labelled_and_preselect_the_suggestion(launch_ap
     assert '<option value="sonnet" selected>sonnet — latest (Sonnet 5)</option>' in html
     assert '<option value="xhigh" selected>xhigh</option>' in html
     # Three selects now: model, effort, permissions. The permission select is
-    # always preselected on its first option, which is the no-flag one.
-    assert html.count(" selected>") == 3, "one preselection per select, no more"
+    # always preselected on its first option, which is the no-flag one. Scoped
+    # to the launch band itself -- Task 5's compose box and schedule forms add
+    # their own preselected "terminal" mode options elsewhere on the page,
+    # which is not what this assertion is about.
+    band = re.search(rf'<p class="launch" data-launch="{lid}".*?</p>', html, re.S)
+    assert band, "the launch band itself must be present"
+    assert band.group(0).count(" selected>") == 3, "one preselection per select, no more"
     assert '<option value="" selected>Ask as usual</option>' in html
 
 
@@ -885,9 +933,10 @@ def test_a_card_with_no_queued_handoff_still_renders_a_launch_band(launch_app):
     assert f'data-launch="launch-{pid}"' in html
     assert f'id="launch-{pid}-model"' in html
     assert f'data-launch-status="launch-{pid}"' in html
-    # ...and no empty prompt block, no orphan copy affordance, no handoff id.
+    # ...and no queued-handoff artifacts. The compose box's own textarea is
+    # unrelated and expected to be present on every card, handoff or not.
     assert "Next step queued" not in html
-    assert "<textarea" not in html
+    assert "data-prompt-handoff" not in html
     assert "data-copy-target" not in html
     assert "data-launch-handoff" not in html
 
@@ -902,7 +951,10 @@ def test_every_new_control_is_labelled_and_none_leaves_the_tab_order(launch_app)
     assert 'tabindex="-1"' not in html
     labelled = set(re.findall(r'<label[^>]*\sfor="([^"]+)"', html))
     fields = re.findall(r"<(?:select|textarea)\b[^>]*>", html)
-    assert len(fields) == 4, "three selects and the prompt field"
+    # Three launch-band selects and the handoff's own prompt field, plus
+    # Task 5's compose box (its prompt field and its own mode select) and the
+    # handoff's "Schedule…" reveal (one more mode select).
+    assert len(fields) == 7, "three launch selects, two mode selects, two prompts"
     for tag in fields:
         ident = re.search(r'\sid="([^"]+)"', tag)
         assert (ident and ident.group(1) in labelled) or "aria-label=" in tag, tag
@@ -1858,3 +1910,320 @@ def test_a_failing_sensor_renders_the_dashboard_instead_of_500ing(client, monkey
     r = c.get("/")
     assert r.status_code == 200
     assert "demo" in r.text
+
+
+# --- Phase 6: /api/schedule ---------------------------------------------------
+
+
+def test_schedule_create_list_and_cancel(client):
+    c, store, _ = client
+    r = c.post("/api/schedule", json={"project_path": "/Users/mitsheth/dev/demo",
+        "prompt": "do it", "scheduled_for": 1000, "mode": "background"})
+    assert r.status_code == 201
+    jid = r.json()["id"]
+    assert any(j["id"] == jid for j in c.get("/api/schedule").json())
+    assert c.delete(f"/api/schedule/{jid}").status_code == 200
+    assert store.get_scheduled_run(jid)["status"] == "cancelled"
+
+
+def test_schedule_edit_is_pending_only(client):
+    c, store, _ = client
+    jid = c.post("/api/schedule", json={"project_path": "/Users/mitsheth/dev/demo",
+        "prompt": "x", "scheduled_for": 1000, "mode": "background"}).json()["id"]
+    assert c.patch(f"/api/schedule/{jid}", json={"prompt": "y"}).status_code == 200
+    store.claim_one_due(now=2000)                      # now 'launching'
+    assert c.patch(f"/api/schedule/{jid}", json={"prompt": "z"}).status_code == 409
+
+
+def test_run_now_claims_and_fires_via_fire(launch_app):
+    # launch_app injects a launch_fn double (no real spawn); see existing launch tests
+    c, store, _, launch_fn = launch_app
+    jid = c.post("/api/schedule", json={"project_path": DEMO, "prompt": "go",
+        "scheduled_for": 9_000_000_000, "mode": "background"}).json()["id"]
+    r = c.post(f"/api/schedule/{jid}/run-now")
+    assert r.status_code == 200
+    assert store.get_scheduled_run(jid)["status"] in ("fired", "failed")
+    assert c.post(f"/api/schedule/{jid}/run-now").status_code == 409   # not pending anymore
+
+
+def test_run_now_records_indeterminate_on_an_unexpected_exception(launch_app):
+    """A non-`LaunchError` exception out of `fire()` -- a bug, or a
+    `sqlite3.IntegrityError` from a handoff deleted between schedule and fire
+    -- must not 500 `run-now` or leave the row stuck `launching`.
+    `indeterminate` is terminal: the claim already happened, so the row
+    really might have spawned, but it must never be auto-retried."""
+    c, store, _, fake = launch_app
+    jid = c.post("/api/schedule", json={"project_path": DEMO, "prompt": "go",
+        "scheduled_for": 9_000_000_000, "mode": "background"}).json()["id"]
+    fake.result = RuntimeError("boom")
+
+    r = c.post(f"/api/schedule/{jid}/run-now")
+
+    assert r.status_code == 200
+    row = store.get_scheduled_run(jid)
+    assert row["status"] == "indeterminate"
+    assert "boom" in row["error"]
+
+
+def test_schedule_rejects_bad_mode_and_prompt(client):
+    c, _, _ = client
+    assert c.post("/api/schedule", json={"project_path": DEMO, "prompt": "x",
+        "scheduled_for": 1000, "mode": "nope"}).status_code == 422
+    assert c.post("/api/schedule", json={"project_path": DEMO, "prompt": "a\x00b",
+        "scheduled_for": 1000, "mode": "background"}).status_code == 422
+
+
+def test_schedule_create_rejects_an_unknown_source_handoff(client):
+    """Mirrors `post_launch`'s check for `handoff_id`: a made-up id must 404
+    at creation, before a row exists, rather than only failing at fire time."""
+    c, store, _ = client
+    r = c.post("/api/schedule", json={"project_path": DEMO, "prompt": "go",
+        "scheduled_for": 1000, "mode": "background",
+        "source_handoff_id": "no-such-handoff"})
+    assert r.status_code == 404
+    assert store.scheduled_runs() == []
+
+
+def test_schedule_create_rejects_an_out_of_range_scheduled_for(client):
+    c, store, _ = client
+    r = c.post("/api/schedule", json={"project_path": DEMO, "prompt": "go",
+        "scheduled_for": 10**20, "mode": "background"})
+    assert r.status_code == 422
+    assert store.scheduled_runs() == []
+
+
+def test_patch_schedule_rejects_an_explicit_null_on_a_required_field(client):
+    """`{"prompt": null}` is INCLUDED by `model_dump(exclude_unset=True)`
+    because the key was present, unlike an omitted field. Writing that `None`
+    into a NOT NULL column would 500; it must 422 instead, leaving the row
+    untouched."""
+    c, store, _ = client
+    jid = c.post("/api/schedule", json={"project_path": DEMO, "prompt": "x",
+        "scheduled_for": 1000, "mode": "background"}).json()["id"]
+
+    r = c.patch(f"/api/schedule/{jid}", json={"prompt": None})
+
+    assert r.status_code == 422
+    assert store.get_scheduled_run(jid)["prompt"] == "x"
+
+
+def test_patch_schedule_still_allows_an_omitted_field(client):
+    c, store, _ = client
+    jid = c.post("/api/schedule", json={"project_path": DEMO, "prompt": "x",
+        "scheduled_for": 1000, "mode": "background"}).json()["id"]
+
+    r = c.patch(f"/api/schedule/{jid}", json={"model": "opus"})
+
+    assert r.status_code == 200
+    assert r.json()["prompt"] == "x"
+    assert r.json()["model"] == "opus"
+
+
+def test_dashboard_renders_despite_a_row_with_an_extreme_scheduled_for(client):
+    """`ScheduleIn` refuses this at creation, but a row seeded before that
+    check existed -- or straight through the store -- must still degrade
+    gracefully rather than 500 the whole dashboard."""
+    c, store, _ = client
+    # SQLite's INTEGER column tops out around 9.2e18, so this must be an
+    # epoch that fits the column yet still overflows `datetime.fromtimestamp`
+    # (year 33658) -- the case a row seeded before `ScheduleIn`'s bound
+    # existed could actually carry.
+    store.create_scheduled_run(ScheduledRun(
+        id="sched-extreme", project_path=DEMO, prompt="x",
+        mode="background", scheduled_for=999_999_999_999, created_at=1000,
+    ))
+
+    r = c.get("/")
+
+    assert r.status_code == 200
+    assert 'data-scheduled-job="sched-extreme"' in r.text
+
+
+def test_a_launching_scheduled_row_does_not_offer_run_now(client):
+    """`run-now` claims a `pending` row; a `launching` one is already claimed,
+    so the control there only ever produces a 409."""
+    c, store, _ = client
+    store.create_scheduled_run(ScheduledRun(
+        id="sched-launching", project_path=DEMO, prompt="x",
+        mode="terminal", scheduled_for=9_000_000_000, created_at=1000,
+    ))
+    store.claim_specific("sched-launching")
+
+    body = c.get("/").text
+
+    assert 'data-scheduled-job="sched-launching"' in body
+    assert 'data-scheduled-run-now="sched-launching"' not in body
+
+
+def test_run_now_on_unknown_id_is_404(client):
+    c, _, _ = client
+    assert c.post("/api/schedule/nope/run-now").status_code == 404
+
+
+def test_patch_and_delete_on_unknown_id_is_404(client):
+    c, _, _ = client
+    assert c.patch("/api/schedule/nope", json={"prompt": "y"}).status_code == 404
+    assert c.delete("/api/schedule/nope").status_code == 404
+
+
+def test_run_now_fires_through_fire_with_the_row_snapshot(launch_app):
+    """The shared `_fire_claimed_job` tail must call `fire()` with the claimed
+    row's own prompt/mode/handoff, not values reconstructed elsewhere."""
+    c, store, _, fake = launch_app
+    jid = c.post("/api/schedule", json={"project_path": DEMO, "prompt": "scheduled prompt",
+        "scheduled_for": 9_000_000_000, "mode": "background",
+        "permission_mode": "bypassPermissions"}).json()["id"]
+
+    r = c.post(f"/api/schedule/{jid}/run-now")
+
+    assert r.status_code == 200
+    spec, handoff_id = fake.calls[-1]
+    assert spec.prompt == "scheduled prompt"
+    assert spec.mode == "background"
+    assert spec.permission_mode == "bypassPermissions"
+    assert handoff_id is None
+    row = store.get_scheduled_run(jid)
+    assert row["status"] == "fired"
+    assert row["launch_id"] == fake.result.launch_id
+
+
+def test_run_now_records_failure_when_the_launcher_raises(launch_app):
+    c, store, _, fake = launch_app
+    jid = c.post("/api/schedule", json={"project_path": DEMO, "prompt": "go",
+        "scheduled_for": 9_000_000_000, "mode": "background"}).json()["id"]
+    fake.result = launcher.LaunchError("no claude on PATH")
+
+    r = c.post(f"/api/schedule/{jid}/run-now")
+
+    assert r.status_code == 200
+    row = store.get_scheduled_run(jid)
+    assert row["status"] == "failed"
+    assert row["error"] == "no claude on PATH"
+
+
+def test_run_now_records_failure_when_the_launcher_returns_one(launch_app):
+    """Distinct from the `LaunchError`-raised path above: here `launch_fn`
+    returns normally with `outcome=='failed'` (a spawn that was attempted and
+    failed, not one refused before anything ran). Nothing previously drove
+    this branch of `_fire_claimed_job`, so an inverted or collapsed
+    `result.outcome == "started"` check would still pass the whole suite."""
+    c, store, _, fake = launch_app
+    jid = c.post("/api/schedule", json={"project_path": DEMO, "prompt": "go",
+        "scheduled_for": 9_000_000_000, "mode": "background"}).json()["id"]
+    fake.result = launcher.LaunchResult("L9", "failed", error="spawn boom")
+
+    r = c.post(f"/api/schedule/{jid}/run-now")
+
+    assert r.status_code == 200
+    row = store.get_scheduled_run(jid)
+    assert row["status"] == "failed"
+    assert row["launch_id"] == "L9"
+    assert row["error"] == "spawn boom"
+
+
+# --- Task 5: the Scheduled panel section --------------------------------------
+
+
+def test_dashboard_shows_the_scheduled_section_and_topbar_count_when_a_job_exists(client):
+    """Server-rendered from `store.scheduled_runs()`, like every other section:
+    the count beside `queued` in the topbar and the job itself must both be
+    visible without any JS having run.
+    """
+    c, store, _ = client
+    store.create_scheduled_run(ScheduledRun(
+        id="sched-1", project_path=DEMO, prompt="do the thing",
+        mode="background", scheduled_for=9_000_000_000,
+    ))
+
+    body = c.get("/").text
+
+    assert re.search(r"<dt>scheduled</dt><dd data-topbar-scheduled>1</dd>", body)
+    assert 'data-scheduled-job="sched-1"' in body
+    assert "demo" in body  # the job's project is named, not just its id
+    assert "background" in body
+    # Present AND visible -- unlike the empty case below, a real job must not
+    # be hidden behind the `hidden` attribute.
+    assert not re.search(r"<details[^>]*data-scheduled[^>]*\shidden[\s>]", body)
+
+
+def test_the_scheduled_section_is_present_but_collapsed_when_empty(client):
+    """Mirrors `data-hidden-projects`: always rendered, so a client-side insert
+    has somewhere to put the first row, but hidden via the `hidden` attribute
+    rather than omitted so an empty dashboard does not show a dead section.
+    """
+    c, _, _ = client
+
+    body = c.get("/").text
+
+    assert "data-scheduled" in body
+    assert re.search(r"<details[^>]*data-scheduled[^>]*\shidden[\s>]", body), (
+        "the empty schedule list must be present but not visible"
+    )
+    assert re.search(r"<dt>scheduled</dt><dd data-topbar-scheduled>0</dd>", body)
+
+
+def test_the_scheduled_section_offers_edit_cancel_and_run_now_on_a_pending_job(client):
+    c, store, _ = client
+    store.create_scheduled_run(ScheduledRun(
+        id="sched-2", project_path=DEMO, prompt="do it later",
+        mode="terminal", scheduled_for=9_000_000_000,
+    ))
+
+    body = c.get("/").text
+
+    assert 'data-scheduled-cancel="sched-2"' in body
+    assert 'data-scheduled-run-now="sched-2"' in body
+    assert 'data-scheduled-edit-toggle="sched-2"' in body
+
+
+def test_the_scheduled_section_offers_a_retry_affordance_on_a_failed_job(client):
+    c, store, _ = client
+    store.create_scheduled_run(ScheduledRun(
+        id="sched-3", project_path=DEMO, prompt="it blew up",
+        mode="terminal", scheduled_for=1000,
+    ))
+    store.claim_one_due(now=2000)
+    store.finish_scheduled_run("sched-3", status="failed", error="no claude on PATH")
+
+    body = c.get("/").text
+
+    assert 'data-scheduled-retry="sched-3"' in body
+    assert 'data-scheduled-job="sched-3" class="scheduled__job scheduled__job--failed"' in body
+
+
+def test_a_cancelled_schedule_does_not_linger_in_the_scheduled_section(client):
+    c, store, _ = client
+    store.create_scheduled_run(ScheduledRun(
+        id="sched-4", project_path=DEMO, prompt="never mind",
+        mode="terminal", scheduled_for=9_000_000_000,
+    ))
+    store.cancel_pending("sched-4")
+
+    body = c.get("/").text
+
+    assert 'data-scheduled-job="sched-4"' not in body
+    assert re.search(r"<dt>scheduled</dt><dd data-topbar-scheduled>0</dd>", body)
+
+
+def test_every_card_has_a_compose_box_that_posts_to_launch_and_schedule(client):
+    c, _, pid = client
+
+    body = c.get("/").text
+
+    cid = f"compose-{pid}"
+    assert f'data-compose-run="{cid}"' in body
+    assert f'data-schedule-toggle="schedule-{cid}"' in body
+    assert f'id="{cid}"' in body
+    assert "datetime-local" in body
+
+
+def test_a_queued_handoff_offers_its_own_schedule_affordance(client):
+    c, _, pid = client
+    c.post("/api/handoff", json={
+        "id": "h-sched", "project_path": DEMO, "next_prompt": "next step",
+    })
+
+    body = c.get("/").text
+
+    assert 'data-schedule-toggle="schedule-handoff-h-sched"' in body
+    assert 'data-schedule-handoff="h-sched"' in body

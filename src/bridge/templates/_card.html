@@ -27,6 +27,49 @@
   </header>
   <p class="card__path">{{ card.path }}</p>
 
+  {# An ad hoc prompt, independent of whatever is queued below: a project can
+     have a handoff waiting AND something new to try right now. Always
+     rendered, unlike the handoff textarea, because there is always something
+     to compose even when nothing is queued. #}
+  {% set cid = "compose-" ~ card.project_id %}
+  {% set panel = "schedule-" ~ cid %}
+  <section class="compose" aria-labelledby="{{ cid }}-title" data-compose="{{ cid }}">
+    <h3 class="compose__title" id="{{ cid }}-title">New session</h3>
+    <label class="compose__label" for="{{ cid }}">Prompt for {{ card.name }}</label>
+    <textarea class="compose__prompt" id="{{ cid }}" data-compose-prompt="{{ cid }}"></textarea>
+    <p class="compose__actions">
+      <button type="button" class="btn" data-compose-run="{{ cid }}"
+              data-compose-path="{{ card.path }}">Run now</button>
+      <button type="button" class="btn" data-schedule-toggle="{{ panel }}"
+              aria-expanded="false" aria-controls="{{ panel }}">Schedule…</button>
+      <span class="compose__status" role="status" aria-live="polite"
+            data-compose-status="{{ cid }}"></span>
+      {# A SIBLING of the panel below, not a descendant: on submit,
+         `schedule.js` hides the panel in the same tick it announces success,
+         and a live region inside the node being hidden is read by nothing --
+         `role="status"` only fires on a node still in the accessibility
+         tree. #}
+      <span class="compose__status" role="status" aria-live="polite"
+            data-schedule-status="{{ panel }}"></span>
+    </p>
+    <div class="schedule-form" id="{{ panel }}" data-schedule-panel hidden
+         data-schedule-path="{{ card.path }}" data-schedule-prompt="{{ cid }}">
+      <span class="schedule-form__field">
+        <label class="compose__label" for="{{ panel }}-when">Run at</label>
+        <input type="datetime-local" id="{{ panel }}-when" data-schedule-when>
+      </span>
+      <span class="schedule-form__field">
+        <label class="compose__label" for="{{ panel }}-mode">Mode</label>
+        <select id="{{ panel }}-mode" data-schedule-mode>
+          <option value="terminal" selected>terminal</option>
+          <option value="background">background</option>
+        </select>
+      </span>
+      <button type="button" class="btn" data-schedule-submit="{{ panel }}">Schedule</button>
+      <p class="schedule-form__hint">Last 5h across all projects: {{ totals.last_5h | kilo }} tokens</p>
+    </div>
+  </section>
+
   {% if card.session %}
     <div class="card__session">
       <h3>{{ card.session.title or "Untitled session" }}</h3>
@@ -92,6 +135,9 @@
                 data-prompt-handoff="{{ card.handoff.id }}">{{ card.handoff.next_prompt }}</textarea>
       <p class="handoff__actions">
         <button type="button" class="btn" data-copy-target="{{ hid }}">Copy prompt</button>
+        {% set hpanel = "schedule-" ~ hid %}
+        <button type="button" class="btn" data-schedule-toggle="{{ hpanel }}"
+                aria-expanded="false" aria-controls="{{ hpanel }}">Schedule…</button>
         {# Three status lines, three keys. Copy, save and launch all announce into
            `role="status"`, and sharing one key would let them overwrite each
            other's message — so each has its own. #}
@@ -99,7 +145,32 @@
               data-copy-status="{{ hid }}"></span>
         <span class="handoff__status" role="status" aria-live="polite"
               data-prompt-status="{{ hid }}"></span>
+        {# A SIBLING of the schedule-form panel below, not a descendant --
+           see the identical note on the compose box's own status span. #}
+        <span class="handoff__status" role="status" aria-live="polite"
+              data-schedule-status="{{ hpanel }}"></span>
       </p>
+      {# Schedules the CURRENT contents of the prompt field above, read fresh at
+         submit time -- the same reason `launch.js`'s click handler never trusts
+         a `focusout` save to have landed first. `data-schedule-handoff` is what
+         attaches the resulting job to this handoff via `source_handoff_id`. #}
+      <div class="schedule-form" id="{{ hpanel }}" data-schedule-panel hidden
+           data-schedule-path="{{ card.path }}" data-schedule-prompt="{{ hid }}"
+           data-schedule-handoff="{{ card.handoff.id }}">
+        <span class="schedule-form__field">
+          <label class="compose__label" for="{{ hpanel }}-when">Run at</label>
+          <input type="datetime-local" id="{{ hpanel }}-when" data-schedule-when>
+        </span>
+        <span class="schedule-form__field">
+          <label class="compose__label" for="{{ hpanel }}-mode">Mode</label>
+          <select id="{{ hpanel }}-mode" data-schedule-mode>
+            <option value="terminal" selected>terminal</option>
+            <option value="background">background</option>
+          </select>
+        </span>
+        <button type="button" class="btn" data-schedule-submit="{{ hpanel }}">Schedule</button>
+        <p class="schedule-form__hint">Last 5h across all projects: {{ totals.last_5h | kilo }} tokens</p>
+      </div>
     </section>
   {% endif %}
 
