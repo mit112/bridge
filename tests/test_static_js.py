@@ -535,6 +535,110 @@ def test_epoch_to_datetime_local_value_round_trips(tmp_path):
     assert got["roundTrip"] is True
 
 
+# --- The compose Run now path shares the launch band's settings/recovery ----
+
+COMPOSE_RUN_HARNESS = """
+globalThis.window = globalThis;
+let clickHandler = null;
+const promptField = { value: "typed prompt" };
+const statusNode = { textContent: "" };
+let launchOptionsArgs = null;
+let copied = null;
+let sentBody = null;
+
+window.bridgeLaunchBody = (id, path) => {
+  launchOptionsArgs = [id, path];
+  return {
+    project_path: path,
+    mode: "terminal",
+    model: "claude-opus-4-8",
+    effort: "xhigh",
+    permission_mode: "bypassPermissions",
+  };
+};
+window.bridgeCopy = async (text) => {
+  copied = text;
+  return "✓ Copied to clipboard";
+};
+
+globalThis.document = {
+  addEventListener(type, fn) { if (type === "click") clickHandler = fn; },
+  getElementById: (id) => id === "compose-1" ? promptField : null,
+  querySelector: (sel) =>
+    sel === '[data-compose-status="compose-1"]' ? statusNode : null,
+};
+
+globalThis.fetch = async (_url, init) => {
+  sentBody = JSON.parse(init.body);
+  FETCH_BEHAVIOR
+};
+
+const fs = require("fs");
+eval(fs.readFileSync(process.argv[2], "utf8"));
+
+const button = {
+  disabled: false,
+  setAttribute() {},
+  removeAttribute() {},
+  getAttribute(name) {
+    if (name === "data-compose-run") return "compose-1";
+    if (name === "data-compose-path") return "/Users/mitsheth/dev/demo";
+    if (name === "data-compose-launch") return "launch-1";
+    return null;
+  },
+  closest(sel) { return sel === "[data-compose-run]" ? button : null; },
+};
+
+clickHandler({ target: button }).then(() => {
+  console.log(JSON.stringify({
+    launchOptionsArgs, copied, sentBody,
+    prompt: promptField.value,
+    status: statusNode.textContent,
+  }));
+});
+"""
+
+
+def _run_compose_now(tmp_path, behavior: str) -> dict:
+    behaviors = {
+        "started": 'return { ok: true, status: 200, json: async () => ({ outcome: "started" }) };',
+        "refused": 'return { ok: false, status: 400, json: async () => ({ detail: "refused" }) };',
+        "failed": 'return { ok: true, status: 200, json: async () => ({ outcome: "failed", error: "spawn failed" }) };',
+        "network": 'throw new Error("offline");',
+    }
+    script = COMPOSE_RUN_HARNESS.replace("FETCH_BEHAVIOR", behaviors[behavior])
+    return _run_node(tmp_path, f"compose_{behavior}.js", script, SCHEDULE_JS)
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_compose_run_now_uses_the_card_launch_settings(tmp_path):
+    got = _run_compose_now(tmp_path, "started")
+    assert got["launchOptionsArgs"] == [
+        "launch-1", "/Users/mitsheth/dev/demo",
+    ]
+    assert got["sentBody"] == {
+        "project_path": "/Users/mitsheth/dev/demo",
+        "prompt": "typed prompt",
+        "mode": "terminal",
+        "model": "claude-opus-4-8",
+        "effort": "xhigh",
+        "permission_mode": "bypassPermissions",
+    }
+    assert got["prompt"] == ""
+    assert got["copied"] is None
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+@pytest.mark.parametrize("behavior", ["refused", "failed", "network"])
+def test_compose_run_now_copies_and_preserves_the_prompt_on_every_failure(
+    tmp_path, behavior,
+):
+    got = _run_compose_now(tmp_path, behavior)
+    assert got["copied"] == "typed prompt"
+    assert got["prompt"] == "typed prompt"
+    assert got["status"].startswith("⚠ Launch failed — prompt copied")
+
+
 # --- (c) The schedule-submit handler: seconds, and source_handoff_id --------
 
 SCHEDULE_SUBMIT_HARNESS = """

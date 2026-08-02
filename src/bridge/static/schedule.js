@@ -10,6 +10,17 @@ function announce(selector, message) {
   if (status) status.textContent = message;
 }
 
+async function announceComposeLaunchFailure(key, field, detail) {
+  const copied = await window.bridgeCopy(field.value, field);
+  console.error("bridge: compose launch failed", detail);
+  announce(
+    key,
+    copied.startsWith("✓")
+      ? `⚠ Launch failed — prompt copied; ${detail}`
+      : `⚠ Launch failed — press ⌘C to copy the prompt; ${detail}`,
+  );
+}
+
 async function postJSON(url, method, body) {
   const response = await fetch(url, {
     method,
@@ -196,28 +207,36 @@ document.addEventListener("click", async (event) => {
       return;
     }
     composeRun.disabled = true;
+    composeRun.setAttribute("aria-busy", "true");
     announce(key, "Launching…");
     try {
-      const { ok, status, data } = await postJSON("/api/launch", "POST", {
-        project_path: composeRun.getAttribute("data-compose-path"),
-        prompt: field.value,
-        mode: "terminal",
-      });
+      const body = window.bridgeLaunchBody(
+        composeRun.getAttribute("data-compose-launch"),
+        composeRun.getAttribute("data-compose-path"),
+      );
+      body.prompt = field.value;
+      const { ok, status, data } = await postJSON("/api/launch", "POST", body);
       if (!ok) {
-        announce(key, `⚠ Not launched — ${data.detail || `HTTP ${status}`}`);
+        await announceComposeLaunchFailure(
+          key, field, data.detail || `HTTP ${status}`,
+        );
         return;
       }
       if (data.outcome === "failed") {
-        announce(key, `⚠ Launch failed — ${data.error || "see the terminal"}`);
+        await announceComposeLaunchFailure(
+          key, field, data.error || "see the terminal",
+        );
         return;
       }
       announce(key, "✓ Launched — the session is opening in Terminal");
       field.value = "";
     } catch (error) {
-      console.error("bridge: compose launch failed", error);
-      announce(key, "⚠ Launch failed — the panel did not answer");
+      await announceComposeLaunchFailure(
+        key, field, "the panel did not answer",
+      );
     } finally {
       composeRun.disabled = false;
+      composeRun.removeAttribute("aria-busy");
     }
     return;
   }

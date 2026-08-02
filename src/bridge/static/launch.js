@@ -12,6 +12,24 @@ function announce(selector, message) {
   if (status) status.textContent = message;
 }
 
+// Both Run now affordances use this one reader. The select values remain the
+// sole launch authority and are read fresh for every click.
+window.bridgeLaunchBody = function bridgeLaunchBody(id, projectPath) {
+  const model = document.querySelector(`[data-launch-model="${id}"]`);
+  const effort = document.querySelector(`[data-launch-effort="${id}"]`);
+  const perm = document.querySelector(`[data-launch-perm="${id}"]`);
+  return {
+    project_path: projectPath,
+    mode: "terminal",
+    model: model ? model.value : null,
+    effort: effort ? effort.value : null,
+    // Read fresh from the select on every click and never cached: the server
+    // holds no permission memory, so this is the only thing that decides the
+    // mode, and it must not be able to carry over from a previous launch.
+    permission_mode: perm ? perm.value : null,
+  };
+};
+
 // Save an edited prompt when focus leaves the field, and only when the text
 // actually changed — `focusout` (which bubbles, unlike `blur`) fires on every
 // tab-through, and a PATCH per tab-through would re-journal an unchanged prompt.
@@ -52,20 +70,9 @@ document.addEventListener("click", async (event) => {
   const key = `[data-launch-status="${id}"]`;
   const promptId = band.getAttribute("data-launch-prompt");
   const field = promptId ? document.getElementById(promptId) : null;
-  const model = document.querySelector(`[data-launch-model="${id}"]`);
-  const effort = document.querySelector(`[data-launch-effort="${id}"]`);
-  const perm = document.querySelector(`[data-launch-perm="${id}"]`);
-
-  const body = {
-    project_path: band.getAttribute("data-launch-path"),
-    mode: "terminal",
-    model: model ? model.value : null,
-    effort: effort ? effort.value : null,
-    // Read fresh from the select on every click and never cached: the server
-    // holds no permission memory, so this is the only thing that decides the
-    // mode, and it must not be able to carry over from a previous launch.
-    permission_mode: perm ? perm.value : null,
-  };
+  const body = window.bridgeLaunchBody(
+    id, band.getAttribute("data-launch-path"),
+  );
   // The field's current value is sent rather than relying on the blur save
   // having landed first: clicking ▶ fires blur and click back to back, and the
   // PATCH is in flight while the launch is being built.

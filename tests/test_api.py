@@ -931,6 +931,7 @@ def test_a_card_with_no_queued_handoff_still_renders_a_launch_band(launch_app):
     html = c.get("/").text
 
     assert f'data-launch="launch-{pid}"' in html
+    assert f'data-compose-launch="launch-{pid}"' in html
     assert f'id="launch-{pid}-model"' in html
     assert f'data-launch-status="launch-{pid}"' in html
     # ...and no queued-handoff artifacts. The compose box's own textarea is

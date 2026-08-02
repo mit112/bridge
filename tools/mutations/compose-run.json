@@ -1,0 +1,42 @@
+[
+  {
+    "name": "disconnect compose Run now from the card launch controls",
+    "file": "src/bridge/templates/_card.html",
+    "old": "              data-compose-launch=\"{{ lid }}\">Run now</button>",
+    "new": "              data-compose-launch=\"\">Run now</button>",
+    "tests": [
+      "tests/test_api.py::test_a_card_with_no_queued_handoff_still_renders_a_launch_band"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "drop the selected model effort and permissions from compose Run now",
+    "file": "src/bridge/static/schedule.js",
+    "old": "      const body = window.bridgeLaunchBody(\n        composeRun.getAttribute(\"data-compose-launch\"),\n        composeRun.getAttribute(\"data-compose-path\"),\n      );",
+    "new": "      const body = { project_path: composeRun.getAttribute(\"data-compose-path\"), mode: \"terminal\" };",
+    "tests": [
+      "tests/test_static_js.py::test_compose_run_now_uses_the_card_launch_settings"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "stop copying the compose prompt when a launch fails",
+    "file": "src/bridge/static/schedule.js",
+    "old": "  const copied = await window.bridgeCopy(field.value, field);",
+    "new": "  const copied = \"⚠ Selected — press ⌘C to copy\";",
+    "tests": [
+      "tests/test_static_js.py::test_compose_run_now_copies_and_preserves_the_prompt_on_every_failure"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "consume the compose prompt before a refused launch is recovered",
+    "file": "src/bridge/static/schedule.js",
+    "old": "      if (!ok) {\n        await announceComposeLaunchFailure(",
+    "new": "      if (!ok) {\n        field.value = \"\";\n        await announceComposeLaunchFailure(",
+    "tests": [
+      "tests/test_static_js.py::test_compose_run_now_copies_and_preserves_the_prompt_on_every_failure"
+    ],
+    "expect_count": 1
+  }
+]

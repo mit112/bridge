@@ -31,6 +31,7 @@
      have a handoff waiting AND something new to try right now. Always
      rendered, unlike the handoff textarea, because there is always something
      to compose even when nothing is queued. #}
+  {% set lid = "launch-" ~ card.project_id %}
   {% set cid = "compose-" ~ card.project_id %}
   {% set panel = "schedule-" ~ cid %}
   <section class="compose" aria-labelledby="{{ cid }}-title" data-compose="{{ cid }}">
@@ -39,7 +40,8 @@
     <textarea class="compose__prompt" id="{{ cid }}" data-compose-prompt="{{ cid }}"></textarea>
     <p class="compose__actions">
       <button type="button" class="btn" data-compose-run="{{ cid }}"
-              data-compose-path="{{ card.path }}">Run now</button>
+              data-compose-path="{{ card.path }}"
+              data-compose-launch="{{ lid }}">Run now</button>
       <button type="button" class="btn" data-schedule-toggle="{{ panel }}"
               aria-expanded="false" aria-controls="{{ panel }}">Schedule…</button>
       <span class="compose__status" role="status" aria-live="polite"
@@ -178,7 +180,6 @@
      queued is still launchable. Its ids are therefore keyed off `project_id`,
      never off a handoff id that may not exist — a bare `handoff-` prefix would
      repeat on every card and silently break each `<label for>`. #}
-  {% set lid = "launch-" ~ card.project_id %}
   {% set sm = card.handoff.suggested_model if card.handoff else None %}
   {% set se = card.handoff.suggested_effort if card.handoff else None %}
   {# `card.launch_models` already has an off-catalog suggestion prepended —
