@@ -98,6 +98,22 @@ def project_roots(store, cfg) -> list[Path]:
     return sorted(roots)
 
 
+def dev_git_repos(cfg) -> list[Path]:
+    """Direct children of `~/dev` that are git repos, transcripts or not.
+
+    A repo you have not opened in Claude still deserves a card (spec:240-241);
+    discovery is opt-out, so the user hides the ones they don't want. The
+    `registry` noise list is deliberately NOT applied here: it targets
+    transcript-encoded container dirs (`-private-tmp-*`), which never appear
+    under `~/dev`.
+    """
+    if not cfg.dev_dir.is_dir():
+        return []
+    return sorted(
+        p for p in cfg.dev_dir.iterdir() if p.is_dir() and (p / ".git").exists()
+    )
+
+
 def discover(store, cfg) -> list[Candidate]:
     out: list[Candidate] = []
     for root in project_roots(store, cfg):

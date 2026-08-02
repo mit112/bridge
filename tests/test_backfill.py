@@ -1,3 +1,5 @@
+import dataclasses
+
 import pytest
 
 from bridge import backfill
@@ -124,6 +126,17 @@ def test_editing_the_file_produces_a_new_handoff_that_supersedes(env):
     pid = store.project_by_path(str(root))["id"]
     assert store.queued_handoff(pid)["next_prompt"].startswith("Actually do something")
     assert len(store.handoffs(pid)) == 2
+
+
+def test_dev_git_repos_lists_only_git_repos_under_dev_dir(env, tmp_path):
+    store, cfg, projects = env
+    dev = tmp_path / "dev"
+    (dev / "has-git" / ".git").mkdir(parents=True)
+    (dev / "plain-dir").mkdir()
+    (dev / "a-file.txt").parent.mkdir(exist_ok=True)
+    (dev / "a-file.txt").write_text("x")
+    cfg = dataclasses.replace(cfg, dev_dir=dev)
+    assert backfill.dev_git_repos(cfg) == [dev / "has-git"]
 
 
 def test_against_the_real_files_on_this_machine(tmp_path):
