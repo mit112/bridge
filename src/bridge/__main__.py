@@ -7,14 +7,18 @@ the CLI imports it lazily so its own handoff path stays database-free.
 
 import argparse
 import json
+import logging
 import sys
+import threading
 from dataclasses import asdict
 from pathlib import Path
 
 from bridge import spool
 from bridge.config import load
 from bridge.indexer import reindex
-from bridge.store import Store
+from bridge.store import Store, now_epoch
+
+log = logging.getLogger(__name__)
 
 
 def run_db_command(argv: list[str] | None = None) -> int:
@@ -73,7 +77,7 @@ def run_db_command(argv: list[str] | None = None) -> int:
 
     import uvicorn
 
-    from bridge import launcher
+    from bridge import launcher, scheduler
     from bridge.api import create_app
 
     # Collect stale prompt files here rather than in `create_app`. A manual
@@ -90,7 +94,32 @@ def run_db_command(argv: list[str] | None = None) -> int:
     except OSError:
         pass
 
-    uvicorn.run(create_app(store, cfg), host="127.0.0.1", port=cfg.port)
+    # Any row still `launching` here was claimed by a process that never got
+    # to record a terminal status -- almost always this same command, killed
+    # between claim and finish on its previous run. Reconciling before the
+    # scheduler thread starts means the first tick never finds a stray row it
+    # could double-fire.
+    stray = store.reconcile_launching(now_epoch())
+    if stray:
+        log.info("reconciled %d stray 'launching' scheduled run(s)", stray)
+
+    # The scheduler is a thread, not a second process, so it shares this same
+    # `Store` connection rather than opening its own -- one sole writer, same
+    # as the request handlers. It belongs here and not in `create_app`: the
+    # suite builds apps directly for route tests, and none of them may spawn a
+    # background thread that claims and fires real scheduled runs.
+    stop = threading.Event()
+    t = threading.Thread(
+        target=scheduler.run_scheduler, args=(store, cfg, stop), daemon=True
+    )
+    t.start()
+
+    try:
+        uvicorn.run(create_app(store, cfg), host="127.0.0.1", port=cfg.port)
+    finally:
+        stop.set()
+        t.join(timeout=5.0)
+        store.close()
     return 0
 
 
