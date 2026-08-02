@@ -5,6 +5,7 @@ opens the database. Phase 3 makes it the sole *spawner* too: the card and the CL
 are both thin clients of `POST /api/launch`, and neither imports `launcher`.
 """
 
+import dataclasses
 import json
 import logging
 import time
@@ -22,7 +23,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, field_validator, model_validator
 
-from bridge import agents, hooks, launcher, sessionmeta, spool
+from bridge import agents, hooks, launcher, schedspool, sessionmeta, spool
 from bridge.cards import FIVE_HOURS, LivenessDebouncer, build_cards, spark_points
 from bridge.config import Config
 from bridge.indexer import reindex
@@ -324,6 +325,20 @@ def fire(
     return launch_fn(store, cfg, spec, handoff_id)
 
 
+def _row_to_scheduled_run(row) -> ScheduledRun:
+    """Rebuild the dataclass from a `sqlite3.Row` so it can be journalled.
+
+    `retry_terminal` and the fire path both hand back rows rather than models;
+    the journal stores `dataclasses.asdict`, so it needs the dataclass.
+    `retry_of` must survive. Dropping it would let `retry_terminal`'s
+    `NOT EXISTS (... retry_of = orig.id)` guard stop seeing the retry that
+    already exists, so after a database loss the user could retry the same
+    original a second time and launch the work twice.
+    """
+    fields = {f.name for f in dataclasses.fields(ScheduledRun)}
+    return ScheduledRun(**{k: row[k] for k in row.keys() if k in fields})
+
+
 def _fire_claimed_job(store: Store, cfg: Config, row, launch_fn: LaunchFn):
     """The shared tail after a scheduled run is claimed -- `POST
     /api/schedule/{id}/run-now` and Task 4's scheduler both end here, with
@@ -341,6 +356,20 @@ def _fire_claimed_job(store: Store, cfg: Config, row, launch_fn: LaunchFn):
     arguments, so a scheduled and a manual launch title identically.
     """
     id = row["id"]
+    # The claim record is what stops a duplicate launch. `claim_specific` has no
+    # `scheduled_for` guard, so run-now can claim a job scheduled for tomorrow;
+    # without this record a database lost mid-launch replays that job as
+    # `pending` and the scheduler fires it again. Unlike every other journal
+    # call here, a failure ABORTS -- firing without the record is exactly the
+    # scenario this exists to prevent.
+    try:
+        schedspool.journal_status(id, "launching", now_epoch(), cfg.spool_dir)
+    except OSError as exc:
+        log.exception("failed to journal claim of scheduled run %r", id)
+        store.finish_scheduled_run(
+            id, status="failed", error=f"could not journal the claim: {exc}"
+        )
+        return store.get_scheduled_run(id)
     effective_path = store.alias_map().get(row["project_path"], row["project_path"])
     title = row["summary"] or launcher.default_title(
         row["summary"], display_name(effective_path)
@@ -381,7 +410,19 @@ def _fire_claimed_job(store: Store, cfg: Config, row, launch_fn: LaunchFn):
             store.finish_scheduled_run(
                 id, status="failed", launch_id=result.launch_id, error=result.error
             )
-    return store.get_scheduled_run(id)
+    final = store.get_scheduled_run(id)
+    if final is not None:
+        # One call for all three outcomes rather than three at each
+        # `finish_scheduled_run`: the row's own status is the authority, and a
+        # journal failure here is demoted because a launched session is not
+        # undone by a filesystem error.
+        try:
+            schedspool.journal_status(
+                id, final["status"], now_epoch(), cfg.spool_dir
+            )
+        except OSError:
+            log.exception("failed to journal terminal status of %r", id)
+    return final
 
 
 def create_app(
@@ -990,8 +1031,17 @@ def create_app(
             scheduled_for=body.scheduled_for,
             created_at=now_epoch(),
         )
+        # Journal before the insert, matching `POST /api/handoff`: a failure is
+        # reported rather than raised, because a filesystem problem must never
+        # cost the user a schedule they just authored.
+        journaled = True
+        try:
+            schedspool.journal(job, cfg.spool_dir)
+        except OSError:
+            log.exception("failed to journal scheduled run %r", job.id)
+            journaled = False
         store.create_scheduled_run(job)
-        return dict(store.get_scheduled_run(job.id))
+        return {**dict(store.get_scheduled_run(job.id)), "journaled": journaled}
 
     @app.get("/api/schedule")
     def get_schedule(
@@ -1022,12 +1072,33 @@ def create_app(
         # default -- the same reason `patch_project` and `patch_handoff` check
         # `is not None` per field instead of writing the whole body.
         patch_fields = body.model_dump(exclude_unset=True)
+        current = store.get_scheduled_run(id)
+        if current is None or current["status"] != "pending":
+            raise _unknown_or_conflict(id)
+        # Journal the intended post-edit state first. The guard above means
+        # `edit_pending` will almost certainly succeed; if it loses a race and
+        # does not, the journal describes an edit that never landed, which only
+        # matters after a database loss and only costs the prompt text.
+        # A journal failure propagates, matching `PATCH /api/handoff/{id}`:
+        # the journal must never lag the database it rebuilds.
+        merged = _row_to_scheduled_run(current)
+        for key, value in patch_fields.items():
+            setattr(merged, key, value)
+        schedspool.journal(merged, cfg.spool_dir)
         if not store.edit_pending(id, **patch_fields):
             raise _unknown_or_conflict(id)
         return dict(store.get_scheduled_run(id))
 
     @app.delete("/api/schedule/{id}")
     def delete_schedule(id: str):
+        current = store.get_scheduled_run(id)
+        if current is None or current["status"] != "pending":
+            raise _unknown_or_conflict(id)
+        # Journal the cancellation before it happens, and let a failure
+        # propagate. Cancelling without the record is the dangerous ordering:
+        # after a database loss the creation record alone replays the job as
+        # `pending`, and a job the user cancelled would fire.
+        schedspool.journal_status(id, "cancelled", now_epoch(), cfg.spool_dir)
         if not store.cancel_pending(id):
             raise _unknown_or_conflict(id)
         return dict(store.get_scheduled_run(id))
@@ -1062,6 +1133,20 @@ def create_app(
                 status_code=409,
                 detail="only a failed or indeterminate run can be retried, once",
             )
+        # The retry is a new row, so it needs its own creation record, and a
+        # failure ABORTS rather than warns. Replay restores creation records and
+        # ignores orphan status records, so a retry that fires without one
+        # vanishes on database loss -- and the user, seeing the original still
+        # failed, retries it again and launches the work twice.
+        try:
+            schedspool.journal(_row_to_scheduled_run(row), cfg.spool_dir)
+        except OSError as exc:
+            log.exception("failed to journal retry of scheduled run %r", id)
+            store.finish_scheduled_run(
+                row["id"], status="failed",
+                error=f"could not journal the retry: {exc}",
+            )
+            return dict(store.get_scheduled_run(row["id"]))
         return dict(_fire_claimed_job(store, cfg, row, launch_fn))
 
     return app

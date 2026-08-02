@@ -2121,6 +2121,125 @@ def test_run_now_records_failure_when_the_launcher_returns_one(launch_app):
     assert row["error"] == "spawn boom"
 
 
+# --- Task 4: journalling at the API call sites --------------------------------
+
+
+def test_creating_a_schedule_journals_it(client, tmp_path):
+    c, _, _ = client
+    r = c.post("/api/schedule", json={
+        "project_path": DEMO, "prompt": "p", "mode": "background",
+        "scheduled_for": 2_000_000_000,
+    })
+
+    assert r.status_code == 201
+    assert r.json()["journaled"] is True
+    sid = r.json()["id"]
+    assert (tmp_path / "spool" / "schedules" / f"{sid}.json").exists()
+
+
+def test_cancelling_a_schedule_journals_the_status(client, tmp_path):
+    c, _, _ = client
+    sid = c.post("/api/schedule", json={
+        "project_path": DEMO, "prompt": "p", "mode": "background",
+        "scheduled_for": 2_000_000_000,
+    }).json()["id"]
+
+    c.delete(f"/api/schedule/{sid}")
+
+    records = list((tmp_path / "spool" / "schedules").glob(f"{sid}.*.status.json"))
+    assert len(records) == 1
+    assert json.loads(records[0].read_text())["status"] == "cancelled"
+
+
+def test_editing_a_schedule_rejournals_the_new_prompt(client, tmp_path):
+    c, _, _ = client
+    sid = c.post("/api/schedule", json={
+        "project_path": DEMO, "prompt": "original", "mode": "background",
+        "scheduled_for": 2_000_000_000,
+    }).json()["id"]
+
+    c.patch(f"/api/schedule/{sid}", json={"prompt": "edited"})
+
+    record = tmp_path / "spool" / "schedules" / f"{sid}.json"
+    assert json.loads(record.read_text())["prompt"] == "edited"
+
+
+def test_a_journal_failure_does_not_cost_the_user_the_schedule(client, monkeypatch):
+    """Reported, not raised -- matching `POST /api/handoff`."""
+    from bridge import schedspool
+
+    c, _, _ = client
+
+    def boom(*a, **kw):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(schedspool, "journal", boom)
+
+    r = c.post("/api/schedule", json={
+        "project_path": DEMO, "prompt": "p", "mode": "background",
+        "scheduled_for": 2_000_000_000,
+    })
+
+    assert r.status_code == 201
+    assert r.json()["journaled"] is False
+
+
+def test_running_a_schedule_now_journals_the_claim_before_firing(
+    launch_app, tmp_path, monkeypatch
+):
+    """Use the `launch_app` fixture, not `client` -- this one actually fires.
+
+    The claim and terminal writes both call `now_epoch()`, which is
+    second-resolution, and the fake launcher fires synchronously -- so within
+    one real test they land in the same second and, per `journal_status`'s
+    documented collision tradeoff, the second write clobbers the first
+    on-disk file. A monotonically increasing clock is substituted so the two
+    records land in distinct files, which is what lets this test observe both
+    without asserting anything about wall-clock timing.
+    """
+    from bridge import api as api_module
+
+    ticks = iter(range(2_000_000_100, 2_000_000_200))
+    monkeypatch.setattr(api_module, "now_epoch", lambda: next(ticks))
+
+    c, _, _, _fake = launch_app
+    sid = c.post("/api/schedule", json={
+        "project_path": DEMO, "prompt": "p", "mode": "background",
+        "scheduled_for": 2_000_000_000,
+    }).json()["id"]
+
+    c.post(f"/api/schedule/{sid}/run-now")
+
+    statuses = [
+        json.loads(p.read_text())["status"]
+        for p in (tmp_path / "spool" / "schedules").glob(f"{sid}.*.status.json")
+    ]
+    assert "launching" in statuses
+    assert "fired" in statuses
+
+
+def test_a_claim_that_cannot_be_journalled_does_not_fire(launch_app, monkeypatch):
+    """The one journal failure that must abort: firing without the claim record
+    is the duplicate-launch scenario this whole change exists to close."""
+    from bridge import schedspool
+
+    c, _, _, fake = launch_app
+    sid = c.post("/api/schedule", json={
+        "project_path": DEMO, "prompt": "p", "mode": "background",
+        "scheduled_for": 2_000_000_000,
+    }).json()["id"]
+
+    def boom(*a, **kw):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(schedspool, "journal_status", boom)
+
+    r = c.post(f"/api/schedule/{sid}/run-now")
+
+    assert r.json()["status"] == "failed"
+    assert fake.calls == []
+
+
 # --- Task 5: the Scheduled panel section --------------------------------------
 
 
