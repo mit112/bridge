@@ -2256,7 +2256,7 @@ def test_retry_recovers_an_indeterminate_job(launch_app):
     jid = c.post("/api/schedule", json={"project_path": DEMO, "prompt": "go",
         "scheduled_for": 9_000_000_000, "mode": "background"}).json()["id"]
     store.claim_specific(jid)
-    store.reconcile_launching(now=9_000_000_001)
+    store.reconcile_launching(9_000_000_001, store.launching_scheduled_run_ids())
 
     r = c.post(f"/api/schedule/{jid}/retry")
 
@@ -2303,11 +2303,23 @@ def test_the_scheduled_section_offers_a_retry_affordance_on_an_indeterminate_job
         mode="terminal", scheduled_for=1000,
     ))
     store.claim_specific("sched-ind")
-    store.reconcile_launching(now=2000)
+    store.reconcile_launching(2000, store.launching_scheduled_run_ids())
 
     body = c.get("/").text
 
     assert 'data-scheduled-retry="sched-ind"' in body
+
+
+def test_the_scheduled_section_offers_a_retry_affordance_on_a_missed_job(client):
+    c, store, _ = client
+    store.create_scheduled_run(ScheduledRun(
+        id="sched-missed", project_path=DEMO, prompt="did it spawn?",
+        mode="terminal", scheduled_for=1000, status="missed",
+    ))
+
+    body = c.get("/").text
+
+    assert 'data-scheduled-retry="sched-missed"' in body
 
 
 def test_a_job_that_has_already_been_retried_offers_no_second_retry_button(client):

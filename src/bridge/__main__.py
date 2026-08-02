@@ -99,7 +99,7 @@ def run_db_command(argv: list[str] | None = None) -> int:
     # between claim and finish on its previous run. Reconciling before the
     # scheduler thread starts means the first tick never finds a stray row it
     # could double-fire.
-    stray = store.reconcile_launching(now_epoch())
+    stray = store.reconcile_launching(now_epoch(), store.launching_scheduled_run_ids())
     if stray:
         log.info("reconciled %d stray 'launching' scheduled run(s)", stray)
 
@@ -107,7 +107,9 @@ def run_db_command(argv: list[str] | None = None) -> int:
     # the only recurring event this process has. Finished runs only -- the
     # store's own guard -- so nothing still owed a launch is ever reaped.
     reaped = store.prune_scheduled_runs(
-        now_epoch() - SCHEDULED_RUN_RETENTION_DAYS * 86400
+        store.prunable_scheduled_run_ids(
+            now_epoch() - SCHEDULED_RUN_RETENTION_DAYS * 86400
+        )
     )
     if reaped:
         log.info("pruned %d finished scheduled run(s)", reaped)

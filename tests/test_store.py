@@ -3,9 +3,11 @@ import threading
 
 import pytest
 
-from bridge.models import Handoff, Launch, SessionRecord
+from bridge.models import Handoff, Launch, ScheduledRun, SessionRecord
 from bridge.store import Store, to_epoch
 from tests.conftest import launch_by_session
+
+DEMO = "/Users/mitsheth/dev/demo"
 
 
 @pytest.fixture
@@ -108,8 +110,64 @@ def test_cancel_pending_marks_cancelled(store):
 def test_reconcile_launching_flips_strays_to_indeterminate(store):
     _job(store, "a", scheduled_for=1000)
     store.claim_one_due(now=1500)                             # leaves it 'launching'
-    assert store.reconcile_launching(now=9000) == 1
+    assert store.reconcile_launching(9000, ["a"]) == 1
     assert store.get_scheduled_run("a")["status"] == "indeterminate"
+
+
+def test_prunable_ids_names_the_rows_a_prune_would_delete(store):
+    _terminal(store, "old-failed")
+    store.conn.execute(
+        "UPDATE scheduled_runs SET completed_at=100 WHERE id='old-failed'"
+    )
+    _job(store, "old-pending", scheduled_for=100)
+
+    assert store.prunable_scheduled_run_ids(before_epoch=1000) == ["old-failed"]
+    # Naming them must not delete them -- the caller journals in between.
+    assert store.get_scheduled_run("old-failed") is not None
+
+
+def test_prunable_ids_is_empty_when_nothing_is_old_enough(store):
+    assert store.prunable_scheduled_run_ids(before_epoch=1000) == []
+
+
+def test_prune_deletes_exactly_the_ids_it_is_given(store):
+    _terminal(store, "a")
+    _terminal(store, "b")
+
+    assert store.prune_scheduled_runs(["a"]) == 1
+    assert store.get_scheduled_run("a") is None
+    assert store.get_scheduled_run("b") is not None
+
+
+def test_prune_of_an_empty_list_touches_nothing(store):
+    _terminal(store, "a")
+
+    assert store.prune_scheduled_runs([]) == 0
+    assert store.get_scheduled_run("a") is not None
+
+
+def test_launching_ids_names_the_strays_reconcile_would_flip(store):
+    _job(store, "a", scheduled_for=1000)
+    store.claim_one_due(now=1500)
+
+    assert store.launching_scheduled_run_ids() == ["a"]
+    assert store.get_scheduled_run("a")["status"] == "launching"
+
+
+def test_a_missed_run_can_be_retried(store):
+    """Without this a replayed job is a dead end: retry rejects it and run-now
+    requires `pending`, leaving the user to retype the schedule."""
+    job = ScheduledRun(
+        id="m1", project_path=DEMO, prompt="p", mode="background",
+        scheduled_for=100, created_at=100, status="missed",
+    )
+    store.create_scheduled_run(job)
+
+    row = store.retry_terminal("m1", new_id="m2")
+
+    assert row is not None
+    assert row["status"] == "launching"
+    assert row["retry_of"] == "m1"
 
 
 def test_claim_specific_claims_a_pending_job_by_id(store):
@@ -167,7 +225,7 @@ def test_retry_terminal_also_recovers_an_indeterminate_job(store):
     only recovery path it has."""
     _job(store, "a", scheduled_for=1000)
     store.claim_one_due(now=1500)
-    store.reconcile_launching(now=9000)
+    store.reconcile_launching(9000, store.launching_scheduled_run_ids())
     assert store.get_scheduled_run("a")["status"] == "indeterminate"
     assert store.retry_terminal("a", new_id="a2", now=9500) is not None
 
@@ -231,7 +289,8 @@ def test_prune_scheduled_runs_deletes_only_old_terminal_rows(store):
     store.claim_specific("claimed")                        # launching: in flight
     _terminal(store, "recent-failed")                      # completed_at = now
 
-    assert store.prune_scheduled_runs(before_epoch=1000) == 1
+    ids = store.prunable_scheduled_run_ids(before_epoch=1000)
+    assert store.prune_scheduled_runs(ids) == 1
     assert store.get_scheduled_run("old-failed") is None
     for survivor in ("old-pending", "claimed", "recent-failed"):
         assert store.get_scheduled_run(survivor) is not None
@@ -241,7 +300,8 @@ def test_prune_scheduled_runs_reaps_cancelled_rows_too(store):
     _job(store, "a")
     store.cancel_pending("a")
     store.conn.execute("UPDATE scheduled_runs SET completed_at=100 WHERE id='a'")
-    assert store.prune_scheduled_runs(before_epoch=1000) == 1
+    ids = store.prunable_scheduled_run_ids(before_epoch=1000)
+    assert store.prune_scheduled_runs(ids) == 1
 
 
 def test_pragmas_are_set(store):

@@ -32,8 +32,8 @@
   {
     "name": "reconcile_launching sweeps the wrong status, so a stray 'launching' row is never cleaned up",
     "file": "src/bridge/store.py",
-    "old": "\"WHERE status='launching'\", (now,))",
-    "new": "\"WHERE status='pending'\", (now,))",
+    "old": "f\"WHERE status='launching' AND id IN ({marks})\", (now, *ids))",
+    "new": "f\"WHERE status='pending' AND id IN ({marks})\", (now, *ids))",
     "tests": [
       "tests/test_store.py::test_reconcile_launching_flips_strays_to_indeterminate"
     ],

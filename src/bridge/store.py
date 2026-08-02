@@ -393,8 +393,9 @@ class Store:
                 )
             )
 
-    # --- handoffs: the only authored data here, so the only data that a
-    # --- dropped database genuinely loses. See spool.py for the journal.
+    # --- handoffs: authored data, not derived from any transcript, so a
+    # --- dropped database loses them. See spool.py for the journal.
+    # --- `scheduled_runs` is the other authored table; see schedspool.py.
 
     def create_handoff(self, h: Handoff, project_id: int) -> str:
         """Queue a handoff, superseding any already queued for the project.
@@ -826,6 +827,11 @@ class Store:
         Returns the new row already in `launching`, ready for
         `_fire_claimed_job`; `None` if `id` is unknown, is not in a retryable
         state, or has been retried already.
+
+        `missed` is retryable for the same reason `failed` is: the run never
+        launched. It reaches this method only from journal replay, and without
+        it a recovered schedule could not be run at all -- `run-now` requires
+        `pending`.
         """
         when = now if now is not None else now_epoch()
         with self.transaction():
@@ -838,18 +844,34 @@ class Store:
                 "  orig.model, orig.effort, orig.mode, orig.permission_mode, "
                 "  orig.source_handoff_id, ?, 'launching', ?, ?, orig.id "
                 "FROM scheduled_runs AS orig "
-                "WHERE orig.id=? AND orig.status IN ('failed','indeterminate') "
+                "WHERE orig.id=? AND orig.status IN ('failed','indeterminate','missed') "
                 "  AND NOT EXISTS ("
                 "    SELECT 1 FROM scheduled_runs r WHERE r.retry_of = orig.id)",
                 (new_id, when, when, when, id))
             return self.get_scheduled_run(new_id) if cur.rowcount == 1 else None
 
-    def prune_scheduled_runs(self, before_epoch: int) -> int:
-        """Reap terminal scheduled runs that completed before `before_epoch`.
+    def prunable_scheduled_run_ids(self, before_epoch: int) -> list[str]:
+        """Name the rows `prune_scheduled_runs` would delete, without deleting.
 
-        Only rows that are done: a `pending` job is still owed a launch no
-        matter how long ago it was authored, and a `launching` one is either in
-        flight or waiting for the next boot's `reconcile_launching`.
+        The status and age clauses are the ones that used to live in the DELETE;
+        see `prune_scheduled_runs` for why the status clause is unfalsifiable.
+        """
+        with self._lock:
+            return [
+                r["id"] for r in self.conn.execute(
+                    "SELECT id FROM scheduled_runs "
+                    "WHERE status NOT IN ('pending','launching') "
+                    "  AND completed_at < ?", (before_epoch,))
+            ]
+
+    def prune_scheduled_runs(self, ids: list[str]) -> int:
+        """Delete exactly the runs named, returning how many went.
+
+        The age and status bounds now live in `prunable_scheduled_run_ids`;
+        this method trusts its argument. Only rows that are done should ever
+        reach it: a `pending` job is still owed a launch no matter how long ago
+        it was authored, and a `launching` one is either in flight or waiting
+        for the next boot's `reconcile_launching`.
 
         The status clause is deliberately unfalsifiable, and there is no
         mutation for it. `completed_at` is written by exactly one place --
@@ -859,18 +881,42 @@ class Store:
         logic) and excludes it anyway. Either clause alone is therefore
         sufficient, so no test can tell them apart. This one stays because it
         states the intent the age bound only implies.
+
+        Split from the id query above it so the caller can journal a `pruned`
+        record per row *before* the row disappears. Journaling afterwards would
+        mean a swallowed write leaves a deleted row with no marker, and replay
+        would resurrect it.
         """
+        if not ids:
+            return 0
+        marks = ",".join("?" * len(ids))
         with self.transaction():
             cur = self.conn.execute(
-                "DELETE FROM scheduled_runs "
-                "WHERE status NOT IN ('pending','launching') "
-                "  AND completed_at < ?",
-                (before_epoch,))
+                f"DELETE FROM scheduled_runs WHERE id IN ({marks})", tuple(ids))
             return cur.rowcount
 
-    def reconcile_launching(self, now: int) -> int:
+    def launching_scheduled_run_ids(self) -> list[str]:
+        """Name the strays `reconcile_launching` would flip, without flipping."""
+        with self._lock:
+            return [
+                r["id"] for r in self.conn.execute(
+                    "SELECT id FROM scheduled_runs WHERE status='launching'")
+            ]
+
+    def reconcile_launching(self, now: int, ids: list[str]) -> int:
+        """Flip the named stray `launching` rows to `indeterminate`.
+
+        Takes explicit ids rather than flipping every `launching` row, so the
+        caller can journal first and skip any row whose record would not write.
+        Leaving an unjournalled row `launching` is the safe failure: the next
+        boot reconciles it again, whereas flipping it without a record lets a
+        run-now'd future job replay as `pending` and fire twice.
+        """
+        if not ids:
+            return 0
+        marks = ",".join("?" * len(ids))
         with self.transaction():
             cur = self.conn.execute(
-                "UPDATE scheduled_runs SET status='indeterminate', completed_at=? "
-                "WHERE status='launching'", (now,))
+                f"UPDATE scheduled_runs SET status='indeterminate', completed_at=? "
+                f"WHERE status='launching' AND id IN ({marks})", (now, *ids))
             return cur.rowcount

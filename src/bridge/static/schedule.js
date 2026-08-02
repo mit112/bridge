@@ -143,7 +143,7 @@ function settleRow(id, status, error) {
   ).forEach((el) => el.remove());
   // `indeterminate` as much as `failed`: neither is ever retried
   // automatically, so this button is the only recovery either one has.
-  if (status === "failed" || status === "indeterminate") {
+  if (status === "failed" || status === "indeterminate" || status === "missed") {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "btn";

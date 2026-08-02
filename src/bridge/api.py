@@ -702,7 +702,7 @@ def create_app(
                 ),
                 scheduled_for_iso=scheduled_for_iso,
                 scheduled_for_utc=scheduled_for_utc,
-                retryable=(row["status"] in ("failed", "indeterminate")
+                retryable=(row["status"] in ("failed", "indeterminate", "missed")
                            and row["id"] not in retried),
             ))
         pending_schedule_count = sum(
