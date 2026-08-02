@@ -88,7 +88,7 @@
       <td class="sessions__changes">
         {% if m %}
           {% if m.files_modified or m.lines_added or m.lines_removed %}
-          <span class="sessions__diffstat">{% if m.files_modified %}{{ m.files_modified }} files{% endif %}{% if m.lines_added or m.lines_removed %} <span class="sessions__add">+{{ m.lines_added }}</span>/<span class="sessions__del">-{{ m.lines_removed }}</span>{% endif %}</span>
+          <span>{% if m.files_modified %}{{ m.files_modified }} files{% endif %}{% if m.lines_added or m.lines_removed %} <span class="sessions__add">+{{ m.lines_added }}</span>/<span class="sessions__del">-{{ m.lines_removed }}</span>{% endif %}</span>
           {% endif %}
           {% set ns = namespace(facts=[]) %}
           {% if m.git_commits %}{% set ns.facts = ns.facts + [(m.git_commits | string) + (' commit' if m.git_commits == 1 else ' commits')] %}{% endif %}
@@ -100,7 +100,7 @@
           {% if m.uses_task_agent or m.uses_mcp or m.uses_web %}
           <span class="sessions__flags">{% if m.uses_task_agent %}<span class="badge">agent</span>{% endif %}{% if m.uses_mcp %}<span class="badge">mcp</span>{% endif %}{% if m.uses_web %}<span class="badge">web</span>{% endif %}</span>
           {% endif %}
-        {% endif %}
+        {% else %}—{% endif %}
       </td>
     </tr>
     {% endfor %}
