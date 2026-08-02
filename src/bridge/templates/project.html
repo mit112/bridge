@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ project.name }} — Bridge{% endblock %}
 {% block content %}
-<h2>{{ project.name }}</h2>
+<h1 class="page-title">{{ project.name }}</h1>
 <p class="card__path">{{ project.path }}</p>
 {# Recent git, spec:394. Read from git_cache -- these fields were probed on
    every card build and rendered nowhere. Only status=="ok" is ever cached, so
@@ -20,6 +20,7 @@
 </section>
 {% endif %}
 {% if handoffs %}
+<div class="table-scroll" tabindex="0" role="region" aria-label="Handoffs table">
 <table class="handoffs">
   <caption>Handoffs, most recent first</caption>
   <thead>
@@ -35,9 +36,11 @@
     {% endfor %}
   </tbody>
 </table>
+</div>
 {% endif %}
 
 {% if launches %}
+<div class="table-scroll" tabindex="0" role="region" aria-label="Launches table">
 <table class="launches">
   <caption>Launches, most recent first</caption>
   <thead>
@@ -64,8 +67,10 @@
     {% endfor %}
   </tbody>
 </table>
+</div>
 {% endif %}
 
+<div class="table-scroll" tabindex="0" role="region" aria-label="Indexed sessions table">
 <table class="sessions">
   <caption>Indexed sessions, most recent first</caption>
   <thead>
@@ -106,4 +111,5 @@
     {% endfor %}
   </tbody>
 </table>
+</div>
 {% endblock %}

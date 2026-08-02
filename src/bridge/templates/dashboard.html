@@ -1,25 +1,26 @@
 {% extends "base.html" %}
 {% block topbar %}
 <dl class="totals">
-  <dt>projects</dt><dd>{{ totals.projects }}</dd>
-  <dt>running</dt><dd>{{ totals.running }}</dd>
-  <dt>queued</dt><dd>{{ totals.queued }}</dd>
+  <div class="total"><dt>projects</dt><dd>{{ totals.projects }}</dd></div>
+  <div class="total"><dt>running</dt><dd>{{ totals.running }}</dd></div>
+  <div class="total"><dt>queued</dt><dd>{{ totals.queued }}</dd></div>
   {# `data-topbar-scheduled` is the one hook `schedule.js` has to keep this
      number honest after a create/cancel/run-now in the same session -- the
      server only ever renders it once, on load. #}
-  <dt>scheduled</dt><dd data-topbar-scheduled>{{ totals.scheduled }}</dd>
-  <dt>tokens today</dt><dd>{{ totals.today | kilo }}</dd>
-  <dt>last 5h</dt><dd>{{ totals.last_5h | kilo }}</dd>
+  <div class="total"><dt>scheduled</dt><dd data-topbar-scheduled>{{ totals.scheduled }}</dd></div>
+  <div class="total"><dt>tokens today</dt><dd>{{ totals.today | kilo }}</dd></div>
+  <div class="total"><dt>last 5h</dt><dd>{{ totals.last_5h | kilo }}</dd></div>
   {# A rate over the measured window, never a share of a cap: the plan
      publishes no total, so a percentage would have no denominator and a gauge
      would be inventing one. The unit is written out for the same reason. #}
-  <dt>burn</dt><dd>{{ totals.burn_rate | kilo }}/h</dd>
+  <div class="total"><dt>burn</dt><dd>{{ totals.burn_rate | kilo }}/h</dd></div>
   {# "never" rather than a blank: an empty cell reads as a rendering fault,
      and a fresh install genuinely has not indexed yet. #}
-  <dt>indexed</dt><dd>{{ (totals.last_index | ago_epoch) or "never" }}</dd>
+  <div class="total"><dt>indexed</dt><dd>{{ (totals.last_index | ago_epoch) or "never" }}</dd></div>
 </dl>
 {% endblock %}
 {% block content %}
+<h1 class="visually-hidden">Bridge project control panel</h1>
 {% if not cards %}
   <p class="empty">No projects indexed yet. Run <code>uv run python -m bridge index</code>.</p>
 {% else %}

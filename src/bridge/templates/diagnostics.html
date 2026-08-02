@@ -7,6 +7,7 @@
   {% if alert %}⚠ Something needs attention{% else %}Nothing is wrong{% endif %}
 </p>
 
+<div class="table-scroll" tabindex="0" role="region" aria-label="Bridge diagnostics table">
 <table class="diag">
   <caption class="muted">What Bridge last observed. Every probe here is
     best-effort, so "unavailable" means the probe failed, not that nothing is
@@ -41,9 +42,11 @@
     </tr>
   </tbody>
 </table>
+</div>
 
 <h2>Last index run</h2>
 {% if diag.last_index %}
+  <div class="table-scroll" tabindex="0" role="region" aria-label="Last index run table">
   <table class="diag">
     <tbody>
       <tr><th scope="row">Ran</th><td>{{ diag.last_index.ran_at | ago_epoch }} ago</td></tr>
@@ -54,6 +57,7 @@
       <tr><th scope="row">Duration</th><td>{{ diag.last_index.duration_ms }} ms</td></tr>
     </tbody>
   </table>
+  </div>
 {% else %}
   <p class="card__note">Nothing indexed yet.</p>
 {% endif %}

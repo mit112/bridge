@@ -29,8 +29,8 @@
   {
     "name": "weaken the queued foreground colour below AA",
     "file": "src/bridge/static/app.css",
-    "old": "  --queued-fg: #0a5236;",
-    "new": "  --queued-fg: #7cc3a4;",
+    "old": "  --queued-fg: #3f3c37;",
+    "new": "  --queued-fg: #9a968f;",
     "tests": [
       "tests/test_contrast.py"
     ]

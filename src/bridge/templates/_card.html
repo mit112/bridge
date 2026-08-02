@@ -12,10 +12,10 @@
       {# A toggle, so `aria-pressed` rather than a label that changes meaning:
          a screen reader announces the state and the action separately, which an
          "Unpin"/"Pin" label swap cannot do. #}
-      <button type="button" class="btn btn--icon" data-project-pin="{{ card.project_id }}"
+      <button type="button" class="btn btn--pin" data-project-pin="{{ card.project_id }}"
               aria-pressed="{{ 'true' if card.pinned else 'false' }}"
               aria-label="Pin {{ card.name }} above every other project"
-              title="Pin to the top"><span aria-hidden="true">📌</span></button>
+              title="Pin to the top">Pin</button>
       <button type="button" class="btn" data-project-hide="{{ card.project_id }}"
               aria-label="Hide {{ card.name }} from the dashboard"
               title="Hide from the dashboard">Hide</button>

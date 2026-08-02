@@ -65,6 +65,36 @@ def test_project_detail_renders(client):
     assert "Did the work" in r.text
 
 
+def test_html_pages_have_one_page_heading_home_navigation_and_metadata(client):
+    c, _, pid = client
+    for path in ("/", f"/project/{pid}", "/diagnostics"):
+        html = c.get(path).text
+        assert len(re.findall(r"<h1\b", html)) == 1, path
+        assert '<a class="topbar__home" href="/">Bridge</a>' in html
+        assert '<meta name="description"' in html
+        assert '<link rel="icon" href="/static/favicon.svg"' in html
+    assert c.get("/static/favicon.svg").status_code == 200
+
+
+def test_project_and_diagnostics_tables_are_keyboard_scroll_regions(client):
+    c, _, pid = client
+    project = c.get(f"/project/{pid}").text
+    diagnostics = c.get("/diagnostics").text
+    assert 'class="table-scroll" tabindex="0" role="region"' in project
+    assert 'aria-label="Indexed sessions table"' in project
+    assert 'class="table-scroll" tabindex="0" role="region"' in diagnostics
+    assert 'aria-label="Bridge diagnostics table"' in diagnostics
+
+
+def test_pin_control_has_a_persistent_visible_label(client):
+    c, _, _ = client
+    html = c.get("/").text
+    button = re.search(r"<button[^>]*data-project-pin.*?</button>", html, re.S)
+    assert button
+    assert ">Pin</button>" in button.group(0)
+    assert "📌" not in button.group(0)
+
+
 def test_unknown_project_returns_404(client):
     c, _, _ = client
     assert c.get("/project/99999").status_code == 404
