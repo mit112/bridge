@@ -88,6 +88,44 @@ function bumpScheduledCount(delta) {
       details.open = true;
     }
   }
+  // The mirror image: cancelling the last job left an open <details> reading
+  // "Scheduled 0" with nothing under it. Emptiness is the LIST's, not the
+  // count's -- a finished run still on screen is history worth keeping open,
+  // and the count only ever counts the active ones.
+  if (delta < 0) {
+    const list = document.querySelector("[data-scheduled-list]");
+    const details = document.querySelector("[data-scheduled]");
+    if (list && details && list.children.length === 0) {
+      details.open = false;
+      details.hidden = true;
+    }
+  }
+}
+
+// After a run-now the row still carries the controls the server rendered for a
+// `pending` job -- Run now, Edit, Cancel -- and every one of them can now only
+// 409. This is what makes the row agree with the database without a reload:
+// the same shape the server would render for the status it just reached.
+function settleRow(id, status) {
+  const row = document.querySelector(`[data-scheduled-job="${id}"]`);
+  if (!row) return;
+  row.className = `scheduled__job scheduled__job--${status}`;
+  const state = row.querySelector("[data-scheduled-state]");
+  if (state) state.textContent = status;
+  row.querySelectorAll(
+    "[data-scheduled-run-now], [data-scheduled-edit-toggle], " +
+    "[data-scheduled-cancel], [data-scheduled-edit-panel]",
+  ).forEach((el) => el.remove());
+  // `indeterminate` as much as `failed`: neither is ever retried
+  // automatically, so this button is the only recovery either one has.
+  if (status === "failed" || status === "indeterminate") {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "btn";
+    button.setAttribute("data-scheduled-retry", id);
+    button.textContent = "Retry";
+    row.append(button);
+  }
 }
 
 document.addEventListener("DOMContentLoaded", () => paintScheduledTimes());
@@ -303,6 +341,7 @@ document.addEventListener("click", async (event) => {
       // `pending`/`launching`, so the active count drops regardless of
       // which the response reports.
       bumpScheduledCount(-1);
+      settleRow(id, data.status);
       announce(
         key,
         data.status === "fired"
@@ -318,32 +357,46 @@ document.addEventListener("click", async (event) => {
     return;
   }
 
-  // --- Retry a failed schedule: re-launch its own prompt, right now ---
+  // --- Retry a failed or indeterminate schedule ---
+  //
+  // Through `/api/schedule/{id}/retry`, NOT `/api/launch`. The old retry
+  // scraped the prompt out of the page and POSTed a plain launch with no
+  // handoff at all -- so retrying a schedule created from a handoff launched
+  // fine and left that handoff queued forever. The server re-reads the row, so
+  // `source_handoff_id` (and the model, effort and permission the schedule was
+  // created with) come along without the page having to carry any of them.
   const retryButton = event.target.closest("[data-scheduled-retry]");
   if (retryButton) {
     const id = retryButton.getAttribute("data-scheduled-retry");
-    const promptField = document.querySelector(`[data-scheduled-retry-prompt="${id}"]`);
-    const key = `[data-scheduled-status="${id}"]`;
+    // Keyed off the ROW, not `id`: a chained retry below repoints the button
+    // at the new run, and the announcement must keep landing in the row the
+    // button actually lives in (WCAG 4.1.3).
+    const row = retryButton.closest("[data-scheduled-job]");
+    const rowId = row ? row.getAttribute("data-scheduled-job") : id;
+    const key = `[data-scheduled-status="${rowId}"]`;
     retryButton.disabled = true;
     announce(key, "Retrying…");
     try {
-      const { ok, status, data } = await postJSON("/api/launch", "POST", {
-        project_path: retryButton.getAttribute("data-retry-path"),
-        prompt: promptField ? promptField.value : "",
-        mode: retryButton.getAttribute("data-retry-mode") || "terminal",
-        model: retryButton.getAttribute("data-retry-model"),
-        effort: retryButton.getAttribute("data-retry-effort"),
-        permission_mode: retryButton.getAttribute("data-retry-permission"),
-      });
+      const { ok, status, data } = await postJSON(
+        `/api/schedule/${encodeURIComponent(id)}/retry`, "POST",
+      );
       if (!ok) {
         announce(key, `⚠ Retry failed — ${data.detail || `HTTP ${status}`}`);
+        // 409 is "not retryable, or retried already" -- a permanent no, so the
+        // control goes rather than sitting there promising a second attempt.
+        if (status === 409) retryButton.remove();
         return;
       }
-      if (data.outcome === "failed") {
-        announce(key, `⚠ Retry failed — ${data.error || "see the terminal"}`);
+      if (data.status === "fired") {
+        announce(key, "✓ Retried — the session is opening in Terminal");
+        retryButton.remove();
         return;
       }
-      announce(key, "✓ Retried — the session is opening in Terminal");
+      announce(key, `⚠ Retry ${data.status}${data.error ? " — " + data.error : ""}`);
+      // The retry is its own row, and the server allows exactly one retry per
+      // row. Repointing the button at the new run is what keeps the recovery
+      // loop working before a reload renders that row for itself.
+      retryButton.setAttribute("data-scheduled-retry", data.id);
     } catch (error) {
       console.error("bridge: schedule retry failed", error);
       announce(key, "⚠ Retry failed — the panel did not answer");

@@ -74,10 +74,14 @@
            epoch int read before `schedule.js` runs is not a time to anyone.
            `paintScheduledTimes` overwrites the text with local time on load;
            this is what a screen reader or a JS-disabled load sees instead. #}
-        <time class="scheduled__when" datetime="{{ job.scheduled_for_iso }}"
+        <time class="scheduled__when"
+              {% if job.scheduled_for_iso %}datetime="{{ job.scheduled_for_iso }}"{% endif %}
               data-scheduled-for="{{ job.scheduled_for }}">{{ job.scheduled_for_utc }}</time>
         <span class="scheduled__project">{{ job.project_name }}</span>
-        <span class="scheduled__status">{{ job.status }}</span>
+        {# `data-scheduled-state` is what `settleRow` rewrites after a run-now:
+           the word here is server-rendered once, and a row that just fired
+           must not keep claiming it is pending. #}
+        <span class="scheduled__status" data-scheduled-state>{{ job.status }}</span>
         <span class="card__note">{{ job.mode }}</span>
         {% if job.status in ("pending", "launching") %}
           {# `run-now` claims a `pending` row; a `launching` one is already
@@ -96,14 +100,15 @@
                    data-scheduled-edit-when="{{ job.id }}" data-scheduled-epoch="{{ job.scheduled_for }}">
             <button type="button" class="btn" data-scheduled-edit-save="{{ job.id }}">Save</button>
           </span>
-        {% elif job.status == "failed" %}
-          <button type="button" class="btn" data-scheduled-retry="{{ job.id }}"
-                  data-retry-path="{{ job.project_path }}"
-                  {% if job.mode %}data-retry-mode="{{ job.mode }}"{% endif %}
-                  {% if job.model %}data-retry-model="{{ job.model }}"{% endif %}
-                  {% if job.effort %}data-retry-effort="{{ job.effort }}"{% endif %}
-                  {% if job.permission_mode %}data-retry-permission="{{ job.permission_mode }}"{% endif %}>Retry</button>
-          <textarea hidden data-scheduled-retry-prompt="{{ job.id }}">{{ job.prompt }}</textarea>
+        {% else %}
+          {# Retry covers `indeterminate` as well as `failed`: a crash-stranded
+             job is never auto-retried and `run-now` is gated to `pending`, so
+             without this it has no recovery path in the panel at all. The
+             button carries nothing but the id -- the server re-reads the row,
+             which is what keeps `source_handoff_id` attached to the retry. #}
+          {% if job.retryable %}
+            <button type="button" class="btn" data-scheduled-retry="{{ job.id }}">Retry</button>
+          {% endif %}
           {% if job.error %}<span class="card__note">{{ job.error }}</span>{% endif %}
         {% endif %}
         <span class="scheduled__announce" role="status" aria-live="polite"
@@ -111,6 +116,13 @@
       </li>
     {% endfor %}
   </ul>
+  {# Said out loud rather than silently truncated: a list that quietly stops at
+     twenty looks like the whole history to anyone who does not know there is a
+     cap. `GET /api/schedule` still has all of them. #}
+  {% if scheduled_older %}
+    <p class="card__note" data-scheduled-older>{{ scheduled_older }} older finished
+      {{ "run" if scheduled_older == 1 else "runs" }} not shown</p>
+  {% endif %}
 </details>
 
 {# Rendered even when empty, and hidden with the `hidden` attribute rather than

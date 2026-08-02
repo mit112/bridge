@@ -1,0 +1,147 @@
+[
+  {
+    "name": "retry_terminal drops source_handoff_id, reintroducing the very bug the endpoint exists to fix",
+    "file": "src/bridge/store.py",
+    "old": "\"  orig.source_handoff_id, ?, 'launching', ?, ?, orig.id \"",
+    "new": "\"  NULL, ?, 'launching', ?, ?, orig.id \"",
+    "tests": [
+      "tests/test_store.py::test_retry_terminal_copies_a_failed_job_into_a_new_claimed_row",
+      "tests/test_api.py::test_retry_refires_a_failed_schedule_with_its_handoff_still_attached"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "drop retry_terminal's status guard, so a fired or cancelled run can be relaunched",
+    "file": "src/bridge/store.py",
+    "old": "\"WHERE orig.id=? AND orig.status IN ('failed','indeterminate') \"",
+    "new": "\"WHERE orig.id=? \"",
+    "tests": [
+      "tests/test_store.py::test_retry_terminal_refuses_anything_but_a_failed_or_indeterminate_job",
+      "tests/test_api.py::test_retry_of_a_job_that_is_not_failed_or_indeterminate_is_409"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "drop retry_terminal's once-only guard, so a double click fires two sessions from one failure",
+    "file": "src/bridge/store.py",
+    "old": "\"    SELECT 1 FROM scheduled_runs r WHERE r.retry_of = orig.id)\",",
+    "new": "\"    SELECT 1 FROM scheduled_runs r WHERE r.retry_of = 'never')\",",
+    "tests": [
+      "tests/test_store.py::test_retry_terminal_refuses_a_second_retry_of_the_same_job",
+      "tests/test_api.py::test_a_second_retry_of_the_same_failure_is_409"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "prune reaps by age alone, deleting a pending job that is still owed a launch",
+    "file": "src/bridge/store.py",
+    "old": "\"WHERE status NOT IN ('pending','launching') \"",
+    "new": "\"WHERE 1=1 \"",
+    "tests": [
+      "tests/test_store.py::test_prune_scheduled_runs_deletes_only_old_terminal_rows"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "invert prune's age bound, so it reaps the newest history and keeps the oldest",
+    "file": "src/bridge/store.py",
+    "old": "\"  AND completed_at IS NOT NULL AND completed_at < ?\",",
+    "new": "\"  AND completed_at IS NOT NULL AND completed_at > ?\",",
+    "tests": [
+      "tests/test_store.py::test_prune_scheduled_runs_deletes_only_old_terminal_rows"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "serve prunes forward from now, wiping every finished run at every startup",
+    "file": "src/bridge/__main__.py",
+    "old": "now_epoch() - SCHEDULED_RUN_RETENTION_DAYS * 86400",
+    "new": "now_epoch() + SCHEDULED_RUN_RETENTION_DAYS * 86400",
+    "tests": [
+      "tests/test_main.py::test_serve_prunes_finished_scheduled_runs_past_the_retention_window"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "invert the already-retried check, offering Retry only where the server refuses it",
+    "file": "src/bridge/api.py",
+    "old": "and row[\"id\"] not in retried)",
+    "new": "and row[\"id\"] in retried)",
+    "tests": [
+      "tests/test_api.py::test_a_job_that_has_already_been_retried_offers_no_second_retry_button",
+      "tests/test_api.py::test_the_scheduled_section_offers_a_retry_affordance_on_a_failed_job"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "drop the dashboard's terminal-row cap, so finished runs accumulate on the page forever",
+    "file": "src/bridge/api.py",
+    "old": "for row in active + terminal[:DASHBOARD_TERMINAL_SCHEDULES]:",
+    "new": "for row in active + terminal:",
+    "tests": [
+      "tests/test_api.py::test_the_dashboard_caps_terminal_rows_and_says_how_many_it_held_back"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "cap the active jobs too, hiding a launch that is still going to happen",
+    "file": "src/bridge/api.py",
+    "old": "for row in active + terminal[:DASHBOARD_TERMINAL_SCHEDULES]:",
+    "new": "for row in active[:DASHBOARD_TERMINAL_SCHEDULES] + terminal[:DASHBOARD_TERMINAL_SCHEDULES]:",
+    "tests": [
+      "tests/test_api.py::test_the_dashboard_never_holds_back_an_active_job"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "retry 409s an id nothing ever created, hiding a typo behind a state error",
+    "file": "src/bridge/api.py",
+    "old": "            if store.get_scheduled_run(id) is None:\n                raise HTTPException(status_code=404, detail=\"unknown schedule\")\n            raise HTTPException(",
+    "new": "            raise HTTPException(",
+    "tests": [
+      "tests/test_api.py::test_retry_on_an_unknown_id_is_404"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "the panel retries through a bare launch again, losing the handoff the schedule came from",
+    "file": "src/bridge/static/schedule.js",
+    "old": "        `/api/schedule/${encodeURIComponent(id)}/retry`, \"POST\",",
+    "new": "        \"/api/launch\", \"POST\",",
+    "tests": [
+      "tests/test_static_js.py::test_retry_posts_to_the_schedule_endpoint_and_carries_no_prompt"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "run-now stops restating the row, leaving pending-only buttons that can only 409",
+    "file": "src/bridge/static/schedule.js",
+    "old": "      settleRow(id, data.status);\n",
+    "new": "",
+    "tests": [
+      "tests/test_static_js.py::test_run_now_restates_the_row_and_drops_the_pending_only_controls",
+      "tests/test_static_js.py::test_a_run_now_that_fails_grows_a_retry_button_naming_its_own_job"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "the section collapses on any cancel, hiding finished rows that are still on screen",
+    "file": "src/bridge/static/schedule.js",
+    "old": "if (list && details && list.children.length === 0) {",
+    "new": "if (list && details) {",
+    "tests": [
+      "tests/test_static_js.py::test_a_cancel_that_leaves_a_row_behind_keeps_the_section_open"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "the unrenderable-epoch guard goes, putting datetime=\"None\" back in the markup",
+    "file": "src/bridge/templates/dashboard.html",
+    "old": "{% if job.scheduled_for_iso %}datetime=\"{{ job.scheduled_for_iso }}\"{% endif %}",
+    "new": "datetime=\"{{ job.scheduled_for_iso }}\"",
+    "tests": [
+      "tests/test_api.py::test_an_unrenderable_scheduled_for_omits_the_datetime_attribute"
+    ],
+    "expect_count": 1
+  }
+]

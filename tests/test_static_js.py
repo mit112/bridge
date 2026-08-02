@@ -637,6 +637,11 @@ const nodes = {
   "[data-scheduled]": null,
 };
 
+const list = { children: { length: REMAINING } };
+const details = { hidden: false, open: true };
+nodes["[data-scheduled-list]"] = list;
+nodes["[data-scheduled]"] = details;
+
 globalThis.document = {
   addEventListener(type, fn) { if (type === "click") clickHandler = fn; },
   querySelector: (sel) => nodes[sel] ?? null,
@@ -667,14 +672,24 @@ clickHandler({ target: cancelButton }).then(() => {
     sectionStatus: sectionStatus.textContent,
     count: summaryCount.textContent,
     topbarCount: topbarCount.textContent,
+    detailsHidden: details.hidden,
+    detailsOpen: details.open,
   }));
 });
 """
 
 
+def _run_schedule_cancel(tmp_path, remaining: int = 1) -> dict:
+    """`remaining` is how many rows are left in the list AFTER the cancel."""
+    return _run_node(
+        tmp_path, "schedule_cancel.js",
+        SCHEDULE_CANCEL_HARNESS.replace("REMAINING", str(remaining)), SCHEDULE_JS,
+    )
+
+
 @pytest.mark.skipif(_node() is None, reason="node is not installed")
 def test_scheduled_cancel_deletes_the_right_job(tmp_path):
-    got = _run_node(tmp_path, "schedule_cancel.js", SCHEDULE_CANCEL_HARNESS, SCHEDULE_JS)
+    got = _run_schedule_cancel(tmp_path)
     assert got["sentUrl"] == "/api/schedule/sched-9"
     assert got["sentMethod"] == "DELETE"
     assert got["rowRemoved"] is True
@@ -685,7 +700,7 @@ def test_scheduled_cancel_moves_focus_and_announces_before_the_row_is_gone(tmp_p
     """WCAG 2.4.3/4.1.3: the row (and its own status span) is removed in the
     same tick, so both the focus target and the announcement have to live
     somewhere that outlives it."""
-    got = _run_node(tmp_path, "schedule_cancel.js", SCHEDULE_CANCEL_HARNESS, SCHEDULE_JS)
+    got = _run_schedule_cancel(tmp_path)
     assert got["summaryFocused"] is True
     assert "Cancelled" in got["sectionStatus"]
 
@@ -694,6 +709,243 @@ def test_scheduled_cancel_moves_focus_and_announces_before_the_row_is_gone(tmp_p
 def test_scheduled_cancel_decrements_both_stale_counts(tmp_path):
     """The topbar count and the section's own summary count are rendered
     once, on load. Without this fix they read "2" forever after a cancel."""
-    got = _run_node(tmp_path, "schedule_cancel.js", SCHEDULE_CANCEL_HARNESS, SCHEDULE_JS)
+    got = _run_schedule_cancel(tmp_path)
     assert got["count"] == "1"
     assert got["topbarCount"] == "1"
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_cancelling_the_last_row_closes_the_empty_section(tmp_path):
+    """An open <details> reading "Scheduled 0" with nothing under it is what
+    the count-only bookkeeping used to leave behind."""
+    got = _run_schedule_cancel(tmp_path, remaining=0)
+    assert got["detailsHidden"] is True
+    assert got["detailsOpen"] is False
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_a_cancel_that_leaves_a_row_behind_keeps_the_section_open(tmp_path):
+    """A finished run still on screen is history worth reading -- the count
+    says zero ACTIVE jobs, which is not the same as an empty list."""
+    got = _run_schedule_cancel(tmp_path, remaining=1)
+    assert got["detailsHidden"] is False
+    assert got["detailsOpen"] is True
+
+
+# --- (e) run-now leaves a row the server would recognise --------------------
+#
+# The row is server-rendered once, with the controls a `pending` job gets. After
+# a run-now it is terminal, and every one of those controls can now only 409 --
+# so until a reload the panel was showing buttons that could not work, and a
+# `failed` run showed no Retry at all.
+
+SETTLE_HARNESS = """
+globalThis.window = globalThis;
+let clickHandler = null;
+
+const state = { textContent: "pending" };
+const controls = [
+  { removed: false, remove() { this.removed = true; } },
+  { removed: false, remove() { this.removed = true; } },
+  { removed: false, remove() { this.removed = true; } },
+];
+let queriedAll = null;
+const appended = [];
+const row = {
+  className: "scheduled__job scheduled__job--pending",
+  querySelector: (sel) => (sel === "[data-scheduled-state]" ? state : null),
+  querySelectorAll(sel) { queriedAll = sel; return controls; },
+  append(el) { appended.push(el); },
+};
+const rowStatus = { textContent: "" };
+const summaryCount = { textContent: "1" };
+const topbarCount = { textContent: "1" };
+
+const nodes = {
+  '[data-scheduled-job="sched-7"]': row,
+  '[data-scheduled-status="sched-7"]': rowStatus,
+  "[data-scheduled-count]": summaryCount,
+  "[data-topbar-scheduled]": topbarCount,
+  "[data-scheduled-list]": { children: { length: 1 } },
+  "[data-scheduled]": { hidden: false, open: true },
+};
+
+globalThis.document = {
+  addEventListener(type, fn) { if (type === "click") clickHandler = fn; },
+  querySelector: (sel) => nodes[sel] ?? null,
+  createElement: () => ({
+    attrs: {}, setAttribute(n, v) { this.attrs[n] = v; },
+    textContent: "", className: "", type: "",
+  }),
+};
+
+globalThis.fetch = async () => ({
+  ok: true, status: 200,
+  json: async () => ({ id: "sched-7", status: STATUS, error: "spawn boom" }),
+});
+
+const fs = require("fs");
+eval(fs.readFileSync(process.argv[2], "utf8"));
+
+const runNowButton = {
+  getAttribute: () => "sched-7",
+  closest: (sel) => (sel === "[data-scheduled-run-now]" ? runNowButton : null),
+  disabled: false,
+};
+
+clickHandler({ target: runNowButton }).then(() => {
+  console.log(JSON.stringify({
+    rowClass: row.className,
+    state: state.textContent,
+    queriedAll,
+    removed: controls.map((c) => c.removed),
+    appended: appended.map((el) => ({ text: el.textContent, attrs: el.attrs })),
+    rowStatus: rowStatus.textContent,
+    count: summaryCount.textContent,
+  }));
+});
+"""
+
+
+def _run_settle(tmp_path, status: str) -> dict:
+    return _run_node(
+        tmp_path, "schedule_settle.js",
+        SETTLE_HARNESS.replace("STATUS", json.dumps(status)), SCHEDULE_JS,
+    )
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_run_now_restates_the_row_and_drops_the_pending_only_controls(tmp_path):
+    got = _run_settle(tmp_path, "fired")
+    assert got["rowClass"] == "scheduled__job scheduled__job--fired"
+    assert got["state"] == "fired"
+    assert all(got["removed"]), "a pending-only control survived the run"
+    for control in ("run-now", "edit-toggle", "cancel", "edit-panel"):
+        assert f"data-scheduled-{control}" in got["queriedAll"]
+    assert got["appended"] == [], "a fired run has nothing to retry"
+    assert got["count"] == "0"
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_a_run_now_that_fails_grows_a_retry_button_naming_its_own_job(tmp_path):
+    got = _run_settle(tmp_path, "failed")
+    assert len(got["appended"]) == 1
+    button = got["appended"][0]
+    assert button["text"] == "Retry"
+    assert button["attrs"]["data-scheduled-retry"] == "sched-7"
+    assert "spawn boom" in got["rowStatus"]
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_an_indeterminate_run_now_also_gets_a_retry_button(tmp_path):
+    """`run-now` is gated to `pending` and the scheduler never re-claims an
+    indeterminate row, so this button is the only recovery it has."""
+    got = _run_settle(tmp_path, "indeterminate")
+    assert len(got["appended"]) == 1
+    assert got["appended"][0]["attrs"]["data-scheduled-retry"] == "sched-7"
+
+
+# --- (f) retry goes to the schedule, not to a bare launch -------------------
+
+RETRY_HARNESS = """
+globalThis.window = globalThis;
+let clickHandler = null;
+
+const rowStatus = { textContent: "" };
+const row = { getAttribute: () => "sched-5" };
+const nodes = { '[data-scheduled-status="sched-5"]': rowStatus };
+
+globalThis.document = {
+  addEventListener(type, fn) { if (type === "click") clickHandler = fn; },
+  querySelector: (sel) => nodes[sel] ?? null,
+};
+
+let sentUrl = null;
+let sentMethod = null;
+let sentBody = null;
+globalThis.fetch = async (url, init) => {
+  sentUrl = url;
+  sentMethod = init.method;
+  sentBody = init.body ?? null;
+  return { ok: OK, status: STATUS_CODE, json: async () => (RESPONSE) };
+};
+
+const fs = require("fs");
+eval(fs.readFileSync(process.argv[2], "utf8"));
+
+const retryButton = {
+  attrs: { "data-scheduled-retry": "sched-5" },
+  getAttribute(n) { return this.attrs[n] ?? null; },
+  setAttribute(n, v) { this.attrs[n] = v; },
+  removed: false,
+  remove() { this.removed = true; },
+  closest(sel) {
+    if (sel === "[data-scheduled-retry]") return this;
+    if (sel === "[data-scheduled-job]") return row;
+    return null;
+  },
+  disabled: false,
+};
+
+clickHandler({ target: retryButton }).then(() => {
+  console.log(JSON.stringify({
+    sentUrl, sentMethod, sentBody,
+    rowStatus: rowStatus.textContent,
+    buttonRemoved: retryButton.removed,
+    retryTarget: retryButton.attrs["data-scheduled-retry"],
+  }));
+});
+"""
+
+
+def _run_retry(tmp_path, response: dict, ok: bool = True, code: int = 200) -> dict:
+    script = (RETRY_HARNESS
+              .replace("RESPONSE", json.dumps(response))
+              .replace("STATUS_CODE", str(code))
+              .replace("OK", "true" if ok else "false"))
+    return _run_node(tmp_path, "schedule_retry.js", script, SCHEDULE_JS)
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_retry_posts_to_the_schedule_endpoint_and_carries_no_prompt(tmp_path):
+    """The bug this replaced: retrying through `/api/launch` sent the prompt
+    scraped from the page and no `handoff_id`, so a schedule created from a
+    handoff was retried successfully while its handoff stayed queued. The
+    server owns all of it now, which is why the request has no body at all.
+    """
+    got = _run_retry(tmp_path, {"id": "sched-6", "status": "fired"})
+    assert got["sentUrl"] == "/api/schedule/sched-5/retry"
+    assert got["sentMethod"] == "POST"
+    assert got["sentBody"] is None
+    assert "Retried" in got["rowStatus"]
+    assert got["buttonRemoved"] is True, "the server allows exactly one retry"
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_a_retry_that_fails_again_repoints_the_button_at_the_new_run(tmp_path):
+    """One retry per row, so a second click on the ORIGINAL id can only 409.
+    The failure a person is now looking at is the retry's, and that is the row
+    the button has to name for the recovery loop to keep working."""
+    got = _run_retry(tmp_path, {"id": "sched-6", "status": "failed",
+                                "error": "still no claude"})
+    assert got["retryTarget"] == "sched-6"
+    assert got["buttonRemoved"] is False
+    assert "still no claude" in got["rowStatus"]
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_a_refused_retry_removes_a_button_that_could_only_ever_409(tmp_path):
+    got = _run_retry(tmp_path, {"detail": "only a failed or indeterminate run "
+                                          "can be retried, once"},
+                     ok=False, code=409)
+    assert got["buttonRemoved"] is True
+    assert "⚠" in got["rowStatus"]
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_a_retry_refused_for_any_other_reason_keeps_the_button(tmp_path):
+    """A 500 is not a permanent no -- removing the control would strand the
+    row with no way to try again."""
+    got = _run_retry(tmp_path, {"detail": "boom"}, ok=False, code=500)
+    assert got["buttonRemoved"] is False
+    assert got["retryTarget"] == "sched-5"

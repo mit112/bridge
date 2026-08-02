@@ -84,6 +84,41 @@ def test_an_uncollectable_launches_dir_does_not_stop_the_panel(serve_cfg,
     assert served, "the failure must not have reached uvicorn"
 
 
+def test_serve_prunes_finished_scheduled_runs_past_the_retention_window(serve_cfg,
+                                                                        tmp_path):
+    """Startup is the only housekeeping event this process has -- the same
+    reason `gc_prompt_files` lives here -- so it is where finished scheduled
+    runs are reaped. Only finished ones: an ancient `pending` job is still a
+    launch the panel owes you.
+    """
+    from bridge.models import ScheduledRun
+    from bridge.store import SCHEDULED_RUN_RETENTION_DAYS, Store, now_epoch
+
+    s = Store(tmp_path / "s.db")
+    for jid in ("ancient", "recent"):
+        s.create_scheduled_run(ScheduledRun(
+            id=jid, project_path="/p", prompt="x", mode="terminal",
+            scheduled_for=1000, created_at=1000))
+        s.claim_specific(jid)
+        s.finish_scheduled_run(jid, status="fired")
+    s.create_scheduled_run(ScheduledRun(
+        id="ancient-pending", project_path="/p", prompt="x", mode="terminal",
+        scheduled_for=1000, created_at=1000))
+    long_ago = now_epoch() - (SCHEDULED_RUN_RETENTION_DAYS + 1) * 86400
+    s.conn.execute("UPDATE scheduled_runs SET completed_at=? WHERE id='ancient'",
+                   (long_ago,))
+    s.conn.commit()
+    s.close()
+
+    assert main(["serve"]) == 0
+
+    s = Store(tmp_path / "s.db")
+    assert s.get_scheduled_run("ancient") is None
+    assert s.get_scheduled_run("recent") is not None
+    assert s.get_scheduled_run("ancient-pending") is not None
+    s.close()
+
+
 class _FakeThread:
     """A `threading.Thread` double whose `is_alive()` is set by the test,
     independent of whether `join()` actually blocked -- what makes a
