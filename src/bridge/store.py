@@ -170,7 +170,19 @@ COLUMN_MIGRATIONS: dict[str, dict[str, str]] = {
     # Epoch of the first reindex that found this project's path gone, so a later
     # manual restore in the panel is never re-archived. NULL = never seen missing.
     "projects": {"missing_archived_at": "INTEGER"},
+    # The id of the failed/indeterminate run this row was created to retry.
+    # NULL for every schedule a person authored. Deliberately not a foreign key:
+    # `prune_scheduled_runs` reaps an old original before its newer retry, and a
+    # dangling provenance pointer is a better outcome than a delete that fails.
+    "scheduled_runs": {"retry_of": "TEXT"},
 }
+
+
+# How long a finished scheduled run stays in the table. Long enough that a
+# schedule you set up a month ago and forgot is still explicable, short enough
+# that the table does not grow without bound under the panel's manual-`serve`
+# uptime model, where startup is the only housekeeping event there is.
+SCHEDULED_RUN_RETENTION_DAYS = 30
 
 
 def to_epoch(iso: str | None) -> int | None:
@@ -672,7 +684,9 @@ class Store:
             )
         return job.id
 
-    def scheduled_runs(self, status: str | None = None) -> list[sqlite3.Row]:
+    def scheduled_runs(
+        self, status: str | None = None, limit: int | None = None, offset: int = 0
+    ) -> list[sqlite3.Row]:
         with self._lock:
             sql = "SELECT * FROM scheduled_runs"
             params: tuple = ()
@@ -683,7 +697,22 @@ class Store:
                 " ORDER BY CASE WHEN status IN ('pending','launching') THEN 0 "
                 "ELSE 1 END, scheduled_for"
             )
+            if limit is not None or offset:
+                # SQLite has no bare OFFSET: a negative LIMIT is its documented
+                # way to say "all of them, starting from here".
+                sql += " LIMIT ? OFFSET ?"
+                params = (*params, -1 if limit is None else limit, offset)
             return list(self.conn.execute(sql, params))
+
+    def count_scheduled_runs(self, status: str | None = None) -> int:
+        """The total behind a paged `scheduled_runs()` call."""
+        with self._lock:
+            sql = "SELECT COUNT(*) AS n FROM scheduled_runs"
+            params: tuple = ()
+            if status is not None:
+                sql += " WHERE status=?"
+                params = (status,)
+            return self.conn.execute(sql, params).fetchone()["n"]
 
     def get_scheduled_run(self, id: str) -> sqlite3.Row | None:
         with self._lock:
@@ -746,6 +775,70 @@ class Store:
                 "UPDATE scheduled_runs SET status='cancelled', completed_at=? "
                 "WHERE id=? AND status='pending'", (now_epoch(), id))
             return cur.rowcount == 1
+
+    def retry_terminal(
+        self, id: str, *, new_id: str, now: int | None = None
+    ) -> sqlite3.Row | None:
+        """Copy a `failed`/`indeterminate` run into a fresh, already-claimed row.
+
+        A retry is a NEW row rather than a terminal row walked backwards: the
+        failure is the only record of what went wrong, and the retry needs its
+        own claim, launch id and outcome anyway. Crucially it carries
+        `source_handoff_id` across, which is the whole reason this exists --
+        the panel's old retry POSTed `/api/launch` with no handoff, so retrying
+        a schedule born from a handoff left that handoff queued forever.
+
+        One `INSERT ... SELECT`, in the same conditional-transition spirit as
+        every method above: the guard is in the WHERE clause and the rowcount
+        is the answer, so a second retry (two tabs, a double click) loses
+        safely instead of producing a second launch. Retries chain -- retry the
+        retry -- which is also what the panel offers, since the row a user
+        watches fail is always the newest one.
+
+        Returns the new row already in `launching`, ready for
+        `_fire_claimed_job`; `None` if `id` is unknown, is not in a retryable
+        state, or has been retried already.
+        """
+        when = now if now is not None else now_epoch()
+        with self.transaction():
+            cur = self.conn.execute(
+                "INSERT INTO scheduled_runs ("
+                "  id, project_path, prompt, summary, model, effort, mode, "
+                "  permission_mode, source_handoff_id, scheduled_for, status, "
+                "  created_at, claimed_at, retry_of) "
+                "SELECT ?, orig.project_path, orig.prompt, orig.summary, "
+                "  orig.model, orig.effort, orig.mode, orig.permission_mode, "
+                "  orig.source_handoff_id, ?, 'launching', ?, ?, orig.id "
+                "FROM scheduled_runs AS orig "
+                "WHERE orig.id=? AND orig.status IN ('failed','indeterminate') "
+                "  AND NOT EXISTS ("
+                "    SELECT 1 FROM scheduled_runs r WHERE r.retry_of = orig.id)",
+                (new_id, when, when, when, id))
+            return self.get_scheduled_run(new_id) if cur.rowcount == 1 else None
+
+    def prune_scheduled_runs(self, before_epoch: int) -> int:
+        """Reap terminal scheduled runs that completed before `before_epoch`.
+
+        Only rows that are done: a `pending` job is still owed a launch no
+        matter how long ago it was authored, and a `launching` one is either in
+        flight or waiting for the next boot's `reconcile_launching`.
+
+        The status clause is deliberately unfalsifiable, and there is no
+        mutation for it. `completed_at` is written by exactly one place --
+        finishing, cancelling or reconciling a row, all of which are terminal
+        -- so over every reachable state a non-terminal row carries NULL, and
+        `completed_at < ?` is NULL rather than true for it (SQL three-valued
+        logic) and excludes it anyway. Either clause alone is therefore
+        sufficient, so no test can tell them apart. This one stays because it
+        states the intent the age bound only implies.
+        """
+        with self.transaction():
+            cur = self.conn.execute(
+                "DELETE FROM scheduled_runs "
+                "WHERE status NOT IN ('pending','launching') "
+                "  AND completed_at < ?",
+                (before_epoch,))
+            return cur.rowcount
 
     def reconcile_launching(self, now: int) -> int:
         with self.transaction():

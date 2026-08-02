@@ -128,6 +128,122 @@ def test_finish_scheduled_run_is_a_noop_when_not_launching(store):
     assert r["fired_at"] is None
 
 
+def _terminal(store, sid, status="failed", **kw):
+    """Drive a job all the way to a terminal status the honest way."""
+    _job(store, sid, **kw)
+    store.claim_specific(sid)
+    store.finish_scheduled_run(sid, status=status, error="boom")
+    return sid
+
+
+def test_retry_terminal_copies_a_failed_job_into_a_new_claimed_row(store):
+    """The whole point of the endpoint: `source_handoff_id` survives the retry.
+
+    The panel's old retry POSTed `/api/launch` with no handoff at all, so a
+    schedule created FROM a handoff could be retried successfully and still
+    leave the original handoff sitting queued forever.
+    """
+    _terminal(store, "a", source_handoff_id="h1", summary="s", model="m",
+              effort="high", permission_mode="acceptEdits")
+    row = store.retry_terminal("a", new_id="a-retry", now=7000)
+    assert row is not None
+    assert row["id"] == "a-retry"
+    assert row["retry_of"] == "a"
+    assert row["source_handoff_id"] == "h1"
+    assert row["status"] == "launching" and row["claimed_at"] == 7000
+    # Claimed at creation, so `_fire_claimed_job` can take it with no second
+    # transition -- and `scheduled_for` is now, because it is firing now.
+    assert row["scheduled_for"] == 7000 and row["created_at"] == 7000
+    for column in ("project_path", "prompt", "summary", "model", "effort",
+                   "mode", "permission_mode"):
+        assert row[column] == store.get_scheduled_run("a")[column]
+    # The failure itself is history, not something a retry overwrites.
+    original = store.get_scheduled_run("a")
+    assert original["status"] == "failed" and original["error"] == "boom"
+
+
+def test_retry_terminal_also_recovers_an_indeterminate_job(store):
+    """A crash-stranded job is never auto-retried, so a manual one is the
+    only recovery path it has."""
+    _job(store, "a", scheduled_for=1000)
+    store.claim_one_due(now=1500)
+    store.reconcile_launching(now=9000)
+    assert store.get_scheduled_run("a")["status"] == "indeterminate"
+    assert store.retry_terminal("a", new_id="a2", now=9500) is not None
+
+
+@pytest.mark.parametrize("prepare", [
+    lambda s: _job(s, "a"),                                   # pending
+    lambda s: (_job(s, "a"), s.claim_specific("a")),          # launching
+    lambda s: _terminal(s, "a", status="fired"),              # already succeeded
+    lambda s: (_job(s, "a"), s.cancel_pending("a")),          # dismissed on purpose
+])
+def test_retry_terminal_refuses_anything_but_a_failed_or_indeterminate_job(store, prepare):
+    prepare(store)
+    assert store.retry_terminal("a", new_id="a2", now=7000) is None
+    assert store.get_scheduled_run("a2") is None
+
+
+def test_retry_terminal_refuses_a_second_retry_of_the_same_job(store):
+    """Two tabs, or a double click that outran the button's own disable, must
+    not produce two launches from one failure."""
+    _terminal(store, "a")
+    assert store.retry_terminal("a", new_id="a2", now=7000) is not None
+    assert store.retry_terminal("a", new_id="a3", now=7001) is None
+    assert store.get_scheduled_run("a3") is None
+
+
+def test_a_retry_that_failed_can_itself_be_retried(store):
+    """One retry per row, chained -- the row a user sees failing is always the
+    newest one, and that is the one its Retry button names."""
+    _terminal(store, "a")
+    store.retry_terminal("a", new_id="a2", now=7000)
+    store.finish_scheduled_run("a2", status="failed", error="again")
+    row = store.retry_terminal("a2", new_id="a3", now=7100)
+    assert row is not None and row["retry_of"] == "a2"
+
+
+def test_retry_terminal_is_none_for_an_id_nothing_ever_created(store):
+    assert store.retry_terminal("nope", new_id="x", now=7000) is None
+
+
+def test_scheduled_runs_pages_without_losing_the_active_first_order(store):
+    for i in range(5):
+        _job(store, f"j{i}", scheduled_for=1000 + i)
+    store.claim_specific("j4")
+    store.finish_scheduled_run("j4", status="fired")
+
+    everything = [r["id"] for r in store.scheduled_runs()]
+    assert everything[-1] == "j4"                       # terminal sinks to the end
+    assert [r["id"] for r in store.scheduled_runs(limit=2)] == everything[:2]
+    assert [r["id"] for r in store.scheduled_runs(limit=2, offset=2)] == everything[2:4]
+    # An offset with no limit is the rest of the list, not an empty page.
+    assert [r["id"] for r in store.scheduled_runs(offset=3)] == everything[3:]
+    assert store.count_scheduled_runs() == 5
+    assert store.count_scheduled_runs(status="fired") == 1
+
+
+def test_prune_scheduled_runs_deletes_only_old_terminal_rows(store):
+    _terminal(store, "old-failed")
+    store.conn.execute("UPDATE scheduled_runs SET completed_at=100 WHERE id='old-failed'")
+    _job(store, "old-pending", scheduled_for=100)         # ancient, but still due
+    _job(store, "claimed", scheduled_for=100)
+    store.claim_specific("claimed")                        # launching: in flight
+    _terminal(store, "recent-failed")                      # completed_at = now
+
+    assert store.prune_scheduled_runs(before_epoch=1000) == 1
+    assert store.get_scheduled_run("old-failed") is None
+    for survivor in ("old-pending", "claimed", "recent-failed"):
+        assert store.get_scheduled_run(survivor) is not None
+
+
+def test_prune_scheduled_runs_reaps_cancelled_rows_too(store):
+    _job(store, "a")
+    store.cancel_pending("a")
+    store.conn.execute("UPDATE scheduled_runs SET completed_at=100 WHERE id='a'")
+    assert store.prune_scheduled_runs(before_epoch=1000) == 1
+
+
 def test_pragmas_are_set(store):
     assert store.conn.execute("pragma journal_mode").fetchone()[0].lower() == "wal"
     assert store.conn.execute("pragma foreign_keys").fetchone()[0] == 1

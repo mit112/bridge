@@ -348,8 +348,14 @@ main { padding: 1.5rem; }
   color: var(--muted);
 }
 /* Colour plus the word, never colour alone: the status text itself already
-   says "failed", so `--risk-fg` only reinforces what the row already reads. */
-.scheduled__job--failed .scheduled__status { color: var(--risk-fg); font-weight: 600; }
+   says "failed", so `--risk-fg` only reinforces what the row already reads.
+   `indeterminate` is marked the same way and for the same reason -- a run that
+   may or may not have spawned is a thing to look at, not a quiet success. */
+.scheduled__job--failed .scheduled__status,
+.scheduled__job--indeterminate .scheduled__status {
+  color: var(--risk-fg);
+  font-weight: 600;
+}
 .scheduled__announce { font-size: .8rem; color: var(--fg); }
 .scheduled__edit {
   display: flex;

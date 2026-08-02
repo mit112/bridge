@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Literal
 from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -33,6 +33,13 @@ from bridge.store import Store, now_epoch
 HERE = Path(__file__).parent
 
 log = logging.getLogger(__name__)
+
+# How many finished scheduled runs the dashboard shows. Active jobs are never
+# capped -- those are launches the panel still owes you -- but terminal ones are
+# history that only grows, and a page that renders every one of them gets slower
+# forever. The rest stay reachable through `GET /api/schedule`, and
+# `store.prune_scheduled_runs` eventually reaps them.
+DASHBOARD_TERMINAL_SCHEDULES = 20
 
 HandoffStatus = Literal["queued", "consumed", "dismissed", "superseded"]
 
@@ -661,10 +668,23 @@ def create_app(
         # per-row here would turn one query into one per scheduled job.
         scheduled_rows = store.scheduled_runs()
         alias = store.alias_map()
+        # An active job is work still owed and always renders; a terminal one is
+        # history, capped at the newest `DASHBOARD_TERMINAL_SCHEDULES` so a year
+        # of finished runs cannot turn this page into a scroll. Newest first, by
+        # when they finished -- the failure a person came here to look at is the
+        # one that just happened.
+        active = [r for r in scheduled_rows if r["status"] in ("pending", "launching")]
+        terminal = sorted(
+            (r for r in scheduled_rows if r["status"] not in
+             ("pending", "launching", "cancelled")),
+            key=lambda r: (r["completed_at"] or 0), reverse=True,
+        )
+        older_count = max(0, len(terminal) - DASHBOARD_TERMINAL_SCHEDULES)
+        # A row that has already been retried must not offer a second Retry:
+        # `retry_terminal` refuses it, so the control could only ever 409.
+        retried = {r["retry_of"] for r in scheduled_rows if r["retry_of"]}
         scheduled = []
-        for row in scheduled_rows:
-            if row["status"] == "cancelled":
-                continue
+        for row in active + terminal[:DASHBOARD_TERMINAL_SCHEDULES]:
             # The server stays epoch-only for LOCAL time -- only the browser
             # knows the viewer's own timezone -- but a raw epoch int is
             # meaningless before `schedule.js` runs. UTC is the one timezone
@@ -682,6 +702,8 @@ def create_app(
                 ),
                 scheduled_for_iso=scheduled_for_iso,
                 scheduled_for_utc=scheduled_for_utc,
+                retryable=(row["status"] in ("failed", "indeterminate")
+                           and row["id"] not in retried),
             ))
         pending_schedule_count = sum(
             1 for row in scheduled_rows if row["status"] in ("pending", "launching")
@@ -694,6 +716,7 @@ def create_app(
                 "hidden": hidden,
                 "unattributed": unattributed,
                 "scheduled": scheduled,
+                "scheduled_older": older_count,
                 "diag_alert": _needs_attention(diag),
                 "totals": {
                     "today": sum(c.tokens_today for c in cards),
@@ -966,8 +989,18 @@ def create_app(
         return dict(store.get_scheduled_run(job.id))
 
     @app.get("/api/schedule")
-    def get_schedule():
-        return [dict(r) for r in store.scheduled_runs()]
+    def get_schedule(
+        response: Response,
+        limit: int | None = Query(None, ge=1),
+        offset: int = Query(0, ge=0),
+    ):
+        """Unpaged by default -- the panel's own fetch wants the whole list --
+        with `limit`/`offset` for anything walking a long history. The total
+        rides in a header so a page can tell "that is all of them" from "there
+        is more" without a second request.
+        """
+        response.headers["X-Total-Count"] = str(store.count_scheduled_runs())
+        return [dict(r) for r in store.scheduled_runs(limit=limit, offset=offset)]
 
     def _unknown_or_conflict(id: str) -> HTTPException:
         """404 for an id nothing ever created, 409 for one that exists but is
@@ -999,6 +1032,31 @@ def create_app(
         row = store.claim_specific(id)
         if row is None:
             raise _unknown_or_conflict(id)
+        return dict(_fire_claimed_job(store, cfg, row, launch_fn))
+
+    @app.post("/api/schedule/{id}/retry")
+    def retry_schedule(id: str):
+        """Re-fire a failed or indeterminate run, keeping its provenance.
+
+        The panel used to retry by POSTing `/api/launch` with the prompt copied
+        out of the page and no `handoff_id` at all -- so retrying a schedule
+        created from a handoff launched fine and left that handoff queued
+        forever. Going through the store means the retry inherits
+        `source_handoff_id` and gets consumed exactly like the original would
+        have been.
+
+        The new row is created already `launching`, so it arrives at
+        `_fire_claimed_job` in the same state `claim_specific` and
+        `claim_one_due` produce -- one firing path, not two.
+        """
+        row = store.retry_terminal(id, new_id=str(uuid4()))
+        if row is None:
+            if store.get_scheduled_run(id) is None:
+                raise HTTPException(status_code=404, detail="unknown schedule")
+            raise HTTPException(
+                status_code=409,
+                detail="only a failed or indeterminate run can be retried, once",
+            )
         return dict(_fire_claimed_job(store, cfg, row, launch_fn))
 
     return app

@@ -6,7 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from bridge import launcher, spool
-from bridge.api import create_app
+from bridge.api import DASHBOARD_TERMINAL_SCHEDULES, create_app
 from bridge.config import load
 from bridge.models import GitState, Handoff, Launch, ScheduledRun, SessionRecord
 from bridge.registry import resolve_project
@@ -2203,6 +2203,252 @@ def test_a_cancelled_schedule_does_not_linger_in_the_scheduled_section(client):
 
     assert 'data-scheduled-job="sched-4"' not in body
     assert re.search(r"<dt>scheduled</dt><dd data-topbar-scheduled>0</dd>", body)
+
+
+# --- Follow-up 1 & 2: a retry that keeps the handoff it came from -------------
+
+
+def _failed_schedule_from_a_handoff(c, store, fake, hid="h-retry"):
+    """A schedule born from a queued handoff, fired, and failed."""
+    c.post("/api/handoff", json={
+        "id": hid, "project_path": DEMO, "next_prompt": "carry on",
+    })
+    jid = c.post("/api/schedule", json={
+        "project_path": DEMO, "prompt": "carry on", "mode": "background",
+        "scheduled_for": 9_000_000_000, "source_handoff_id": hid,
+    }).json()["id"]
+    fake.result = launcher.LaunchError("no claude on PATH")
+    c.post(f"/api/schedule/{jid}/run-now")
+    assert store.get_scheduled_run(jid)["status"] == "failed"
+    fake.result = launcher.LaunchResult("L-retry", "started")
+    return jid, hid
+
+
+def test_retry_refires_a_failed_schedule_with_its_handoff_still_attached(launch_app):
+    """The bug this endpoint exists for: the panel's old retry POSTed
+    `/api/launch` with no `handoff_id`, so the retry succeeded and the original
+    handoff stayed queued forever. `launch_fn` is a double here, so the
+    consumption itself never runs -- what is asserted is the contract that
+    drives it: the handoff id reaches the launcher.
+    """
+    c, store, _, fake = launch_app
+    jid, hid = _failed_schedule_from_a_handoff(c, store, fake)
+
+    r = c.post(f"/api/schedule/{jid}/retry")
+
+    assert r.status_code == 200
+    _spec, handoff_id = fake.calls[-1]
+    assert handoff_id == hid
+    new = r.json()
+    assert new["id"] != jid
+    assert new["retry_of"] == jid
+    assert new["source_handoff_id"] == hid
+    assert new["status"] == "fired"
+    assert new["launch_id"] == "L-retry"
+    # The original keeps its failure: a retry is a new row, not a rewrite.
+    assert store.get_scheduled_run(jid)["status"] == "failed"
+
+
+def test_retry_recovers_an_indeterminate_job(launch_app):
+    """A crash-stranded row is never auto-retried, so without this it had no
+    recovery path at all -- `run-now` is gated to `pending`."""
+    c, store, _, fake = launch_app
+    jid = c.post("/api/schedule", json={"project_path": DEMO, "prompt": "go",
+        "scheduled_for": 9_000_000_000, "mode": "background"}).json()["id"]
+    store.claim_specific(jid)
+    store.reconcile_launching(now=9_000_000_001)
+
+    r = c.post(f"/api/schedule/{jid}/retry")
+
+    assert r.status_code == 200
+    assert r.json()["status"] == "fired"
+
+
+def test_retry_on_an_unknown_id_is_404(client):
+    c, _, _ = client
+    assert c.post("/api/schedule/nope/retry").status_code == 404
+
+
+@pytest.mark.parametrize("status", ["pending", "launching", "fired", "cancelled"])
+def test_retry_of_a_job_that_is_not_failed_or_indeterminate_is_409(launch_app, status):
+    c, store, _, _ = launch_app
+    jid = c.post("/api/schedule", json={"project_path": DEMO, "prompt": "go",
+        "scheduled_for": 9_000_000_000, "mode": "background"}).json()["id"]
+    if status == "launching":
+        store.claim_specific(jid)
+    elif status == "cancelled":
+        store.cancel_pending(jid)
+    elif status == "fired":
+        c.post(f"/api/schedule/{jid}/run-now")
+
+    r = c.post(f"/api/schedule/{jid}/retry")
+
+    assert r.status_code == 409
+    assert store.count_scheduled_runs() == 1      # nothing new was created
+
+
+def test_a_second_retry_of_the_same_failure_is_409(launch_app):
+    c, store, _, fake = launch_app
+    jid, _ = _failed_schedule_from_a_handoff(c, store, fake)
+    assert c.post(f"/api/schedule/{jid}/retry").status_code == 200
+
+    assert c.post(f"/api/schedule/{jid}/retry").status_code == 409
+    assert store.count_scheduled_runs() == 2      # the original and one retry
+
+
+def test_the_scheduled_section_offers_a_retry_affordance_on_an_indeterminate_job(client):
+    c, store, _ = client
+    store.create_scheduled_run(ScheduledRun(
+        id="sched-ind", project_path=DEMO, prompt="did it spawn?",
+        mode="terminal", scheduled_for=1000,
+    ))
+    store.claim_specific("sched-ind")
+    store.reconcile_launching(now=2000)
+
+    body = c.get("/").text
+
+    assert 'data-scheduled-retry="sched-ind"' in body
+
+
+def test_a_job_that_has_already_been_retried_offers_no_second_retry_button(client):
+    """The server refuses it, so the panel must not render a control whose only
+    possible outcome is a 409."""
+    c, store, _ = client
+    store.create_scheduled_run(ScheduledRun(
+        id="sched-done", project_path=DEMO, prompt="x", mode="terminal",
+        scheduled_for=1000,
+    ))
+    store.claim_specific("sched-done")
+    store.finish_scheduled_run("sched-done", status="failed", error="boom")
+    store.retry_terminal("sched-done", new_id="sched-done-2", now=3000)
+
+    body = c.get("/").text
+
+    assert 'data-scheduled-job="sched-done"' in body
+    assert 'data-scheduled-retry="sched-done"' not in body
+    assert 'data-scheduled-retry="sched-done-2"' not in body   # still launching
+
+
+def test_the_retry_button_carries_only_the_id_it_retries(client):
+    """The server owns the prompt, mode, model and permission now. Shipping
+    them back down as `data-retry-*` attributes plus a hidden textarea was what
+    let the panel launch a schedule while forgetting its handoff."""
+    c, store, _ = client
+    store.create_scheduled_run(ScheduledRun(
+        id="sched-lean", project_path=DEMO, prompt="secret prompt",
+        mode="terminal", scheduled_for=1000,
+    ))
+    store.claim_specific("sched-lean")
+    store.finish_scheduled_run("sched-lean", status="failed", error="boom")
+
+    body = c.get("/").text
+
+    assert 'data-scheduled-retry="sched-lean"' in body
+    assert "data-retry-path" not in body
+    assert "data-scheduled-retry-prompt" not in body
+    # Named per row rather than a bare "Retry": once the finished history fills
+    # up, twenty of these are twenty identical entries in a button list. The
+    # row carries the same label so `settleRow` can name the one it builds.
+    assert 'aria-label="Retry demo run scheduled for' in body
+    assert 'data-scheduled-retry-label="Retry demo run scheduled for' in body
+
+
+# --- Follow-up 3: retention and pagination ------------------------------------
+
+
+def _terminal_job(store, jid, completed_at):
+    store.create_scheduled_run(ScheduledRun(
+        id=jid, project_path=DEMO, prompt="x", mode="terminal",
+        scheduled_for=1000, created_at=1000,
+    ))
+    store.claim_specific(jid)
+    store.finish_scheduled_run(jid, status="fired")
+    store.conn.execute(
+        "UPDATE scheduled_runs SET completed_at=? WHERE id=?", (completed_at, jid))
+
+
+def test_get_schedule_pages_and_reports_the_total(client):
+    c, store, _ = client
+    for i in range(5):
+        store.create_scheduled_run(ScheduledRun(
+            id=f"p{i}", project_path=DEMO, prompt="x", mode="terminal",
+            scheduled_for=1000 + i,
+        ))
+
+    page = c.get("/api/schedule", params={"limit": 2, "offset": 1})
+
+    assert page.status_code == 200
+    assert [j["id"] for j in page.json()] == ["p1", "p2"]
+    assert page.headers["x-total-count"] == "5"
+    assert len(c.get("/api/schedule").json()) == 5      # unpaged is still everything
+
+
+def test_get_schedule_refuses_a_nonsense_page(client):
+    c, _, _ = client
+    assert c.get("/api/schedule", params={"limit": 0}).status_code == 422
+    assert c.get("/api/schedule", params={"offset": -1}).status_code == 422
+
+
+def test_the_dashboard_caps_terminal_rows_and_says_how_many_it_held_back(client):
+    c, store, _ = client
+    for i in range(DASHBOARD_TERMINAL_SCHEDULES + 3):
+        _terminal_job(store, f"t{i:02d}", completed_at=5000 + i)
+
+    body = c.get("/").text
+
+    shown = re.findall(r'data-scheduled-job="(t\d\d)"', body)
+    assert len(shown) == DASHBOARD_TERMINAL_SCHEDULES
+    # Newest first: the three oldest are the ones held back.
+    assert "t00" not in shown and shown[0] == f"t{DASHBOARD_TERMINAL_SCHEDULES + 2:02d}"
+    assert "3 older" in body
+    # Reachable, not just announced: a note that names data and offers no route
+    # to it is worse than no note. And the <ul> points at it, so someone
+    # navigating list-to-list meets the caveat rather than stepping over it.
+    assert '<a href="/api/schedule">' in body
+    assert 'aria-describedby="scheduled-older"' in body
+
+
+def test_the_dashboard_never_holds_back_an_active_job(client):
+    """Terminal rows are history; a pending job is work the panel still owes
+    you, and hiding one behind a cap would hide a launch that is going to
+    happen."""
+    c, store, _ = client
+    for i in range(DASHBOARD_TERMINAL_SCHEDULES + 5):
+        store.create_scheduled_run(ScheduledRun(
+            id=f"a{i:02d}", project_path=DEMO, prompt="x", mode="terminal",
+            scheduled_for=9_000_000_000 + i,
+        ))
+
+    body = c.get("/").text
+
+    assert len(re.findall(r'data-scheduled-job="a\d\d"', body)) == \
+        DASHBOARD_TERMINAL_SCHEDULES + 5
+    assert "older" not in body
+
+
+def test_the_dashboard_says_nothing_about_older_rows_when_none_were_held_back(client):
+    c, store, _ = client
+    _terminal_job(store, "t0", completed_at=5000)
+
+    assert "older" not in c.get("/").text
+
+
+# --- Follow-up 4: the row a mutation leaves behind ----------------------------
+
+
+def test_an_unrenderable_scheduled_for_omits_the_datetime_attribute(client):
+    """`datetime="None"` is not a valid machine-readable date, and an invalid
+    one is worse than none at all for anything parsing the page."""
+    c, store, _ = client
+    store.create_scheduled_run(ScheduledRun(
+        id="sched-extreme-2", project_path=DEMO, prompt="x", mode="background",
+        scheduled_for=999_999_999_999, created_at=1000,
+    ))
+
+    body = c.get("/").text
+
+    assert 'data-scheduled-job="sched-extreme-2"' in body
+    assert 'datetime="None"' not in body
 
 
 def test_every_card_has_a_compose_box_that_posts_to_launch_and_schedule(client):

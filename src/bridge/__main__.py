@@ -16,7 +16,7 @@ from pathlib import Path
 from bridge import spool
 from bridge.config import load
 from bridge.indexer import reindex
-from bridge.store import Store, now_epoch
+from bridge.store import SCHEDULED_RUN_RETENTION_DAYS, Store, now_epoch
 
 log = logging.getLogger(__name__)
 
@@ -102,6 +102,15 @@ def run_db_command(argv: list[str] | None = None) -> int:
     stray = store.reconcile_launching(now_epoch())
     if stray:
         log.info("reconciled %d stray 'launching' scheduled run(s)", stray)
+
+    # Same policy as `gc_prompt_files` above, for the same reason: startup is
+    # the only recurring event this process has. Finished runs only -- the
+    # store's own guard -- so nothing still owed a launch is ever reaped.
+    reaped = store.prune_scheduled_runs(
+        now_epoch() - SCHEDULED_RUN_RETENTION_DAYS * 86400
+    )
+    if reaped:
+        log.info("pruned %d finished scheduled run(s)", reaped)
 
     # The scheduler is a thread, not a second process, so it shares this same
     # `Store` connection rather than opening its own -- one sole writer, same
