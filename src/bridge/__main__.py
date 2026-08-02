@@ -13,7 +13,7 @@ import threading
 from dataclasses import asdict
 from pathlib import Path
 
-from bridge import spool
+from bridge import schedspool, spool
 from bridge.config import load
 from bridge.indexer import reindex
 from bridge.store import SCHEDULED_RUN_RETENTION_DAYS, Store, now_epoch
@@ -63,6 +63,9 @@ def run_db_command(argv: list[str] | None = None) -> int:
         # handoff, so indexing is where recovery happens. Guarded on an empty
         # table, so a routine index never resurrects a consumed handoff.
         stats["handoffs_rebuilt"] = spool.rebuild_if_empty(store, cfg.spool_dir).drained
+        stats["schedules_rebuilt"] = schedspool.rebuild_if_empty(
+            store, cfg.spool_dir, now_epoch()
+        ).restored
         print(json.dumps(stats, indent=2))
         store.close()
         return 0
@@ -99,18 +102,45 @@ def run_db_command(argv: list[str] | None = None) -> int:
     # between claim and finish on its previous run. Reconciling before the
     # scheduler thread starts means the first tick never finds a stray row it
     # could double-fire.
-    stray = store.reconcile_launching(now_epoch(), store.launching_scheduled_run_ids())
+    #
+    # Journal before flipping, and flip only what was journalled. An unjournalled
+    # row must be LEFT `launching`: a future job claimed by run-now, flipped
+    # without its record and then lost to a database failure, replays as
+    # `pending` and fires a second time -- the exact hole this change closes.
+    # Left alone, the next boot reconciles it again.
+    reconcilable = []
+    for run_id in store.launching_scheduled_run_ids():
+        try:
+            schedspool.journal_status(
+                run_id, "indeterminate", now_epoch(), cfg.spool_dir
+            )
+        except OSError:
+            log.exception("failed to journal reconcile of %r; leaving it", run_id)
+            continue
+        reconcilable.append(run_id)
+    stray = store.reconcile_launching(now_epoch(), reconcilable)
     if stray:
         log.info("reconciled %d stray 'launching' scheduled run(s)", stray)
 
     # Same policy as `gc_prompt_files` above, for the same reason: startup is
     # the only recurring event this process has. Finished runs only -- the
     # store's own guard -- so nothing still owed a launch is ever reaped.
-    reaped = store.prune_scheduled_runs(
-        store.prunable_scheduled_run_ids(
-            now_epoch() - SCHEDULED_RUN_RETENTION_DAYS * 86400
-        )
-    )
+    #
+    # Journal before deleting, and skip any row we could not journal. Without
+    # the `pruned` record the row is gone from the database but still a creation
+    # record on disk, and the next rebuild brings it back. Retention can wait a
+    # boot; journal integrity cannot.
+    reapable = []
+    for run_id in store.prunable_scheduled_run_ids(
+        now_epoch() - SCHEDULED_RUN_RETENTION_DAYS * 86400
+    ):
+        try:
+            schedspool.journal_status(run_id, "pruned", now_epoch(), cfg.spool_dir)
+        except OSError:
+            log.exception("failed to journal prune of %r; leaving it", run_id)
+            continue
+        reapable.append(run_id)
+    reaped = store.prune_scheduled_runs(reapable)
     if reaped:
         log.info("pruned %d finished scheduled run(s)", reaped)
 

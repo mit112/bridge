@@ -1,9 +1,15 @@
+import json
 import threading
 import time
 
 import pytest
 
+from bridge import schedspool
 from bridge.__main__ import _shutdown_scheduler, main
+from bridge.models import ScheduledRun
+from bridge.store import Store
+
+DEMO = "/Users/mitsheth/dev/demo"
 
 
 def test_index_subcommand_runs_and_reports(tmp_path, capsys):
@@ -117,6 +123,69 @@ def test_serve_prunes_finished_scheduled_runs_past_the_retention_window(serve_cf
     assert s.get_scheduled_run("recent") is not None
     assert s.get_scheduled_run("ancient-pending") is not None
     s.close()
+
+
+def test_serve_journals_the_runs_it_prunes(serve_cfg, tmp_path):
+    """Without this record, replay resurrects every run retention ever reaped."""
+    store = Store(tmp_path / "s.db")
+    store.create_scheduled_run(ScheduledRun(
+        id="old", project_path=DEMO, prompt="p", mode="background",
+        scheduled_for=100, created_at=100, status="fired",
+    ))
+    store.conn.execute(
+        "UPDATE scheduled_runs SET completed_at=? WHERE id=?", (100, "old")
+    )
+    store.conn.commit()
+    store.close()
+
+    assert main(["serve"]) == 0
+
+    records = list((tmp_path / "spool" / "schedules").glob("old.*.status.json"))
+    assert len(records) == 1
+    assert json.loads(records[0].read_text())["status"] == "pruned"
+
+
+def test_index_replays_the_schedule_journal(serve_cfg, tmp_path, capsys):
+    schedspool.journal(
+        ScheduledRun(
+            id="j1", project_path=DEMO, prompt="p", mode="background",
+            scheduled_for=2_000_000_000, created_at=100,
+        ),
+        tmp_path / "spool",
+    )
+
+    assert main(["index"]) == 0
+
+    stats = json.loads(capsys.readouterr().out)
+    assert stats["schedules_rebuilt"] == 1
+
+
+def test_a_run_whose_prune_cannot_be_journalled_is_not_deleted(
+    serve_cfg, tmp_path, monkeypatch
+):
+    """Deleting without the marker is what lets replay resurrect history."""
+    store = Store(tmp_path / "s.db")
+    store.create_scheduled_run(ScheduledRun(
+        id="old", project_path=DEMO, prompt="p", mode="background",
+        scheduled_for=100, created_at=100, status="fired",
+    ))
+    store.conn.execute(
+        "UPDATE scheduled_runs SET completed_at=? WHERE id=?", (100, "old")
+    )
+    store.conn.commit()
+    store.close()
+
+    def boom(*a, **kw):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(schedspool, "journal_status", boom)
+    assert main(["serve"]) == 0
+
+    survivor = Store(tmp_path / "s.db")
+    try:
+        assert survivor.get_scheduled_run("old") is not None
+    finally:
+        survivor.close()
 
 
 class _FakeThread:
