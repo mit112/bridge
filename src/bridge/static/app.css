@@ -210,6 +210,15 @@ main { padding: 1.5rem; }
 }
 .handoffs .status--queued { color: var(--queued-fg); font-weight: 600; }
 
+/* --- Phase 5: detail page collects what the card build already probed ------- */
+
+/* Reuses the card's `.card__git` flex strip; only the page-level spacing and
+   the commit line's prominence differ. The commit summary is content, not
+   metadata, so it steps back up to `--fg` out of the muted strip. */
+.detail-git { margin: 0 0 1.2rem; }
+.detail-git__commit { color: var(--fg); }
+.sessions__tokens-detail { display: block; color: var(--muted); font-size: .78rem; }
+
 /* --- Live sessions with no project ------------------------------------------ */
 
 .unattributed { margin: 1.5rem 0 0; font-size: .85rem; }

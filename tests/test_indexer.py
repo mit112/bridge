@@ -307,8 +307,16 @@ def render_detail_page(store, project_id):
     env.filters["ago"] = api._ago
     env.filters["ago_epoch"] = api._ago_epoch
     env.filters["kilo"] = api._kilo
+    from dataclasses import replace as _replace
+
+    cached_git = store.get_git_cache(project_id)
+    git = None
+    if cached_git is not None:
+        git, probed_at = cached_git
+        git = _replace(git, cached_at=probed_at)
     return env.get_template("project.html").render(
         project=store.get_project(project_id),
+        git=git,
         sessions=store.sessions(project_id),
         handoffs=store.handoffs(project_id),
         launches=store.launches(project_id),

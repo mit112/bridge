@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from bridge import launcher, spool
 from bridge.api import create_app
 from bridge.config import load
-from bridge.models import Handoff, Launch, SessionRecord
+from bridge.models import GitState, Handoff, Launch, SessionRecord
 from bridge.registry import resolve_project
 from bridge.store import Store, now_epoch
 
@@ -68,6 +68,55 @@ def test_project_detail_renders(client):
 def test_unknown_project_returns_404(client):
     c, _, _ = client
     assert c.get("/project/99999").status_code == 404
+
+
+# --- Phase 5: the detail page pays for the probes that already ran -----------
+
+
+def test_the_project_page_shows_the_cached_git_log(client):
+    """spec:394 -- recent git log on the detail page, fed by the `git_cache`
+    the card build already wrote. `behind` and the last-commit fields are
+    probed on every card build and were rendered nowhere; this collects them.
+    The route only READS the cache -- no new probe on the detail path."""
+    c, store, pid = client
+    store.put_git_cache(
+        pid,
+        GitState(
+            status="ok", branch="main", dirty_count=2, ahead=1, behind=3,
+            last_commit_summary="Wire the detail git log",
+            last_commit_at=1_780_000_000,
+        ),
+        probed_at=1_780_000_500,
+    )
+
+    html = c.get(f"/project/{pid}").text
+
+    assert "Wire the detail git log" in html, "last commit summary is shown"
+    assert "3 behind" in html, "the behind count finally renders somewhere"
+    assert "main" in html
+
+
+def test_the_project_page_breaks_down_session_tokens_including_sidechain(client):
+    """spec:395 -- per-session token breakdown with sidechain subtotals. The
+    cache and sidechain columns are already on the row (`SELECT *`); only the
+    template was throwing them away."""
+    c, store, pid = client
+    store.upsert_session(
+        SessionRecord(
+            session_id="s-tok", transcript_path="/t/s-tok.jsonl",
+            project_path="/Users/mitsheth/dev/demo", title="Token session",
+            ended_at="2026-07-31T10:00:00.000Z",
+            tokens_in=1200, tokens_out=800,
+            tokens_cache_create=5000, tokens_cache_read=9000,
+            sidechain_tokens=3000,
+        ),
+        pid,
+    )
+
+    html = c.get(f"/project/{pid}").text
+
+    assert "3k sidechain" in html, "the sidechain subtotal renders"
+    assert "cache 5kw/9kr" in html, "cache create/read subtotals render"
 
 
 def test_refresh_returns_stats(client):

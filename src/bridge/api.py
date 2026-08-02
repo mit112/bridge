@@ -448,11 +448,21 @@ def create_app(
         row = store.get_project(project_id)
         if row is None:
             raise HTTPException(status_code=404, detail="unknown project")
+        # The git log is a READ of the cache the card build already wrote, never
+        # a fresh probe: `behind` and the last-commit fields were computed on
+        # every card build and shown nowhere. `cached_at` carries the probe age
+        # so the page can say "as of ... ago", exactly as `build_cards` does.
+        cached_git = store.get_git_cache(project_id)
+        git = None
+        if cached_git is not None:
+            git, probed_at = cached_git
+            git = dataclasses_replace(git, cached_at=probed_at)
         return templates.TemplateResponse(
             request,
             "project.html",
             {
                 "project": row,
+                "git": git,
                 "sessions": store.sessions(project_id),
                 "handoffs": store.handoffs(project_id),
                 # Task 7 added the launch-history table to the template but
