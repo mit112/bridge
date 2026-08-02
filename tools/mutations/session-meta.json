@@ -1,0 +1,42 @@
+[
+  {
+    "name": "drop the session_id mismatch guard, so a renamed/corrupt file enriches the wrong session",
+    "file": "src/bridge/sessionmeta.py",
+    "old": "if not isinstance(raw, dict) or raw.get(\"session_id\") != session_id:",
+    "new": "if not isinstance(raw, dict):",
+    "tests": ["tests/test_sessionmeta.py::test_mismatched_session_id_returns_none"],
+    "expect_count": 1
+  },
+  {
+    "name": "collapse uses_web to web_search only, so a web_fetch-only session loses its flag",
+    "file": "src/bridge/sessionmeta.py",
+    "old": "uses_web=bool(raw.get(\"uses_web_search\")) or bool(raw.get(\"uses_web_fetch\")),",
+    "new": "uses_web=bool(raw.get(\"uses_web_search\")),",
+    "tests": ["tests/test_sessionmeta.py::test_uses_web_is_true_when_either_web_flag_is_set"],
+    "expect_count": 1
+  },
+  {
+    "name": "make read_many keep no-signal ids, so a pure Q&A session renders an empty Changes cell shell",
+    "file": "src/bridge/sessionmeta.py",
+    "old": "if m is not None and m.has_signal:",
+    "new": "if m is not None:",
+    "tests": ["tests/test_sessionmeta.py::test_read_many_keeps_only_signal_bearing_ids"],
+    "expect_count": 1
+  },
+  {
+    "name": "swallow a non-integer field as the raw value, so a bad field crashes int math downstream",
+    "file": "src/bridge/sessionmeta.py",
+    "old": "        return int(raw.get(key) or 0)\n    except (TypeError, ValueError):\n        return 0",
+    "new": "        return raw.get(key) or 0\n    except (TypeError, ValueError):\n        return 0",
+    "tests": ["tests/test_sessionmeta.py::test_non_integer_field_is_tolerated_as_zero"],
+    "expect_count": 1
+  },
+  {
+    "name": "drop OSError from read's except, so a missing meta file raises instead of degrading to None",
+    "file": "src/bridge/sessionmeta.py",
+    "old": "    except (OSError, ValueError):\n        return None",
+    "new": "    except (ValueError,):\n        return None",
+    "tests": ["tests/test_sessionmeta.py::test_missing_file_returns_none"],
+    "expect_count": 1
+  }
+]
