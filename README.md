@@ -19,6 +19,21 @@ in well under a second.
 
     uv run python -m bridge serve   # http://127.0.0.1:8787
 
+To keep it up across logins and crashes, install the LaunchAgent:
+
+```bash
+cp tools/launchd/com.mitsheth.bridge-panel.plist ~/Library/LaunchAgents/
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.mitsheth.bridge-panel.plist
+```
+
+An agent, not a daemon: the panel reads `~/.claude` and spawns Terminal windows through
+`osascript`, so it needs the logged-in GUI session. It runs at login, restarts if it dies,
+and logs both streams to `~/.bridge/serve.log`. The plist sets `PATH` explicitly because
+`launcher.resolve_claude` looks `claude` up on `PATH` by design, and launchd's default
+`PATH` does not include `~/.local/bin`. To stop it, `launchctl bootout
+gui/$(id -u)/com.mitsheth.bridge-panel`; to pick up code changes, `launchctl kickstart -k
+gui/$(id -u)/com.mitsheth.bridge-panel`.
+
 ## Test
 
     uv run pytest
@@ -55,7 +70,8 @@ deliberately manual):
 cp ~/dev/bridge/commands/handoff.md ~/.claude/commands/handoff.md
 ```
 
-The panel is started by hand with `bridge serve`, so it is usually down. That is fine:
+The panel may well be down — by hand it usually is, and even under the LaunchAgent it is
+down across reboots and restarts. That is fine:
 `bridge handoff` exits zero regardless, writes the prompt to `~/.bridge/spool/`, and the
 server ingests it on the next boot. Drained spool files are retained in
 `~/.bridge/spool/drained/` as an append-only journal, which is what keeps
