@@ -1895,3 +1895,91 @@ def test_a_failing_sensor_renders_the_dashboard_instead_of_500ing(client, monkey
     r = c.get("/")
     assert r.status_code == 200
     assert "demo" in r.text
+
+
+# --- Phase 6: /api/schedule ---------------------------------------------------
+
+
+def test_schedule_create_list_and_cancel(client):
+    c, store, _ = client
+    r = c.post("/api/schedule", json={"project_path": "/Users/mitsheth/dev/demo",
+        "prompt": "do it", "scheduled_for": 1000, "mode": "background"})
+    assert r.status_code == 201
+    jid = r.json()["id"]
+    assert any(j["id"] == jid for j in c.get("/api/schedule").json())
+    assert c.delete(f"/api/schedule/{jid}").status_code == 200
+    assert store.get_scheduled_run(jid)["status"] == "cancelled"
+
+
+def test_schedule_edit_is_pending_only(client):
+    c, store, _ = client
+    jid = c.post("/api/schedule", json={"project_path": "/Users/mitsheth/dev/demo",
+        "prompt": "x", "scheduled_for": 1000, "mode": "background"}).json()["id"]
+    assert c.patch(f"/api/schedule/{jid}", json={"prompt": "y"}).status_code == 200
+    store.claim_one_due(now=2000)                      # now 'launching'
+    assert c.patch(f"/api/schedule/{jid}", json={"prompt": "z"}).status_code == 409
+
+
+def test_run_now_claims_and_fires_via_fire(launch_app):
+    # launch_app injects a launch_fn double (no real spawn); see existing launch tests
+    c, store, _, launch_fn = launch_app
+    jid = c.post("/api/schedule", json={"project_path": DEMO, "prompt": "go",
+        "scheduled_for": 9_000_000_000, "mode": "background"}).json()["id"]
+    r = c.post(f"/api/schedule/{jid}/run-now")
+    assert r.status_code == 200
+    assert store.get_scheduled_run(jid)["status"] in ("fired", "failed")
+    assert c.post(f"/api/schedule/{jid}/run-now").status_code == 409   # not pending anymore
+
+
+def test_schedule_rejects_bad_mode_and_prompt(client):
+    c, _, _ = client
+    assert c.post("/api/schedule", json={"project_path": DEMO, "prompt": "x",
+        "scheduled_for": 1000, "mode": "nope"}).status_code == 422
+    assert c.post("/api/schedule", json={"project_path": DEMO, "prompt": "a\x00b",
+        "scheduled_for": 1000, "mode": "background"}).status_code == 422
+
+
+def test_run_now_on_unknown_id_is_404(client):
+    c, _, _ = client
+    assert c.post("/api/schedule/nope/run-now").status_code == 404
+
+
+def test_patch_and_delete_on_unknown_id_is_404(client):
+    c, _, _ = client
+    assert c.patch("/api/schedule/nope", json={"prompt": "y"}).status_code == 404
+    assert c.delete("/api/schedule/nope").status_code == 404
+
+
+def test_run_now_fires_through_fire_with_the_row_snapshot(launch_app):
+    """The shared `_fire_claimed_job` tail must call `fire()` with the claimed
+    row's own prompt/mode/handoff, not values reconstructed elsewhere."""
+    c, store, _, fake = launch_app
+    jid = c.post("/api/schedule", json={"project_path": DEMO, "prompt": "scheduled prompt",
+        "scheduled_for": 9_000_000_000, "mode": "background",
+        "permission_mode": "bypassPermissions"}).json()["id"]
+
+    r = c.post(f"/api/schedule/{jid}/run-now")
+
+    assert r.status_code == 200
+    spec, handoff_id = fake.calls[-1]
+    assert spec.prompt == "scheduled prompt"
+    assert spec.mode == "background"
+    assert spec.permission_mode == "bypassPermissions"
+    assert handoff_id is None
+    row = store.get_scheduled_run(jid)
+    assert row["status"] == "fired"
+    assert row["launch_id"] == fake.result.launch_id
+
+
+def test_run_now_records_failure_when_the_launcher_raises(launch_app):
+    c, store, _, fake = launch_app
+    jid = c.post("/api/schedule", json={"project_path": DEMO, "prompt": "go",
+        "scheduled_for": 9_000_000_000, "mode": "background"}).json()["id"]
+    fake.result = launcher.LaunchError("no claude on PATH")
+
+    r = c.post(f"/api/schedule/{jid}/run-now")
+
+    assert r.status_code == 200
+    row = store.get_scheduled_run(jid)
+    assert row["status"] == "failed"
+    assert row["error"] == "no claude on PATH"

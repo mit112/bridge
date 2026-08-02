@@ -12,6 +12,7 @@ from dataclasses import asdict
 from dataclasses import replace as dataclasses_replace
 from pathlib import Path
 from typing import Literal
+from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, StreamingResponse
@@ -23,7 +24,7 @@ from bridge import agents, hooks, launcher, spool
 from bridge.cards import FIVE_HOURS, LivenessDebouncer, build_cards, spark_points
 from bridge.config import Config
 from bridge.indexer import reindex
-from bridge.models import AgentsState, Handoff
+from bridge.models import AgentsState, Handoff, ScheduledRun
 from bridge.registry import display_name, resolve_project
 from bridge.store import Store, now_epoch
 
@@ -125,6 +126,110 @@ class LaunchIn(BaseModel):
         return value
 
 
+def _validate_prompt_field(value: str | None) -> str | None:
+    """Shared by `ScheduleIn` and `SchedulePatch`: map `launcher.LaunchError`
+    to a Pydantic `ValueError`, so a NUL or oversize prompt is a 422 at the
+    edge instead of surfacing later, mid-fire, as an uncaught exception."""
+    if value is not None:
+        try:
+            launcher.validate_prompt(value)
+        except launcher.LaunchError as exc:
+            raise ValueError(str(exc)) from exc
+    return value
+
+
+def _check_known_mode(value: str) -> str:
+    """Shared by `ScheduleIn` and `SchedulePatch`. Checks against the same
+    closed set `LaunchIn._known_mode` does, written once here rather than
+    copied into both, which is also what keeps the mutation harness's anchor
+    into `LaunchIn`'s own check (`tools/mutations/phase3-task4.json`) matching
+    exactly once."""
+    if value not in launcher.MODES:
+        raise ValueError(f"mode must be one of {launcher.MODES}")
+    return value
+
+
+def _check_known_permission_mode(value: str | None) -> str | None:
+    """Shared by `ScheduleIn` and `SchedulePatch`; see `_check_known_mode`."""
+    if value and value not in launcher.PERMISSION_MODES:
+        raise ValueError(
+            f"permission_mode must be one of {sorted(launcher.PERMISSION_MODES)}"
+        )
+    return value
+
+
+class ScheduleIn(BaseModel):
+    """A session to launch at a future time. Mirrors `LaunchIn`'s validators:
+    `mode` and `permission_mode` are checked against the same closed sets, and
+    `prompt` -- required here, unlike `LaunchIn`, since a scheduled run has no
+    running request to fall back to a queued handoff from -- runs through the
+    same `validate_prompt` a manual launch would hit at fire time, so a
+    doomed-to-fail prompt is refused at scheduling instead of at 3am.
+    """
+
+    project_path: str
+    prompt: str
+    scheduled_for: int
+    mode: str = "terminal"
+    model: str | None = None
+    effort: str | None = None
+    summary: str | None = None
+    permission_mode: str | None = None
+    source_handoff_id: str | None = None
+
+    @field_validator("permission_mode")
+    @classmethod
+    def _known_permission_mode(cls, value: str | None) -> str | None:
+        return _check_known_permission_mode(value)
+
+    @field_validator("mode")
+    @classmethod
+    def _known_mode(cls, value: str) -> str:
+        return _check_known_mode(value)
+
+    @field_validator("prompt")
+    @classmethod
+    def _valid_prompt(cls, value: str) -> str:
+        return _validate_prompt_field(value)
+
+
+class SchedulePatch(BaseModel):
+    """Edits a still-`pending` scheduled run. Every field is optional -- a
+    caller edits only what changed -- but `store.edit_pending` turns an empty
+    set of fields into an empty `SET` clause, so an empty body is rejected
+    the same way `HandoffPatch` and `ProjectPatch` reject theirs.
+    """
+
+    prompt: str | None = None
+    scheduled_for: int | None = None
+    model: str | None = None
+    effort: str | None = None
+    mode: str | None = None
+    summary: str | None = None
+    permission_mode: str | None = None
+
+    @field_validator("permission_mode")
+    @classmethod
+    def _known_permission_mode(cls, value: str | None) -> str | None:
+        return _check_known_permission_mode(value)
+
+    @field_validator("mode")
+    @classmethod
+    def _known_mode(cls, value: str | None) -> str | None:
+        return value if value is None else _check_known_mode(value)
+
+    @field_validator("prompt")
+    @classmethod
+    def _valid_prompt(cls, value: str | None) -> str | None:
+        return _validate_prompt_field(value)
+
+    @model_validator(mode="after")
+    def _at_least_one_field(self):
+        if not self.model_fields_set:
+            raise ValueError("supply at least one field")
+        return self
+
+
 class ProjectPatch(BaseModel):
     """`status`, `pinned`, or both -- but never neither.
 
@@ -180,6 +285,54 @@ def fire(
         permission_mode=permission_mode,
     )
     return launch_fn(store, cfg, spec, handoff_id)
+
+
+def _fire_claimed_job(store: Store, cfg: Config, row, launch_fn: LaunchFn):
+    """The shared tail after a scheduled run is claimed -- `POST
+    /api/schedule/{id}/run-now` and Task 4's scheduler both end here, with
+    nothing else between "claimed" and "fired".
+
+    `row` is the just-claimed snapshot (from `claim_specific` or
+    `claim_one_due`): its own prompt/mode/handoff, not values re-read or
+    reconstructed elsewhere, is what gets fired, so a concurrent edit to the
+    still-pending original (impossible; claiming is what makes editing fail)
+    can never race the run that already started.
+
+    A schedule has no `title` column -- `summary` stands in for it, exactly as
+    a handoff's summary stands in for `LaunchIn.title` in `post_launch`, and
+    falls back to the same `launcher.default_title` call with the same
+    arguments, so a scheduled and a manual launch title identically.
+    """
+    id = row["id"]
+    effective_path = store.alias_map().get(row["project_path"], row["project_path"])
+    title = row["summary"] or launcher.default_title(
+        row["summary"], display_name(effective_path)
+    )
+    try:
+        result = fire(
+            store, cfg,
+            project_path=row["project_path"],
+            prompt=row["prompt"],
+            mode=row["mode"],
+            model=row["model"],
+            effort=row["effort"],
+            permission_mode=row["permission_mode"],
+            title=title,
+            handoff_id=row["source_handoff_id"],
+            launch_fn=launch_fn,
+        )
+    except launcher.LaunchError as exc:
+        store.finish_scheduled_run(id, status="failed", error=str(exc))
+    else:
+        if result.outcome == "started":
+            store.finish_scheduled_run(
+                id, status="fired", launch_id=result.launch_id, fired_at=now_epoch()
+            )
+        else:
+            store.finish_scheduled_run(
+                id, status="failed", launch_id=result.launch_id, error=result.error
+            )
+    return store.get_scheduled_run(id)
 
 
 def create_app(
@@ -696,6 +849,69 @@ def create_app(
             # right bytes on the clipboard when the launch fails.
             "prompt": prompt,
         }
+
+    # --- scheduled runs -------------------------------------------------------
+    #
+    # A schedule is created, listed, edited, cancelled, or fired early -- but
+    # only ever fired FOR REAL by Task 4's background scheduler. `run-now`
+    # exists so the panel can test a schedule (or just stop waiting for it)
+    # without a second code path to keep in sync with the scheduler's own.
+
+    @app.post("/api/schedule", status_code=201)
+    def post_schedule(body: ScheduleIn):
+        project_path = store.alias_map().get(body.project_path, body.project_path)
+        permission_mode = body.permission_mode
+        job = ScheduledRun(
+            id=str(uuid4()),
+            project_path=project_path,
+            prompt=body.prompt,
+            summary=body.summary,
+            model=body.model,
+            effort=body.effort,
+            mode=body.mode,
+            permission_mode=permission_mode,
+            source_handoff_id=body.source_handoff_id,
+            scheduled_for=body.scheduled_for,
+            created_at=now_epoch(),
+        )
+        store.create_scheduled_run(job)
+        return dict(store.get_scheduled_run(job.id))
+
+    @app.get("/api/schedule")
+    def get_schedule():
+        return [dict(r) for r in store.scheduled_runs()]
+
+    def _unknown_or_conflict(id: str) -> HTTPException:
+        """404 for an id nothing ever created, 409 for one that exists but is
+        no longer `pending` -- the same distinction `patch_project` draws for
+        an unknown project, extended with the state a schedule alone has."""
+        if store.get_scheduled_run(id) is None:
+            return HTTPException(status_code=404, detail="unknown schedule")
+        return HTTPException(status_code=409, detail="schedule is no longer pending")
+
+    @app.patch("/api/schedule/{id}")
+    def patch_schedule(id: str, body: SchedulePatch):
+        # `exclude_unset` is what keeps an omitted field out of the SQL
+        # entirely, rather than overwriting it with the model's own `None`
+        # default -- the same reason `patch_project` and `patch_handoff` check
+        # `is not None` per field instead of writing the whole body.
+        patch_fields = body.model_dump(exclude_unset=True)
+        if not store.edit_pending(id, **patch_fields):
+            raise _unknown_or_conflict(id)
+        return dict(store.get_scheduled_run(id))
+
+    @app.delete("/api/schedule/{id}")
+    def delete_schedule(id: str):
+        if not store.cancel_pending(id):
+            raise _unknown_or_conflict(id)
+        return dict(store.get_scheduled_run(id))
+
+    @app.post("/api/schedule/{id}/run-now")
+    def run_now(id: str):
+        row = store.claim_specific(id)
+        if row is None:
+            raise _unknown_or_conflict(id)
+        return dict(_fire_claimed_job(store, cfg, row, launch_fn))
 
     return app
 
