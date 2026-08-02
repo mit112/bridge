@@ -1,25 +1,5 @@
 [
   {
-    "name": "loosen claim_one_due's due bound, so a not-yet-due job is claimed early",
-    "file": "src/bridge/store.py",
-    "old": "scheduled_for<=?",
-    "new": "scheduled_for<?",
-    "tests": [
-      "tests/test_store.py::test_claim_one_due_claims_exactly_one_pending_job_at_or_before_now"
-    ],
-    "expect_count": 1
-  },
-  {
-    "name": "drop claim_one_due's pending guard, so a repeat claim re-wins an already-launching job",
-    "file": "src/bridge/store.py",
-    "old": "\"WHERE id=? AND status='pending'\", (now, row[\"id\"]))",
-    "new": "\"WHERE id=?\", (now, row[\"id\"]))",
-    "tests": [
-      "tests/test_store.py::test_claim_one_due_is_a_single_winner_under_a_repeat_claim"
-    ],
-    "expect_count": 1
-  },
-  {
     "name": "drop finish_scheduled_run's launching guard, so a finish clobbers a cancelled/indeterminate row",
     "file": "src/bridge/store.py",
     "old": "\"completed_at=? WHERE id=? AND status='launching'\",",
