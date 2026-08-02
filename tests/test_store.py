@@ -112,6 +112,16 @@ def test_claim_specific_claims_a_pending_job_by_id(store):
     assert store.claim_specific("a") is None                 # not pending anymore
 
 
+def test_finish_scheduled_run_is_a_noop_when_not_launching(store):
+    _job(store, "a", scheduled_for=1000)
+    assert store.cancel_pending("a") is True                 # status is now 'cancelled'
+    store.finish_scheduled_run("a", status="fired", launch_id="L1", fired_at=1600)
+    r = store.get_scheduled_run("a")
+    assert r["status"] == "cancelled"
+    assert r["launch_id"] is None
+    assert r["fired_at"] is None
+
+
 def test_pragmas_are_set(store):
     assert store.conn.execute("pragma journal_mode").fetchone()[0].lower() == "wal"
     assert store.conn.execute("pragma foreign_keys").fetchone()[0] == 1

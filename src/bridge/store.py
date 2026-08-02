@@ -8,12 +8,15 @@ display, once as an epoch int so range queries stay index-friendly.
 import contextlib
 import dataclasses
 import json
+import logging
 import sqlite3
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
 from bridge.models import GitState, Handoff, Launch, ScheduledRun, SessionRecord
+
+logger = logging.getLogger(__name__)
 
 SCHEMA = [
     """
@@ -714,10 +717,18 @@ class Store:
         error: str | None = None, fired_at: int | None = None,
     ) -> None:
         with self.transaction():
-            self.conn.execute(
+            cur = self.conn.execute(
                 "UPDATE scheduled_runs SET status=?, launch_id=?, error=?, fired_at=?, "
                 "completed_at=? WHERE id=? AND status='launching'",
                 (status, launch_id, error, fired_at, now_epoch(), id))
+            if cur.rowcount != 1:
+                # Double-finish, or a finish that lost a race with
+                # reconcile_launching flipping the row to 'indeterminate'
+                # first. The write is silently lost by design (no other
+                # status should be clobbered) but that loss must be visible.
+                logger.warning(
+                    "finish_scheduled_run(%r, status=%r): no row in "
+                    "'launching' state; write discarded", id, status)
 
     def edit_pending(self, id: str, **fields) -> bool:
         # `fields` keys are always hardcoded caller kwargs (never user input
