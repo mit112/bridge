@@ -1,0 +1,22 @@
+[
+  {
+    "name": "duplicate the schedule-form markup authority inside the card template",
+    "file": "src/bridge/templates/_card.html",
+    "old": "</div>\n{%- endmacro %}",
+    "new": "</div>\n<div class=\"schedule-form\"></div>\n{%- endmacro %}",
+    "tests": [
+      "tests/test_api.py::test_card_schedule_form_markup_has_one_template_authority"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "render a handoff schedule form without linking it to its handoff",
+    "file": "src/bridge/templates/_card.html",
+    "old": "      {{ schedule_form(hpanel, card.path, hid, totals, card.handoff.id) }}",
+    "new": "      {{ schedule_form(hpanel, card.path, hid, totals) }}",
+    "tests": [
+      "tests/test_api.py::test_a_queued_handoff_offers_its_own_schedule_affordance"
+    ],
+    "expect_count": 1
+  }
+]

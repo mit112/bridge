@@ -2637,6 +2637,14 @@ def test_a_queued_handoff_offers_its_own_schedule_affordance(client):
     assert 'data-schedule-handoff="h-sched"' in body
 
 
+def test_card_schedule_form_markup_has_one_template_authority():
+    template = (
+        Path(__file__).resolve().parent.parent
+        / "src" / "bridge" / "templates" / "_card.html"
+    ).read_text()
+    assert template.count('<div class="schedule-form"') == 1
+
+
 # --- Phase 7 Task 2: session-meta enrichment on the detail page --------------
 
 

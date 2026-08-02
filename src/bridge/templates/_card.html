@@ -1,3 +1,23 @@
+{% macro schedule_form(panel_id, project_path, prompt_id, totals, handoff_id=none) -%}
+<div class="schedule-form" id="{{ panel_id }}" data-schedule-panel hidden
+     data-schedule-path="{{ project_path }}" data-schedule-prompt="{{ prompt_id }}"
+     {%- if handoff_id %} data-schedule-handoff="{{ handoff_id }}"{% endif %}>
+  <span class="schedule-form__field">
+    <label class="compose__label" for="{{ panel_id }}-when">Run at</label>
+    <input type="datetime-local" id="{{ panel_id }}-when" data-schedule-when>
+  </span>
+  <span class="schedule-form__field">
+    <label class="compose__label" for="{{ panel_id }}-mode">Mode</label>
+    <select id="{{ panel_id }}-mode" data-schedule-mode>
+      <option value="terminal" selected>terminal</option>
+      <option value="background">background</option>
+    </select>
+  </span>
+  <button type="button" class="btn" data-schedule-submit="{{ panel_id }}">Schedule</button>
+  <p class="schedule-form__hint">Last 5h across all projects: {{ totals.last_5h | kilo }} tokens</p>
+</div>
+{%- endmacro %}
+
 <article class="card{% if card.handoff %} card--queued{% elif card.is_stale %} card--risk{% endif %}">
   <header class="card__head">
     <h2><a href="/project/{{ card.project_id }}">{{ card.name }}</a></h2>
@@ -54,22 +74,7 @@
       <span class="compose__status" role="status" aria-live="polite"
             data-schedule-status="{{ panel }}"></span>
     </p>
-    <div class="schedule-form" id="{{ panel }}" data-schedule-panel hidden
-         data-schedule-path="{{ card.path }}" data-schedule-prompt="{{ cid }}">
-      <span class="schedule-form__field">
-        <label class="compose__label" for="{{ panel }}-when">Run at</label>
-        <input type="datetime-local" id="{{ panel }}-when" data-schedule-when>
-      </span>
-      <span class="schedule-form__field">
-        <label class="compose__label" for="{{ panel }}-mode">Mode</label>
-        <select id="{{ panel }}-mode" data-schedule-mode>
-          <option value="terminal" selected>terminal</option>
-          <option value="background">background</option>
-        </select>
-      </span>
-      <button type="button" class="btn" data-schedule-submit="{{ panel }}">Schedule</button>
-      <p class="schedule-form__hint">Last 5h across all projects: {{ totals.last_5h | kilo }} tokens</p>
-    </div>
+    {{ schedule_form(panel, card.path, cid, totals) }}
   </section>
 
   {% if card.session %}
@@ -156,23 +161,7 @@
          submit time -- the same reason `launch.js`'s click handler never trusts
          a `focusout` save to have landed first. `data-schedule-handoff` is what
          attaches the resulting job to this handoff via `source_handoff_id`. #}
-      <div class="schedule-form" id="{{ hpanel }}" data-schedule-panel hidden
-           data-schedule-path="{{ card.path }}" data-schedule-prompt="{{ hid }}"
-           data-schedule-handoff="{{ card.handoff.id }}">
-        <span class="schedule-form__field">
-          <label class="compose__label" for="{{ hpanel }}-when">Run at</label>
-          <input type="datetime-local" id="{{ hpanel }}-when" data-schedule-when>
-        </span>
-        <span class="schedule-form__field">
-          <label class="compose__label" for="{{ hpanel }}-mode">Mode</label>
-          <select id="{{ hpanel }}-mode" data-schedule-mode>
-            <option value="terminal" selected>terminal</option>
-            <option value="background">background</option>
-          </select>
-        </span>
-        <button type="button" class="btn" data-schedule-submit="{{ hpanel }}">Schedule</button>
-        <p class="schedule-form__hint">Last 5h across all projects: {{ totals.last_5h | kilo }} tokens</p>
-      </div>
+      {{ schedule_form(hpanel, card.path, hid, totals, card.handoff.id) }}
     </section>
   {% endif %}
 
