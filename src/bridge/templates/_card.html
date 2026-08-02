@@ -44,6 +44,13 @@
               aria-expanded="false" aria-controls="{{ panel }}">Schedule…</button>
       <span class="compose__status" role="status" aria-live="polite"
             data-compose-status="{{ cid }}"></span>
+      {# A SIBLING of the panel below, not a descendant: on submit,
+         `schedule.js` hides the panel in the same tick it announces success,
+         and a live region inside the node being hidden is read by nothing --
+         `role="status"` only fires on a node still in the accessibility
+         tree. #}
+      <span class="compose__status" role="status" aria-live="polite"
+            data-schedule-status="{{ panel }}"></span>
     </p>
     <div class="schedule-form" id="{{ panel }}" data-schedule-panel hidden
          data-schedule-path="{{ card.path }}" data-schedule-prompt="{{ cid }}">
@@ -60,8 +67,6 @@
       </span>
       <button type="button" class="btn" data-schedule-submit="{{ panel }}">Schedule</button>
       <p class="schedule-form__hint">Last 5h across all projects: {{ totals.last_5h | kilo }} tokens</p>
-      <span class="compose__status" role="status" aria-live="polite"
-            data-schedule-status="{{ panel }}"></span>
     </div>
   </section>
 
@@ -140,6 +145,10 @@
               data-copy-status="{{ hid }}"></span>
         <span class="handoff__status" role="status" aria-live="polite"
               data-prompt-status="{{ hid }}"></span>
+        {# A SIBLING of the schedule-form panel below, not a descendant --
+           see the identical note on the compose box's own status span. #}
+        <span class="handoff__status" role="status" aria-live="polite"
+              data-schedule-status="{{ hpanel }}"></span>
       </p>
       {# Schedules the CURRENT contents of the prompt field above, read fresh at
          submit time -- the same reason `launch.js`'s click handler never trusts
@@ -161,8 +170,6 @@
         </span>
         <button type="button" class="btn" data-schedule-submit="{{ hpanel }}">Schedule</button>
         <p class="schedule-form__hint">Last 5h across all projects: {{ totals.last_5h | kilo }} tokens</p>
-        <span class="compose__status" role="status" aria-live="polite"
-              data-schedule-status="{{ hpanel }}"></span>
       </div>
     </section>
   {% endif %}

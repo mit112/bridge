@@ -10,6 +10,7 @@ import time
 from collections.abc import Callable
 from dataclasses import asdict
 from dataclasses import replace as dataclasses_replace
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 from uuid import uuid4
@@ -611,11 +612,34 @@ def create_app(
         # way a `dismissed` handoff never reappears in the queued list. Every
         # other terminal status (`fired`, `failed`, `indeterminate`) stays, so a
         # failed run's retry affordance has somewhere to render.
+        #
+        # `alias_map()` read ONCE, outside the comprehension: it is a full table
+        # scan under the store's lock, and `Store.alias_map`'s own docstring is
+        # "read once per index run" -- the same contract `_live_snapshot` and
+        # `fire` already honour by calling it exactly once each. Calling it
+        # per-row here would turn one query into one per scheduled job.
         scheduled_rows = store.scheduled_runs()
+        alias = store.alias_map()
         scheduled = [
-            dict(row, project_name=display_name(
-                store.alias_map().get(row["project_path"], row["project_path"])
-            ))
+            dict(
+                row,
+                project_name=display_name(
+                    alias.get(row["project_path"], row["project_path"])
+                ),
+                # The server stays epoch-only for LOCAL time -- only the
+                # browser knows the viewer's own timezone -- but a raw epoch
+                # int is meaningless before `schedule.js` runs. UTC is the one
+                # timezone the server can render deterministically, so it is
+                # the pre-JS fallback: a real `datetime` attribute (Task 5's
+                # review found none) and a readable string, both overwritten
+                # by `paintScheduledTimes` once the page loads.
+                scheduled_for_iso=datetime.fromtimestamp(
+                    row["scheduled_for"], tz=timezone.utc
+                ).isoformat(),
+                scheduled_for_utc=datetime.fromtimestamp(
+                    row["scheduled_for"], tz=timezone.utc
+                ).strftime("%Y-%m-%d %H:%M UTC"),
+            )
             for row in scheduled_rows if row["status"] != "cancelled"
         ]
         pending_schedule_count = sum(

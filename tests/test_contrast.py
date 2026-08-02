@@ -45,6 +45,13 @@ PAIRS = [
     # because the domination is a property of the current palette, not of the
     # design -- move `--risk-bg` and this row starts doing real work.
     ("--risk-fg", "--card", 4.5, "armed permission label and select border"),
+    # Task 5: the compose box and schedule form sit directly on --bg (inside
+    # `.card`'s own --bg-toned prompt area), not --card, so their control
+    # border is pinned against the surface it actually renders on.
+    ("--field-line", "--bg", 3.0, "compose/schedule-form control border"),
+    # The Scheduled section's failed-job status renders on the bare page
+    # background, not a card -- --risk-fg/--risk-bg is a different pair.
+    ("--risk-fg", "--bg", 4.5, "failed schedule status"),
 ]
 
 

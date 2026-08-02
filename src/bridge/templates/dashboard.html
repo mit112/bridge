@@ -4,7 +4,10 @@
   <dt>projects</dt><dd>{{ totals.projects }}</dd>
   <dt>running</dt><dd>{{ totals.running }}</dd>
   <dt>queued</dt><dd>{{ totals.queued }}</dd>
-  <dt>scheduled</dt><dd>{{ totals.scheduled }}</dd>
+  {# `data-topbar-scheduled` is the one hook `schedule.js` has to keep this
+     number honest after a create/cancel/run-now in the same session -- the
+     server only ever renders it once, on load. #}
+  <dt>scheduled</dt><dd data-topbar-scheduled>{{ totals.scheduled }}</dd>
   <dt>tokens today</dt><dd>{{ totals.today | kilo }}</dd>
   <dt>last 5h</dt><dd>{{ totals.last_5h | kilo }}</dd>
   {# A rate over the measured window, never a share of a cap: the plan
@@ -57,10 +60,22 @@
    to surface. #}
 <details class="scheduled" data-scheduled {% if scheduled %}open{% endif %} {% if not scheduled %}hidden{% endif %}>
   <summary>Scheduled <span data-scheduled-count>{{ totals.scheduled }}</span></summary>
+  {# A row survives Cancel removing its own `<li>` -- and the `<summary>`
+     itself is the focus target `schedule.js` moves to first -- so a
+     "Cancelled" announcement has somewhere to land that is not the node
+     that just disappeared. #}
+  <p class="scheduled__section-status" role="status" aria-live="polite"
+     data-scheduled-section-status></p>
   <ul data-scheduled-list>
     {% for job in scheduled %}
       <li data-scheduled-job="{{ job.id }}" class="scheduled__job scheduled__job--{{ job.status }}">
-        <time class="scheduled__when" data-scheduled-for="{{ job.scheduled_for }}">{{ job.scheduled_for }}</time>
+        {# `datetime` and the visible text are both UTC, computed once in the
+           handler: the server never knows the viewer's timezone, but a raw
+           epoch int read before `schedule.js` runs is not a time to anyone.
+           `paintScheduledTimes` overwrites the text with local time on load;
+           this is what a screen reader or a JS-disabled load sees instead. #}
+        <time class="scheduled__when" datetime="{{ job.scheduled_for_iso }}"
+              data-scheduled-for="{{ job.scheduled_for }}">{{ job.scheduled_for_utc }}</time>
         <span class="scheduled__project">{{ job.project_name }}</span>
         <span class="scheduled__status">{{ job.status }}</span>
         <span class="card__note">{{ job.mode }}</span>

@@ -326,6 +326,10 @@ main { padding: 1.5rem; }
    project someone chose to tuck away. */
 .scheduled { margin: 1.5rem 0 0; font-size: .85rem; }
 .scheduled summary { cursor: pointer; color: var(--muted); }
+/* Outlives every row: Cancel removes its own `<li>` in the same tick it
+   announces, so the confirmation -- and the focus that lands on `summary`
+   above -- both have to live here instead. */
+.scheduled__section-status { margin: .4rem 0 0; font-size: .8rem; color: var(--fg); }
 .scheduled ul { list-style: none; margin: .6rem 0 0; padding: 0; }
 .scheduled li {
   display: flex;

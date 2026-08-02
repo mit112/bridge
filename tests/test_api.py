@@ -2036,7 +2036,7 @@ def test_dashboard_shows_the_scheduled_section_and_topbar_count_when_a_job_exist
 
     body = c.get("/").text
 
-    assert re.search(r"<dt>scheduled</dt><dd>1</dd>", body)
+    assert re.search(r"<dt>scheduled</dt><dd data-topbar-scheduled>1</dd>", body)
     assert 'data-scheduled-job="sched-1"' in body
     assert "demo" in body  # the job's project is named, not just its id
     assert "background" in body
@@ -2058,7 +2058,7 @@ def test_the_scheduled_section_is_present_but_collapsed_when_empty(client):
     assert re.search(r"<details[^>]*data-scheduled[^>]*\shidden[\s>]", body), (
         "the empty schedule list must be present but not visible"
     )
-    assert re.search(r"<dt>scheduled</dt><dd>0</dd>", body)
+    assert re.search(r"<dt>scheduled</dt><dd data-topbar-scheduled>0</dd>", body)
 
 
 def test_the_scheduled_section_offers_edit_cancel_and_run_now_on_a_pending_job(client):
@@ -2101,7 +2101,7 @@ def test_a_cancelled_schedule_does_not_linger_in_the_scheduled_section(client):
     body = c.get("/").text
 
     assert 'data-scheduled-job="sched-4"' not in body
-    assert re.search(r"<dt>scheduled</dt><dd>0</dd>", body)
+    assert re.search(r"<dt>scheduled</dt><dd data-topbar-scheduled>0</dd>", body)
 
 
 def test_every_card_has_a_compose_box_that_posts_to_launch_and_schedule(client):
