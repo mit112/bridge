@@ -228,3 +228,16 @@ def test_a_non_numeric_stale_hours_is_refused(tmp_path, monkeypatch):
 def test_an_override_still_beats_a_configured_stale_hours(tmp_path, monkeypatch):
     write_config(tmp_path, monkeypatch, "[stale]\nhours = 3\n")
     assert load({"stale_hours": 99}).stale_hours == 99
+
+
+# --- Phase 7 Task 2: session-meta enrichment ---------------------------------
+
+
+def test_session_meta_dir_defaults_under_claude_usage_data():
+    cfg = load()
+    assert cfg.session_meta_dir == Path.home() / ".claude" / "usage-data" / "session-meta"
+
+
+def test_session_meta_dir_is_overridable(tmp_path):
+    cfg = load({"session_meta_dir": tmp_path / "meta"})
+    assert cfg.session_meta_dir == tmp_path / "meta"

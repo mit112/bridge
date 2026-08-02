@@ -422,6 +422,7 @@ def render_detail_page(store, project_id):
         project=store.get_project(project_id),
         git=git,
         sessions=store.sessions(project_id),
+        session_metas={},
         handoffs=store.handoffs(project_id),
         launches=store.launches(project_id),
     )

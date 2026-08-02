@@ -172,6 +172,7 @@ DEFAULT_PERMISSION_MODES = [
 @dataclass(frozen=True)
 class Config:
     claude_projects_dir: Path
+    session_meta_dir: Path
     db_path: Path
     spool_dir: Path
     # Where a launch's prompt file is written, mode 0700. The prompt is taken off
@@ -195,6 +196,7 @@ def load(overrides: dict | None = None) -> Config:
     home = Path.home()
     cfg = Config(
         claude_projects_dir=home / ".claude" / "projects",
+        session_meta_dir=home / ".claude" / "usage-data" / "session-meta",
         db_path=home / ".bridge" / "bridge.db",
         spool_dir=home / ".bridge" / "spool",
         launches_dir=home / ".bridge" / "launches",

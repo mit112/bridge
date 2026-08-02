@@ -69,7 +69,7 @@
 <table class="sessions">
   <caption>Indexed sessions, most recent first</caption>
   <thead>
-    <tr><th scope="col">Session</th><th scope="col">Ended</th><th scope="col">Model</th><th scope="col">Turns</th><th scope="col">Tokens</th></tr>
+    <tr><th scope="col">Session</th><th scope="col">Ended</th><th scope="col">Model</th><th scope="col">Turns</th><th scope="col">Tokens</th><th scope="col">Changes</th></tr>
   </thead>
   <tbody>
     {% for s in sessions %}
@@ -83,6 +83,24 @@
       <td>
         {{ (s["tokens_in"] + s["tokens_out"]) | kilo }}
         <span class="sessions__tokens-detail">{{ s["tokens_in"] | kilo }} in / {{ s["tokens_out"] | kilo }} out{% if s["tokens_cache_create"] or s["tokens_cache_read"] %} · cache {{ s["tokens_cache_create"] | kilo }}w/{{ s["tokens_cache_read"] | kilo }}r{% endif %}{% if s["sidechain_tokens"] %} · {{ s["sidechain_tokens"] | kilo }} sidechain{% endif %}</span>
+      </td>
+      {% set m = session_metas.get(s["id"]) %}
+      <td class="sessions__changes">
+        {% if m %}
+          {% if m.files_modified or m.lines_added or m.lines_removed %}
+          <span class="sessions__diffstat">{% if m.files_modified %}{{ m.files_modified }} files{% endif %}{% if m.lines_added or m.lines_removed %} <span class="sessions__add">+{{ m.lines_added }}</span>/<span class="sessions__del">-{{ m.lines_removed }}</span>{% endif %}</span>
+          {% endif %}
+          {% set ns = namespace(facts=[]) %}
+          {% if m.git_commits %}{% set ns.facts = ns.facts + [(m.git_commits | string) + (' commit' if m.git_commits == 1 else ' commits')] %}{% endif %}
+          {% if m.git_pushes %}{% set ns.facts = ns.facts + [(m.git_pushes | string) + (' push' if m.git_pushes == 1 else ' pushes')] %}{% endif %}
+          {% if m.duration_minutes %}{% set ns.facts = ns.facts + [(m.duration_minutes | string) + 'm'] %}{% endif %}
+          {% if m.tool_errors %}{% set ns.facts = ns.facts + [(m.tool_errors | string) + (' tool error' if m.tool_errors == 1 else ' tool errors')] %}{% endif %}
+          {% if m.user_interruptions %}{% set ns.facts = ns.facts + [(m.user_interruptions | string) + (' interruption' if m.user_interruptions == 1 else ' interruptions')] %}{% endif %}
+          {% if ns.facts %}<span class="sessions__meta-detail">{{ ns.facts | join(' · ') }}</span>{% endif %}
+          {% if m.uses_task_agent or m.uses_mcp or m.uses_web %}
+          <span class="sessions__flags">{% if m.uses_task_agent %}<span class="badge">agent</span>{% endif %}{% if m.uses_mcp %}<span class="badge">mcp</span>{% endif %}{% if m.uses_web %}<span class="badge">web</span>{% endif %}</span>
+          {% endif %}
+        {% endif %}
       </td>
     </tr>
     {% endfor %}

@@ -22,7 +22,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, field_validator, model_validator
 
-from bridge import agents, hooks, launcher, spool
+from bridge import agents, hooks, launcher, sessionmeta, spool
 from bridge.cards import FIVE_HOURS, LivenessDebouncer, build_cards, spark_points
 from bridge.config import Config
 from bridge.indexer import reindex
@@ -751,13 +751,18 @@ def create_app(
         if cached_git is not None:
             git, probed_at = cached_git
             git = dataclasses_replace(git, cached_at=probed_at)
+        sessions = store.sessions(project_id)
+        session_metas = sessionmeta.read_many(
+            [s["id"] for s in sessions], cfg.session_meta_dir
+        )
         return templates.TemplateResponse(
             request,
             "project.html",
             {
                 "project": row,
                 "git": git,
-                "sessions": store.sessions(project_id),
+                "sessions": sessions,
+                "session_metas": session_metas,
                 "handoffs": store.handoffs(project_id),
                 # Task 7 added the launch-history table to the template but
                 # nothing ever passed it, so the block was inert in the live app.

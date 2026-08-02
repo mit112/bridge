@@ -219,6 +219,18 @@ main { padding: 1.5rem; }
 .detail-git__commit { color: var(--fg); }
 .sessions__tokens-detail { display: block; color: var(--muted); font-size: .78rem; }
 
+/* Session-meta enrichment (Phase 7): color is decorative only -- the `+`/`-`
+   prefixes and the badge text carry the meaning, so nothing here relies on
+   color alone (WCAG 2.2). */
+.sessions__meta-detail { display: block; font-size: .8rem; color: var(--muted); }
+.sessions__add { color: #1a7f37; }
+.sessions__del { color: #b3261e; }
+.sessions__flags { display: inline-flex; gap: .25rem; margin-top: .2rem; }
+.badge {
+  font-size: .68rem; padding: .05rem .35rem; border-radius: .5rem;
+  border: 1px solid var(--muted); color: var(--muted); white-space: nowrap;
+}
+
 /* --- Live sessions with no project ------------------------------------------ */
 
 .unattributed { margin: 1.5rem 0 0; font-size: .85rem; }

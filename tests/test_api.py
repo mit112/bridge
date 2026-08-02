@@ -2473,3 +2473,114 @@ def test_a_queued_handoff_offers_its_own_schedule_affordance(client):
 
     assert 'data-schedule-toggle="schedule-handoff-h-sched"' in body
     assert 'data-schedule-handoff="h-sched"' in body
+
+
+# --- Phase 7 Task 2: session-meta enrichment on the detail page --------------
+
+
+def _write_meta(cfg, session_id, **fields):
+    d = cfg.session_meta_dir
+    d.mkdir(parents=True, exist_ok=True)
+    import json as _json
+    body = {"session_id": session_id}
+    body.update(fields)
+    (d / f"{session_id}.json").write_text(_json.dumps(body), encoding="utf-8")
+
+
+def test_detail_page_shows_session_meta_activity_when_present(tmp_path):
+    cfg = load({"db_path": tmp_path / "a.db", "spool_dir": tmp_path / "spool",
+                "session_meta_dir": tmp_path / "meta"})
+    store = Store(cfg.db_path)
+    pid = store.upsert_project("/Users/mitsheth/dev/demo", "demo")
+    store.upsert_session(
+        SessionRecord(session_id="s1", transcript_path="/t/s1.jsonl",
+                      project_path="/Users/mitsheth/dev/demo", title="Worked",
+                      ended_at="2026-07-30T10:00:00.000Z", tokens_in=5, tokens_out=5),
+        pid)
+    _write_meta(cfg, "s1", files_modified=3, lines_added=120, lines_removed=40,
+                git_commits=2, git_pushes=1, duration_minutes=45,
+                uses_task_agent=True, uses_mcp=True, uses_web_search=True)
+
+    html = TestClient(create_app(store, cfg)).get(f"/project/{pid}").text
+
+    assert "3 files" in html
+    assert "+120" in html and "40" in html
+    assert "2 commits" in html and "1 push" in html
+    assert "45m" in html
+    assert "agent" in html and "mcp" in html and "web" in html
+    store.close()
+
+
+def test_detail_page_omits_token_fields_from_meta(tmp_path):
+    # Constraint 1: a meta file's token numbers must never reach the page.
+    cfg = load({"db_path": tmp_path / "a.db", "spool_dir": tmp_path / "spool",
+                "session_meta_dir": tmp_path / "meta"})
+    store = Store(cfg.db_path)
+    pid = store.upsert_project("/Users/mitsheth/dev/demo", "demo")
+    store.upsert_session(
+        SessionRecord(session_id="s1", transcript_path="/t/s1.jsonl",
+                      project_path="/Users/mitsheth/dev/demo", title="Worked",
+                      ended_at="2026-07-30T10:00:00.000Z", tokens_in=5, tokens_out=5),
+        pid)
+    _write_meta(cfg, "s1", input_tokens=99999, output_tokens=88888, files_modified=1)
+
+    html = TestClient(create_app(store, cfg)).get(f"/project/{pid}").text
+
+    assert "99999" not in html and "88888" not in html
+    store.close()
+
+
+def test_detail_page_is_unchanged_when_meta_dir_is_empty(tmp_path):
+    cfg = load({"db_path": tmp_path / "a.db", "spool_dir": tmp_path / "spool",
+                "session_meta_dir": tmp_path / "meta"})  # never created
+    store = Store(cfg.db_path)
+    pid = store.upsert_project("/Users/mitsheth/dev/demo", "demo")
+    store.upsert_session(
+        SessionRecord(session_id="s1", transcript_path="/t/s1.jsonl",
+                      project_path="/Users/mitsheth/dev/demo", title="Worked",
+                      ended_at="2026-07-30T10:00:00.000Z", tokens_in=5, tokens_out=5),
+        pid)
+
+    r = TestClient(create_app(store, cfg)).get(f"/project/{pid}")
+
+    assert r.status_code == 200
+    assert "Worked" in r.text
+    store.close()
+
+
+def test_detail_page_survives_malformed_meta(tmp_path):
+    cfg = load({"db_path": tmp_path / "a.db", "spool_dir": tmp_path / "spool",
+                "session_meta_dir": tmp_path / "meta"})
+    store = Store(cfg.db_path)
+    pid = store.upsert_project("/Users/mitsheth/dev/demo", "demo")
+    store.upsert_session(
+        SessionRecord(session_id="s1", transcript_path="/t/s1.jsonl",
+                      project_path="/Users/mitsheth/dev/demo", title="Worked",
+                      ended_at="2026-07-30T10:00:00.000Z", tokens_in=5, tokens_out=5),
+        pid)
+    (tmp_path / "meta").mkdir(parents=True)
+    (tmp_path / "meta" / "s1.json").write_text("{broken", encoding="utf-8")
+
+    r = TestClient(create_app(store, cfg)).get(f"/project/{pid}")
+
+    assert r.status_code == 200
+    store.close()
+
+
+def test_detail_page_hides_zero_activity_meta(tmp_path):
+    # A meta file that records a pure Q&A session renders no activity.
+    cfg = load({"db_path": tmp_path / "a.db", "spool_dir": tmp_path / "spool",
+                "session_meta_dir": tmp_path / "meta"})
+    store = Store(cfg.db_path)
+    pid = store.upsert_project("/Users/mitsheth/dev/demo", "demo")
+    store.upsert_session(
+        SessionRecord(session_id="s1", transcript_path="/t/s1.jsonl",
+                      project_path="/Users/mitsheth/dev/demo", title="Worked",
+                      ended_at="2026-07-30T10:00:00.000Z", tokens_in=5, tokens_out=5),
+        pid)
+    _write_meta(cfg, "s1")  # session_id only, all facts zero
+
+    html = TestClient(create_app(store, cfg)).get(f"/project/{pid}").text
+
+    assert "files" not in html.split("<table")[-1] or "0 files" not in html
+    store.close()
