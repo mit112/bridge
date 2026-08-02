@@ -78,6 +78,33 @@ def test_tick_survives_one_raising_job_and_still_fires_the_next(store, cfg):
     assert store.get_scheduled_run("b")["status"] == "fired"
 
 
+def test_tick_records_indeterminate_on_an_unexpected_exception_and_still_fires_next(
+    store, cfg
+):
+    """A non-`LaunchError` exception -- a bug, or a `sqlite3.IntegrityError`
+    from a handoff deleted between schedule and fire -- must not strand the
+    claimed job or crash the loop for whatever else is due right now."""
+    _job(store, "a", scheduled_for=1000)
+    _job(store, "b", scheduled_for=1001)
+    calls = {"n": 0}
+
+    def fake(store, cfg, spec, handoff_id=None, **kw):
+        from bridge.launcher import LaunchResult
+
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("boom")
+        return LaunchResult("L2", "started")
+
+    from bridge import scheduler
+
+    assert scheduler.tick(store, cfg, fake, now=1500) == 2
+    a = store.get_scheduled_run("a")
+    assert a["status"] == "indeterminate"
+    assert "boom" in a["error"]
+    assert store.get_scheduled_run("b")["status"] == "fired"
+
+
 def test_tick_never_fires_future_or_cancelled(store, cfg):
     _job(store, "a", scheduled_for=5000)
     store.cancel_pending(_job(store, "b", scheduled_for=1000))

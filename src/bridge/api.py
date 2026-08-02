@@ -6,6 +6,7 @@ are both thin clients of `POST /api/launch`, and neither imports `launcher`.
 """
 
 import json
+import logging
 import time
 from collections.abc import Callable
 from dataclasses import asdict
@@ -30,6 +31,8 @@ from bridge.registry import display_name, resolve_project
 from bridge.store import Store, now_epoch
 
 HERE = Path(__file__).parent
+
+log = logging.getLogger(__name__)
 
 HandoffStatus = Literal["queued", "consumed", "dismissed", "superseded"]
 
@@ -193,6 +196,18 @@ class ScheduleIn(BaseModel):
     def _valid_prompt(cls, value: str) -> str:
         return _validate_prompt_field(value)
 
+    @field_validator("scheduled_for")
+    @classmethod
+    def _sane_epoch(cls, value: int) -> int:
+        # Rejects anything outside year-0-to-3000: a value this far outside
+        # any real schedule is almost certainly a unit mistake (ms instead of
+        # seconds) rather than an intentional far-future run, and letting it
+        # through would only surface later as a `datetime.fromtimestamp`
+        # crash in the dashboard render.
+        if value < 0 or value > 32_503_680_000:
+            raise ValueError("scheduled_for must be a sane epoch-seconds value")
+        return value
+
 
 class SchedulePatch(BaseModel):
     """Edits a still-`pending` scheduled run. Every field is optional -- a
@@ -228,6 +243,20 @@ class SchedulePatch(BaseModel):
     def _at_least_one_field(self):
         if not self.model_fields_set:
             raise ValueError("supply at least one field")
+        return self
+
+    @model_validator(mode="after")
+    def _no_explicit_null_on_required_fields(self):
+        # `exclude_unset=True` at the route is what makes an OMITTED field a
+        # no-op -- but it cannot tell an omitted field from an EXPLICIT
+        # `null` for the same reason: both are simply absent from
+        # `model_fields_set` until pydantic sees the key at all, and an
+        # explicit `null` *does* set it, with a `None` value. `prompt`,
+        # `mode`, and `scheduled_for` back NOT NULL columns, so a `None` that
+        # reaches `store.edit_pending` for one of them is a 500, not a no-op.
+        for name in ("prompt", "mode", "scheduled_for"):
+            if name in self.model_fields_set and getattr(self, name) is None:
+                raise ValueError(f"{name} cannot be null")
         return self
 
 
@@ -324,6 +353,18 @@ def _fire_claimed_job(store: Store, cfg: Config, row, launch_fn: LaunchFn):
         )
     except launcher.LaunchError as exc:
         store.finish_scheduled_run(id, status="failed", error=str(exc))
+    except Exception as exc:  # noqa: BLE001 - see docstring below
+        # Anything that is not a `LaunchError` -- a bare `sqlite3.IntegrityError`
+        # from `create_launch` if the handoff was deleted between schedule and
+        # fire, or any other bug -- must not 500 `run-now` or leave the row
+        # stuck `launching` until the next boot's reconcile. `indeterminate` is
+        # the honest answer: the claim already happened, so we genuinely do not
+        # know whether a session spawned, and unlike `failed` it is never
+        # re-claimed, preserving the no-auto-retry guarantee.
+        log.exception(
+            "scheduled run %r raised an unexpected exception while firing", id
+        )
+        store.finish_scheduled_run(id, status="indeterminate", error=str(exc))
     else:
         if result.outcome == "started":
             store.finish_scheduled_run(
@@ -620,28 +661,28 @@ def create_app(
         # per-row here would turn one query into one per scheduled job.
         scheduled_rows = store.scheduled_runs()
         alias = store.alias_map()
-        scheduled = [
-            dict(
+        scheduled = []
+        for row in scheduled_rows:
+            if row["status"] == "cancelled":
+                continue
+            # The server stays epoch-only for LOCAL time -- only the browser
+            # knows the viewer's own timezone -- but a raw epoch int is
+            # meaningless before `schedule.js` runs. UTC is the one timezone
+            # the server can render deterministically, so it is the pre-JS
+            # fallback: a real `datetime` attribute (Task 5's review found
+            # none) and a readable string, both overwritten by
+            # `paintScheduledTimes` once the page loads.
+            scheduled_for_iso, scheduled_for_utc = _schedule_time_fields(
+                row["scheduled_for"]
+            )
+            scheduled.append(dict(
                 row,
                 project_name=display_name(
                     alias.get(row["project_path"], row["project_path"])
                 ),
-                # The server stays epoch-only for LOCAL time -- only the
-                # browser knows the viewer's own timezone -- but a raw epoch
-                # int is meaningless before `schedule.js` runs. UTC is the one
-                # timezone the server can render deterministically, so it is
-                # the pre-JS fallback: a real `datetime` attribute (Task 5's
-                # review found none) and a readable string, both overwritten
-                # by `paintScheduledTimes` once the page loads.
-                scheduled_for_iso=datetime.fromtimestamp(
-                    row["scheduled_for"], tz=timezone.utc
-                ).isoformat(),
-                scheduled_for_utc=datetime.fromtimestamp(
-                    row["scheduled_for"], tz=timezone.utc
-                ).strftime("%Y-%m-%d %H:%M UTC"),
-            )
-            for row in scheduled_rows if row["status"] != "cancelled"
-        ]
+                scheduled_for_iso=scheduled_for_iso,
+                scheduled_for_utc=scheduled_for_utc,
+            ))
         pending_schedule_count = sum(
             1 for row in scheduled_rows if row["status"] in ("pending", "launching")
         )
@@ -900,6 +941,12 @@ def create_app(
 
     @app.post("/api/schedule", status_code=201)
     def post_schedule(body: ScheduleIn):
+        # Mirrors `post_launch`'s check for `body.handoff_id`: without it a
+        # made-up id only fails at fire time, deep inside `_fire_claimed_job`,
+        # as a foreign-key error instead of a 404 at the edge.
+        if body.source_handoff_id is not None:
+            if store.get_handoff(body.source_handoff_id) is None:
+                raise HTTPException(status_code=404, detail="unknown handoff")
         project_path = store.alias_map().get(body.project_path, body.project_path)
         permission_mode = body.permission_mode
         job = ScheduledRun(
@@ -955,6 +1002,21 @@ def create_app(
         return dict(_fire_claimed_job(store, cfg, row, launch_fn))
 
     return app
+
+
+def _schedule_time_fields(epoch: int) -> tuple[str | None, str]:
+    """The dashboard's UTC fallback for `job.scheduled_for`, guarded against a
+    row that predates `ScheduleIn`'s epoch-seconds bound. `ScheduleIn` refuses
+    an out-of-range value at creation, but a row seeded before that check
+    existed (or straight through the store, bypassing the API) can still
+    carry one, and `datetime.fromtimestamp` raises rather than clamping --
+    which must degrade this one row's display, not 500 the whole page.
+    """
+    try:
+        dt = datetime.fromtimestamp(epoch, tz=timezone.utc)
+    except (OverflowError, OSError, ValueError):
+        return None, str(epoch)
+    return dt.isoformat(), dt.strftime("%Y-%m-%d %H:%M UTC")
 
 
 def _ago(iso: str | None) -> str:

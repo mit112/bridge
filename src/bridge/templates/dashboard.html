@@ -80,7 +80,12 @@
         <span class="scheduled__status">{{ job.status }}</span>
         <span class="card__note">{{ job.mode }}</span>
         {% if job.status in ("pending", "launching") %}
-          <button type="button" class="btn" data-scheduled-run-now="{{ job.id }}">Run now</button>
+          {# `run-now` claims a `pending` row; a `launching` one is already
+             claimed, so clicking it there only 409s. Edit and Cancel are
+             left as they were -- gating those too is a separate fix. #}
+          {% if job.status == "pending" %}
+            <button type="button" class="btn" data-scheduled-run-now="{{ job.id }}">Run now</button>
+          {% endif %}
           <button type="button" class="btn" data-scheduled-edit-toggle="{{ job.id }}"
                   aria-expanded="false" aria-controls="scheduled-edit-{{ job.id }}">Edit</button>
           <button type="button" class="btn" data-scheduled-cancel="{{ job.id }}">Cancel</button>

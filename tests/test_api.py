@@ -1946,12 +1946,113 @@ def test_run_now_claims_and_fires_via_fire(launch_app):
     assert c.post(f"/api/schedule/{jid}/run-now").status_code == 409   # not pending anymore
 
 
+def test_run_now_records_indeterminate_on_an_unexpected_exception(launch_app):
+    """A non-`LaunchError` exception out of `fire()` -- a bug, or a
+    `sqlite3.IntegrityError` from a handoff deleted between schedule and fire
+    -- must not 500 `run-now` or leave the row stuck `launching`.
+    `indeterminate` is terminal: the claim already happened, so the row
+    really might have spawned, but it must never be auto-retried."""
+    c, store, _, fake = launch_app
+    jid = c.post("/api/schedule", json={"project_path": DEMO, "prompt": "go",
+        "scheduled_for": 9_000_000_000, "mode": "background"}).json()["id"]
+    fake.result = RuntimeError("boom")
+
+    r = c.post(f"/api/schedule/{jid}/run-now")
+
+    assert r.status_code == 200
+    row = store.get_scheduled_run(jid)
+    assert row["status"] == "indeterminate"
+    assert "boom" in row["error"]
+
+
 def test_schedule_rejects_bad_mode_and_prompt(client):
     c, _, _ = client
     assert c.post("/api/schedule", json={"project_path": DEMO, "prompt": "x",
         "scheduled_for": 1000, "mode": "nope"}).status_code == 422
     assert c.post("/api/schedule", json={"project_path": DEMO, "prompt": "a\x00b",
         "scheduled_for": 1000, "mode": "background"}).status_code == 422
+
+
+def test_schedule_create_rejects_an_unknown_source_handoff(client):
+    """Mirrors `post_launch`'s check for `handoff_id`: a made-up id must 404
+    at creation, before a row exists, rather than only failing at fire time."""
+    c, store, _ = client
+    r = c.post("/api/schedule", json={"project_path": DEMO, "prompt": "go",
+        "scheduled_for": 1000, "mode": "background",
+        "source_handoff_id": "no-such-handoff"})
+    assert r.status_code == 404
+    assert store.scheduled_runs() == []
+
+
+def test_schedule_create_rejects_an_out_of_range_scheduled_for(client):
+    c, store, _ = client
+    r = c.post("/api/schedule", json={"project_path": DEMO, "prompt": "go",
+        "scheduled_for": 10**20, "mode": "background"})
+    assert r.status_code == 422
+    assert store.scheduled_runs() == []
+
+
+def test_patch_schedule_rejects_an_explicit_null_on_a_required_field(client):
+    """`{"prompt": null}` is INCLUDED by `model_dump(exclude_unset=True)`
+    because the key was present, unlike an omitted field. Writing that `None`
+    into a NOT NULL column would 500; it must 422 instead, leaving the row
+    untouched."""
+    c, store, _ = client
+    jid = c.post("/api/schedule", json={"project_path": DEMO, "prompt": "x",
+        "scheduled_for": 1000, "mode": "background"}).json()["id"]
+
+    r = c.patch(f"/api/schedule/{jid}", json={"prompt": None})
+
+    assert r.status_code == 422
+    assert store.get_scheduled_run(jid)["prompt"] == "x"
+
+
+def test_patch_schedule_still_allows_an_omitted_field(client):
+    c, store, _ = client
+    jid = c.post("/api/schedule", json={"project_path": DEMO, "prompt": "x",
+        "scheduled_for": 1000, "mode": "background"}).json()["id"]
+
+    r = c.patch(f"/api/schedule/{jid}", json={"model": "opus"})
+
+    assert r.status_code == 200
+    assert r.json()["prompt"] == "x"
+    assert r.json()["model"] == "opus"
+
+
+def test_dashboard_renders_despite_a_row_with_an_extreme_scheduled_for(client):
+    """`ScheduleIn` refuses this at creation, but a row seeded before that
+    check existed -- or straight through the store -- must still degrade
+    gracefully rather than 500 the whole dashboard."""
+    c, store, _ = client
+    # SQLite's INTEGER column tops out around 9.2e18, so this must be an
+    # epoch that fits the column yet still overflows `datetime.fromtimestamp`
+    # (year 33658) -- the case a row seeded before `ScheduleIn`'s bound
+    # existed could actually carry.
+    store.create_scheduled_run(ScheduledRun(
+        id="sched-extreme", project_path=DEMO, prompt="x",
+        mode="background", scheduled_for=999_999_999_999, created_at=1000,
+    ))
+
+    r = c.get("/")
+
+    assert r.status_code == 200
+    assert 'data-scheduled-job="sched-extreme"' in r.text
+
+
+def test_a_launching_scheduled_row_does_not_offer_run_now(client):
+    """`run-now` claims a `pending` row; a `launching` one is already claimed,
+    so the control there only ever produces a 409."""
+    c, store, _ = client
+    store.create_scheduled_run(ScheduledRun(
+        id="sched-launching", project_path=DEMO, prompt="x",
+        mode="terminal", scheduled_for=9_000_000_000, created_at=1000,
+    ))
+    store.claim_specific("sched-launching")
+
+    body = c.get("/").text
+
+    assert 'data-scheduled-job="sched-launching"' in body
+    assert 'data-scheduled-run-now="sched-launching"' not in body
 
 
 def test_run_now_on_unknown_id_is_404(client):
