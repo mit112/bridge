@@ -1,0 +1,62 @@
+[
+  {
+    "name": "the empty-table guard goes, replaying the journal into a table that already has rows",
+    "file": "src/bridge/schedspool.py",
+    "old": "    if store.count_scheduled_runs() > 0:",
+    "new": "    if False:",
+    "tests": [
+      "tests/test_schedspool.py::test_replay_is_skipped_when_the_table_is_not_empty"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "the pruned skip goes, so a deleted job comes back on replay",
+    "file": "src/bridge/schedspool.py",
+    "old": "        if job.id in pruned:",
+    "new": "        if False:",
+    "tests": [
+      "tests/test_schedspool.py::test_a_pruned_job_does_not_come_back_and_a_past_due_one_is_missed"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "the missed boundary goes, so every past-due job replays as pending and fires",
+    "file": "src/bridge/schedspool.py",
+    "old": "        elif job.scheduled_for > when:",
+    "new": "        elif True:",
+    "tests": [
+      "tests/test_schedspool.py::test_a_pruned_job_does_not_come_back_and_a_past_due_one_is_missed"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "the creation journal is dropped, so a database failure right after loses the schedule entirely",
+    "file": "src/bridge/api.py",
+    "old": "            schedspool.journal(job, cfg.spool_dir)",
+    "new": "            pass",
+    "tests": [
+      "tests/test_api.py::test_creating_a_schedule_journals_it"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "a claim replays as its raw status, restoring a launching job that only a later serve would reconcile",
+    "file": "src/bridge/schedspool.py",
+    "old": "                \"indeterminate\" if ended.status == \"launching\" else ended.status",
+    "new": "                ended.status",
+    "tests": [
+      "tests/test_schedspool.py::test_a_future_job_claimed_by_run_now_replays_as_indeterminate"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "prune journals after deleting, so a failed journal no longer keeps the row",
+    "file": "src/bridge/__main__.py",
+    "old": "        try:\n            schedspool.journal_status(run_id, \"pruned\", now_epoch(), cfg.spool_dir)\n        except OSError:\n            log.exception(\"failed to journal prune of %r; leaving it\", run_id)\n            continue\n        reapable.append(run_id)",
+    "new": "        reapable.append(run_id)\n        try:\n            schedspool.journal_status(run_id, \"pruned\", now_epoch(), cfg.spool_dir)\n        except OSError:\n            log.exception(\"failed to journal prune of %r; leaving it\", run_id)\n            continue",
+    "tests": [
+      "tests/test_main.py::test_a_run_whose_prune_cannot_be_journalled_is_not_deleted"
+    ],
+    "expect_count": 1
+  }
+]
