@@ -12,23 +12,39 @@ from tests.conftest import jline, launch_by_session
 SID = "22222222-2222-2222-2222-222222222222"
 
 
+_ILLUSTRATIVE_ROOTS = (
+    Path("/Users/mitsheth/dev"),
+    Path("/Users/mitsheth/Documents"),
+)
+
+
 @pytest.fixture(autouse=True)
-def legacy_fixture_cwds_are_not_this_tasks_concern(monkeypatch, tmp_path):
+def legacy_fixture_cwds_are_not_this_tasks_concern(monkeypatch):
     """Task 1 adds an auto-archive pass that calls `Path.exists()` on every
     project row. Nearly every fixture in this module attributes sessions to
-    illustrative absolute paths like `/Users/mitsheth/dev/demo` that were never
-    meant to be real directories, and rewriting every such literal in this file
-    to live under `tmp_path` is out of proportion to this task. Real filesystem
-    checks below `tmp_path` -- where this task's own vanished/still-here tests
-    live -- pass through untouched; every other path is reported present, which
-    is exactly this module's pre-Task-1 behavior.
+    illustrative absolute paths under `/Users/mitsheth/dev/` and
+    `/Users/mitsheth/Documents/` (e.g. `/Users/mitsheth/dev/demo`) that were
+    never meant to be real directories, and rewriting every such literal in
+    this file to live under `tmp_path` is out of proportion to this task.
+
+    The fake reports ONLY those two illustrative roots (and paths under them)
+    as present -- restoring this module's pre-Task-1 behavior for them -- and
+    calls the real `Path.exists` for everything else. That includes every
+    `tmp_path`-based path (this task's own vanished/still-here tests), and
+    critically the real `~/.bridge/config.toml` probe that
+    `test_against_the_real_corpus_...` deliberately exercises: faking that
+    probe to always say "present" would make the test's `delenv` of
+    `BRIDGE_CONFIG` silently stop testing what it claims to, on whatever
+    machine happens to lack that file.
     """
     real_exists = Path.exists
 
     def fake_exists(self):
-        if self == tmp_path or tmp_path in self.parents:
-            return real_exists(self)
-        return True
+        if self in _ILLUSTRATIVE_ROOTS or any(
+            root in self.parents for root in _ILLUSTRATIVE_ROOTS
+        ):
+            return True
+        return real_exists(self)
 
     monkeypatch.setattr(Path, "exists", fake_exists)
 
