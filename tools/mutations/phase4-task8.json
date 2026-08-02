@@ -169,5 +169,25 @@
       "tests/test_static_js.py::test_live_js_clears_a_band_on_a_tombstone"
     ],
     "expect_count": 1
+  },
+  {
+    "name": "leave the live band's visual state stale when its status word changes",
+    "file": "src/bridge/static/live.js",
+    "old": "    if (band) setBandState(band, state.status);",
+    "new": "    if (false) setBandState(band, state.status);",
+    "tests": [
+      "tests/test_static_js.py::test_live_js_patches_a_band_from_a_snapshot"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "leave a removed session styled as active after showing that it ended",
+    "file": "src/bridge/static/live.js",
+    "old": "    if (band) setBandState(band, \"ended\");",
+    "new": "    if (false) setBandState(band, \"ended\");",
+    "tests": [
+      "tests/test_static_js.py::test_live_js_clears_a_band_on_a_tombstone"
+    ],
+    "expect_count": 1
   }
 ]

@@ -61,6 +61,25 @@ main { padding: 1.5rem; }
 .card__session { margin-bottom: .9rem; }
 .card__session h3 { font-size: .95rem; font-weight: 600; margin: 0 0 .2rem; }
 .card__session time { color: var(--muted); font-size: .8rem; }
+.live {
+  display: flex;
+  align-items: baseline;
+  gap: .4rem;
+  margin: 0 0 .7rem;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: .78rem;
+  font-variant-numeric: tabular-nums;
+}
+.live__dot { color: var(--muted); font-size: .7em; }
+.live--busy,
+.live--working { color: var(--fg); font-weight: 600; }
+.live--busy .live__dot,
+.live--working .live__dot { color: var(--accent); }
+.live--idle,
+.live--waiting,
+.live--unknown,
+.live--ended { color: var(--muted); }
 .card__git, .card__burn {
   margin: .35rem 0 0; font-size: .85rem; color: var(--muted);
   display: flex; gap: .75rem; flex-wrap: wrap;

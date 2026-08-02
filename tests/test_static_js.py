@@ -175,7 +175,18 @@ globalThis.window = globalThis;
 globalThis.CSS = { escape: (s) => s };
 const bands = {};
 function band(path) {
-  if (!bands[path]) bands[path] = { textContent: "", parentNode: {} };
+  if (!bands[path]) {
+    const classes = new Set(["live", "live--unknown"]);
+    bands[path] = {
+      textContent: "",
+      parentNode: {},
+      classList: {
+        add: (...names) => names.forEach((name) => classes.add(name)),
+        remove: (...names) => names.forEach((name) => classes.delete(name)),
+        values: () => [...classes],
+      },
+    };
+  }
   return bands[path];
 }
 band("/p/one");
@@ -211,6 +222,8 @@ SCRIPT
 console.error = origError;
 result.bands = Object.fromEntries(
   Object.entries(bands).map(([k, v]) => [k, v.textContent]));
+result.bandClasses = Object.fromEntries(
+  Object.entries(bands).map(([k, v]) => [k, v.classList.values().sort()]));
 result.closed = closed;
 result.constructed = constructed;
 result.delays = delays;
@@ -235,6 +248,7 @@ listeners.snapshot({ data: JSON.stringify(
   { live: { "/p/one": { status: "busy", started_at: 1 } } }) });
 """)
     assert got["bands"]["/p/one"] == "busy"
+    assert got["bandClasses"]["/p/one"] == ["live", "live--busy"]
 
 
 @pytest.mark.skipif(_node() is None, reason="node is not installed")
@@ -246,6 +260,7 @@ listeners.snapshot({ data: JSON.stringify(
 listeners.delta({ data: JSON.stringify({ live: {}, removed: ["/p/one"] }) });
 """)
     assert got["bands"]["/p/one"] == "ended"
+    assert got["bandClasses"]["/p/one"] == ["live", "live--ended"]
 
 
 @pytest.mark.skipif(_node() is None, reason="node is not installed")

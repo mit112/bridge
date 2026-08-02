@@ -12,6 +12,7 @@
 // ended. `refresh` means resync over REST.
 
 const LIVE_BAND = "[data-live-path]";
+const LIVE_STATES = ["busy", "working", "idle", "waiting", "unknown", "ended"];
 
 // A connection is only "healthy" once it has proved itself. Resetting the
 // backoff the moment onopen fires turns an accept-then-close server into a hot
@@ -24,11 +25,18 @@ function bandFor(path) {
   return document.querySelector(`[data-live-path="${CSS.escape(path)}"]`);
 }
 
+function setBandState(band, status) {
+  const state = LIVE_STATES.includes(status) ? status : "unknown";
+  band.classList.remove(...LIVE_STATES.map((name) => `live--${name}`));
+  band.classList.add(`live--${state}`);
+}
+
 function applyLive(live) {
   for (const [path, state] of Object.entries(live || {})) {
     const band = bandFor(path);
-    // Text only. The band's colour class lives on the parent and is left
-    // alone: restyling would mean touching structure.
+    // Update only the existing leaf and its state class. The surrounding card,
+    // including any in-progress handoff textarea, retains its identity.
+    if (band) setBandState(band, state.status);
     if (band) band.textContent = state.status;
   }
 }
@@ -38,6 +46,7 @@ function applyRemoved(removed) {
     const band = bandFor(path);
     // The session is gone. Without this the card keeps its live band until the
     // page is reloaded, which is the thing the tombstone exists to prevent.
+    if (band) setBandState(band, "ended");
     if (band) band.textContent = "ended";
   }
 }
@@ -95,16 +104,5 @@ function connect() {
 }
 
 const liveSource = connect();
-
-// The "I just launched -- did it take?" moment. One extra check shortly after a
-// launch, because the regular tick can be up to three seconds away and that is
-// exactly when the user is watching.
-document.addEventListener("bridge:launched", () => {
-  window.setTimeout(() => {
-    fetch("/api/diagnostics")
-      .then((r) => (r.ok ? r.json() : null))
-      .catch(() => null);
-  }, 1500);
-});
 
 window.bridgeLiveSource = liveSource;
