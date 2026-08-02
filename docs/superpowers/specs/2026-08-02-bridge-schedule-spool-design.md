@@ -148,10 +148,18 @@ It is terminal, so `prune_scheduled_runs` reaps it with no change —
 `status NOT IN ('pending','launching')` already covers it.
 
 `retry_terminal`'s guard gains `'missed'`, so its clause becomes
-`orig.status IN ('failed','indeterminate','missed')`. Without this a missed job is a dead end: the
-retry route rejects it and `run-now` requires `pending`, leaving the user to retype the schedule by
-hand. One word reuses the entire existing retry path, including the `source_handoff_id` carry-across
-that is the reason `retry_terminal` exists.
+`orig.status IN ('failed','indeterminate','missed')`. Without this a missed job is a dead end:
+`run-now` requires `pending` and the retry path — whose only status gate is inside `retry_terminal`
+— would reject it, leaving the user to retype the schedule by hand. One word reuses the entire
+existing retry path, including the `source_handoff_id` carry-across that is the reason
+`retry_terminal` exists.
+
+But the store guard alone is not enough for panel-driven recovery. The retry *route*
+(`POST /api/schedule/{id}/retry`) carries no status predicate, so the HTTP retry works the moment
+`retry_terminal` accepts `missed`; the affordance the user clicks, however, is gated separately. The
+dashboard's `retryable=` field (`api.py:705`) and the chained-retry gate in `schedule.js` both list
+only `failed`/`indeterminate`, so a recovered `missed` run would be visible in the panel with no
+retry button. Both predicates gain `'missed'` too, so recovery is a click rather than a curl.
 
 ## Store changes
 

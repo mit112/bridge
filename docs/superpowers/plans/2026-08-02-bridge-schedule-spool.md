@@ -788,11 +788,12 @@ Expected: PASS, 700 tests
 - Modify: `src/bridge/store.py:819-848` (`prune_scheduled_runs`, `reconcile_launching`)
 - Modify: `src/bridge/store.py:813` (`retry_terminal`'s status guard)
 - Modify: `src/bridge/store.py:396-397` (stale comment)
-- Test: `tests/test_store.py`
+- Modify: `src/bridge/api.py:705` (dashboard `retryable=` predicate) and `src/bridge/static/schedule.js:146` (chained-retry gate) so a `missed` row is offered a retry affordance
+- Test: `tests/test_store.py`, `tests/test_api.py`
 
 **Interfaces:**
 - Consumes: nothing from earlier tasks.
-- Produces: `store.prunable_scheduled_run_ids(before_epoch: int) -> list[str]`; `store.prune_scheduled_runs(ids: list[str]) -> int`; `store.launching_scheduled_run_ids() -> list[str]`; `store.reconcile_launching(now: int) -> int` (signature unchanged); `retry_terminal` accepting a `missed` row.
+- Produces: `store.prunable_scheduled_run_ids(before_epoch: int) -> list[str]`; `store.prune_scheduled_runs(ids: list[str]) -> int`; `store.launching_scheduled_run_ids() -> list[str]`; `store.reconcile_launching(now: int, ids: list[str]) -> int` (signature **changes** — `ids` is new, see Step 3); `retry_terminal` accepting a `missed` row; the dashboard offers a retry affordance on a `missed` row.
 
 **Why read-only companions rather than mutate-then-return-ids.** Journaling from a return value
 writes the record *after* the database changed. Boot swallows journal errors, so a failed write
@@ -976,6 +977,47 @@ And append to its docstring, after the existing final paragraph:
         `pending`.
 ```
 
+- [ ] **Step 4b: Offer the retry affordance on a `missed` row in the panel**
+
+Making `retry_terminal` accept `missed` is necessary but not sufficient. The
+retry *route* (`retry_schedule`, `api.py:1042`) has no status predicate of its
+own — the gate lives inside `retry_terminal`, so the HTTP retry already works.
+But the panel never renders a retry button for a `missed` row, so a recovered
+run would be visible yet un-recoverable from the UI, contradicting the spec's
+"recovery is an explicit user action" in the panel. Two predicates gate the
+affordance and both list only `failed`/`indeterminate`:
+
+In `src/bridge/api.py`, the dashboard `retryable=` field at line 705:
+
+```python
+                retryable=(row["status"] in ("failed", "indeterminate", "missed")
+                           and row["id"] not in retried),
+```
+
+In `src/bridge/static/schedule.js`, the chained-retry gate at line 146:
+
+```javascript
+  if (status === "failed" || status === "indeterminate" || status === "missed") {
+```
+
+Add a dashboard-affordance regression test to `tests/test_api.py`, mirroring
+`test_the_scheduled_section_offers_a_retry_affordance_on_an_indeterminate_job`
+at `tests/test_api.py:2299`. The `client` fixture yields `(TestClient, store, pid)`
+— unpack it:
+
+```python
+def test_the_scheduled_section_offers_a_retry_affordance_on_a_missed_job(client):
+    c, store, _ = client
+    store.create_scheduled_run(ScheduledRun(
+        id="sched-missed", project_path=DEMO, prompt="did it spawn?",
+        mode="terminal", scheduled_for=1000, status="missed",
+    ))
+
+    body = c.get("/").text
+
+    assert 'data-scheduled-retry="sched-missed"' in body
+```
+
 - [ ] **Step 5: Fix the now-false comment**
 
 At `src/bridge/store.py:396-397` the current text is exactly:
@@ -998,10 +1040,10 @@ Replace it, preserving the `# ---` section-marker prefix:
 Run: `/Users/mitsheth/.local/bin/uv run pytest tests/test_store.py -q`
 Expected: PASS
 
-- [ ] **Step 7: Fix the caller and the existing tests the signature change breaks**
+- [ ] **Step 7: Fix the callers and the existing tests the signature changes break**
 
-`reconcile_launching` is untouched. Only the prune caller changes, in
-`src/bridge/__main__.py:109-113` — Task 5 adds the journaling around it:
+**The prune caller** changes in `src/bridge/__main__.py:109-113` — Task 5 adds the
+journaling around it:
 
 ```python
     reaped = store.prune_scheduled_runs(
@@ -1013,10 +1055,10 @@ Expected: PASS
         log.info("pruned %d finished scheduled run(s)", reaped)
 ```
 
-Three existing tests call `prune_scheduled_runs(before_epoch=...)` and must be
-updated to the two-call form. They are at `tests/test_store.py:226` and `:239`
+Two existing tests call `prune_scheduled_runs(before_epoch=...)` and must be
+updated to the two-call form. They are at `tests/test_store.py:234` and `:244`
 (`test_prune_scheduled_runs_deletes_only_old_terminal_rows`,
-`test_prune_scheduled_runs_reaps_cancelled_rows_too`), plus any hit from:
+`test_prune_scheduled_runs_reaps_cancelled_rows_too`). Confirm the full set with:
 
 ```bash
 /usr/bin/grep -rn "prune_scheduled_runs" tests/
@@ -1029,9 +1071,24 @@ Each becomes, preserving the original assertion's intent:
     assert store.prune_scheduled_runs(ids) == 1
 ```
 
-`test_reconcile_launching_flips_strays_to_indeterminate` at
-`tests/test_store.py:108` asserts `== 1` and stays correct — `reconcile_launching`
-still returns a count. Do not change it.
+**`reconcile_launching` is NOT untouched — its signature changes** to
+`reconcile_launching(now, ids)` in Step 3, so `ids` becomes a required argument
+and every single-arg caller breaks. There are four in the tests plus the boot
+call site (which Task 5 Step 3 rewrites, so leave `__main__.py:102` to Task 5):
+
+```bash
+/usr/bin/grep -rn "reconcile_launching(" tests/
+```
+
+- `tests/test_store.py:111` (`test_reconcile_launching_flips_strays_to_indeterminate`)
+  — Step 3 already covers this one: `store.reconcile_launching(now=9000)` becomes
+  `store.reconcile_launching(9000, ["a"])`, still asserting `== 1`.
+- `tests/test_store.py:170`, `tests/test_api.py:2259`, `tests/test_api.py:2306` —
+  all call `store.reconcile_launching(now=...)` single-arg to stage an
+  `indeterminate` row for another assertion. Each becomes
+  `store.reconcile_launching(<now>, store.launching_scheduled_run_ids())`,
+  preserving the intent (flip whatever is currently `launching`). Their
+  surrounding assertions are unchanged.
 
 - [ ] **Step 8: Run the full suite and repair mutation anchors**
 
@@ -1567,7 +1624,7 @@ The `old` strings must match the source byte for byte, including indentation.
 
 - [ ] **Step 2: Write the mutation spec**
 
-Create `tools/mutations/schedule-spool.json` with four mutations. Each `old`
+Create `tools/mutations/schedule-spool.json` with six mutations. Each `old`
 must be copied verbatim from the current source — retype nothing from memory:
 
 1. **Empty-table guard removed.** In `src/bridge/schedspool.py`, change
@@ -1664,6 +1721,7 @@ Skip if the tree is already clean.
 | `pruned` journal-only | 2 (skip logic), 5 (written at boot) |
 | Claim journaled; replay resolves it to `indeterminate` | 2 (rule 3), 4 (write site) |
 | `retry_terminal` accepts `missed` | 3 |
+| `missed` retry affordance in panel (`api.py:705`, `schedule.js:146`) | 3 (Step 4b) |
 | Read-only id companions; journal-before-mutate | 3 (store), 5 (boot ordering) |
 | `store.py:396-397` comment | 3 |
 | Nine journal call sites | 4 (six), 5 (two), plus `bridge index` replay |
@@ -1687,6 +1745,32 @@ and not `schedule_id`. The store signatures after Task 3 are exactly:
 `reconcile_launching(now, ids) -> int`,
 `restore_scheduled_run(job) -> str`.
 Only the two `*_ids` readers return lists; both mutators return counts.
+
+**Third revision note.** A third Codex review of the twice-revised spec+plan found two real defects,
+both folded above. (1) The panel would never offer a retry affordance on a `missed` row: the retry
+*route* has no status predicate so HTTP retry already worked, but the dashboard `retryable=` field
+(`api.py:705`) and the chained-retry gate (`schedule.js:146`) both listed only
+`failed`/`indeterminate`, so a recovered run was visible yet un-recoverable from the UI. Task 3
+Step 4b adds `missed` to both and a dashboard-affordance regression test. (2) The plan's
+`reconcile_launching` wiring was self-contradictory — it changed the signature to `(now, ids)` in
+Task 3 Step 3 yet elsewhere called it "signature unchanged" and "untouched, do not change it," and
+listed only one of the five call sites. Step 7 now names all four test callers
+(`test_store.py:111,170`, `test_api.py:2259,2306`; `__main__.py:102` is Task 5's) and the interface
+line reads `(now, ids)`. Two trivia were also fixed: the mutation spec said "four" while enumerating
+six, and a prune-test line reference was off by one (`:239` → `:240`).
+
+That review also raised five findings that were **rejected on verification**, recorded here so they
+are not re-flagged: it argued creation/claim/terminal/PATCH/DELETE journals happen "after" their DB
+mutations and are therefore duplicate-launch holes. They are not. The invariant this design
+guarantees is journal-**before-spawn**, and the launching record is written at the *top* of
+`_fire_claimed_job`, before the `fire()` call that spawns — verified in live source. A claim's
+status-flip landing in SQLite before that journal is harmless because no session has spawned yet: a
+crash there leaves only the creation record, which replays to `pending`/`missed` and fires exactly
+once. Creation-journal-failure-then-still-insert (`journaled: false`) and best-effort terminal
+journaling are the *locked, precedented* decisions from the spec (mirroring `POST /api/handoff` and
+`launcher.py:595`), not oversights; and the PATCH/DELETE check-journal-mutate race can only produce a
+cosmetically-wrong *terminal* row under a rare race+crash, never a fireable or duplicate one, so it
+does not warrant a shared mutation lock.
 
 **Second revision note.** A follow-up Codex review of the first revision found seven more issues,
 three blocking, all now fixed above: `bridge index` called `rebuild_if_empty` without the required
