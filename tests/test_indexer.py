@@ -37,6 +37,10 @@ def legacy_fixture_cwds_are_not_this_tasks_concern(monkeypatch):
     probe to always say "present" would make the test's `delenv` of
     `BRIDGE_CONFIG` silently stop testing what it claims to, on whatever
     machine happens to lack that file.
+
+    A future test asserting auto-archival of a project literally under one of
+    these two roots would see it "exist" here and never archive: build such
+    paths under `tmp_path` instead.
     """
     real_exists = Path.exists
 
@@ -581,6 +585,7 @@ def test_against_the_real_corpus_no_launch_joins_a_session_it_did_not_launch(
         "db_path": tmp_path / "real.db",
         "spool_dir": tmp_path / "spool",
         "launches_dir": tmp_path / "launches",
+        "dev_dir": tmp_path / "dev",
     })
     store = Store(cfg.db_path)
     try:
