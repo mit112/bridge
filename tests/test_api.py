@@ -65,6 +65,18 @@ def test_project_detail_renders(client):
     assert "Did the work" in r.text
 
 
+def test_project_detail_explains_empty_history_and_the_current_window(client):
+    c, store, pid = client
+    empty_id = store.upsert_project("/Users/mitsheth/dev/empty", "empty")
+    empty = c.get(f"/project/{empty_id}").text
+    assert "No handoffs recorded." in empty
+    assert "No launches recorded." in empty
+    assert "No indexed sessions." in empty
+
+    populated = c.get(f"/project/{pid}").text
+    assert "Showing up to 50 most recent records." in populated
+
+
 def test_html_pages_have_one_page_heading_home_navigation_and_metadata(client):
     c, _, pid = client
     for path in ("/", f"/project/{pid}", "/diagnostics"):

@@ -291,6 +291,10 @@ main > h1, .page-title { margin: 0; font: 700 var(--text-page)/1.2 var(--display
    metadata, so it steps back up to `--fg` out of the muted strip. */
 .detail-git { margin: 0 0 1.2rem; }
 .detail-git__commit { color: var(--fg); }
+.history { margin-top: var(--space-8); }
+.history h2 { margin: 0; font: 700 1rem/1.3 var(--display); }
+.history__scope { margin: var(--space-1) 0 0; color: var(--muted); font-size: var(--text-sm); }
+.history .table-scroll { margin-top: var(--space-2); }
 .sessions__tokens-detail { display: block; color: var(--muted); font-size: .78rem; }
 
 /* Session-meta enrichment (Phase 7): color is decorative only -- the `+`/`-`

@@ -1,0 +1,42 @@
+[
+  {
+    "name": "silently omit an empty handoff history section",
+    "file": "src/bridge/templates/project.html",
+    "old": "<p class=\"empty\">No handoffs recorded.</p>",
+    "new": "<p class=\"empty\"></p>",
+    "tests": [
+      "tests/test_api.py::test_project_detail_explains_empty_history_and_the_current_window"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "silently omit an empty launch history section",
+    "file": "src/bridge/templates/project.html",
+    "old": "<p class=\"empty\">No launches recorded.</p>",
+    "new": "<p class=\"empty\"></p>",
+    "tests": [
+      "tests/test_api.py::test_project_detail_explains_empty_history_and_the_current_window"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "hide the empty indexed-session state inside a blank table",
+    "file": "src/bridge/templates/project.html",
+    "old": "    <tr><td colspan=\"6\" class=\"empty\">No indexed sessions.</td></tr>",
+    "new": "    <tr><td colspan=\"6\" class=\"empty\"></td></tr>",
+    "tests": [
+      "tests/test_api.py::test_project_detail_explains_empty_history_and_the_current_window"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "present capped project history as if it were complete",
+    "file": "src/bridge/templates/project.html",
+    "old": "<p class=\"history__scope\">Showing up to 50 most recent records.</p>",
+    "new": "<p class=\"history__scope\">Most recent records.</p>",
+    "tests": [
+      "tests/test_api.py::test_project_detail_explains_empty_history_and_the_current_window"
+    ],
+    "expect_count": 3
+  }
+]

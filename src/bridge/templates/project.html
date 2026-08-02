@@ -19,7 +19,10 @@
   {% if git.cached_at %}<span class="card__meta">git checked {{ git.cached_at | ago_epoch }} ago</span>{% endif %}
 </section>
 {% endif %}
+<section class="history" aria-labelledby="handoffs-title">
+<h2 id="handoffs-title">Handoffs</h2>
 {% if handoffs %}
+<p class="history__scope">Showing up to 50 most recent records.</p>
 <div class="table-scroll" tabindex="0" role="region" aria-label="Handoffs table">
 <table class="handoffs">
   <caption>Handoffs, most recent first</caption>
@@ -37,9 +40,15 @@
   </tbody>
 </table>
 </div>
+{% else %}
+<p class="empty">No handoffs recorded.</p>
 {% endif %}
+</section>
 
+<section class="history" aria-labelledby="launches-title">
+<h2 id="launches-title">Launches</h2>
 {% if launches %}
+<p class="history__scope">Showing up to 50 most recent records.</p>
 <div class="table-scroll" tabindex="0" role="region" aria-label="Launches table">
 <table class="launches">
   <caption>Launches, most recent first</caption>
@@ -68,8 +77,14 @@
   </tbody>
 </table>
 </div>
+{% else %}
+<p class="empty">No launches recorded.</p>
 {% endif %}
+</section>
 
+<section class="history" aria-labelledby="sessions-title">
+<h2 id="sessions-title">Sessions</h2>
+{% if sessions %}<p class="history__scope">Showing up to 50 most recent records.</p>{% endif %}
 <div class="table-scroll" tabindex="0" role="region" aria-label="Indexed sessions table">
 <table class="sessions">
   <caption>Indexed sessions, most recent first</caption>
@@ -108,8 +123,11 @@
         {% else %}—{% endif %}
       </td>
     </tr>
+    {% else %}
+    <tr><td colspan="6" class="empty">No indexed sessions.</td></tr>
     {% endfor %}
   </tbody>
 </table>
 </div>
+</section>
 {% endblock %}
