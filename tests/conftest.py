@@ -52,7 +52,7 @@ def never_touch_the_real_bridge_dir(monkeypatch):
     guarded by one fixture on purpose: a second autouse guard would be one more
     thing to forget to extend.
     """
-    from bridge import launcher, spool
+    from bridge import launcher, schedspool, spool
 
     def guarded(module_name, name, orig, override):
         def wrapper(*args, **kwargs):
@@ -77,6 +77,15 @@ def never_touch_the_real_bridge_dir(monkeypatch):
                  "pending", "pending_count"):
         monkeypatch.setattr(spool, name,
                             guarded("spool", name, getattr(spool, name), "spool_dir"))
+
+    # Same contract for the scheduled-run journal. `rebuild_if_empty` does not
+    # exist yet -- it lands in the replay task -- and this tuple must grow to
+    # include it then, the same way `journal_status` grew this block above.
+    for name in ("journal", "journal_status"):
+        monkeypatch.setattr(
+            schedspool, name,
+            guarded("schedspool", name, getattr(schedspool, name), "spool_dir"),
+        )
 
     # The launcher's writers take `launches_dir` rather than a `Config` precisely
     # so this guard can see the path: an argument-inspecting wrapper cannot look
