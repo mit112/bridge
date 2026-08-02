@@ -78,10 +78,10 @@ def never_touch_the_real_bridge_dir(monkeypatch):
         monkeypatch.setattr(spool, name,
                             guarded("spool", name, getattr(spool, name), "spool_dir"))
 
-    # Same contract for the scheduled-run journal. `rebuild_if_empty` does not
-    # exist yet -- it lands in the replay task -- and this tuple must grow to
-    # include it then, the same way `journal_status` grew this block above.
-    for name in ("journal", "journal_status"):
+    # Same contract for the scheduled-run journal. `rebuild_if_empty` lands
+    # with the replay task, the same way `journal_status` grew this block
+    # above.
+    for name in ("journal", "journal_status", "rebuild_if_empty"):
         monkeypatch.setattr(
             schedspool, name,
             guarded("schedspool", name, getattr(schedspool, name), "spool_dir"),

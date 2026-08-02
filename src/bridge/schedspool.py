@@ -144,3 +144,100 @@ def _load_status(path: Path) -> _Status:
     if status not in JOURNALLED_STATUSES:
         raise ValueError(f"{path.name}: status {status!r} is not a journalled status")
     return _Status(run_id, status, at)
+
+
+def rebuild_if_empty(store, spool_dir: Path, now: int) -> RebuildStats:
+    """Replay the journal, but only into an empty `scheduled_runs` table.
+
+    The guard is the whole point, exactly as in `spool.rebuild_if_empty`.
+    Replaying onto a live table would resurrect finished runs on every
+    `bridge index`.
+
+    Retention emptying the table on its own does not make this unsafe: prune
+    journals a `pruned` record per row it deletes, and rule 1 below skips those,
+    so a table emptied by retention replays to an empty table rather than to
+    every run Bridge has ever fired.
+
+    Five rules per creation record, where the greatest `at` wins among a job's
+    status records:
+
+    1. A `pruned` record exists -> skip entirely. Retention already judged the
+       row disposable; inserting and then marking it would put it back.
+    2. The winner is terminal -> insert with that status.
+    3. The winner is `launching` -> insert as `indeterminate`. A session may
+       already have spawned and we cannot tell, which is exactly what
+       `reconcile_launching` concludes for the in-database version of this.
+    4. No status record, `scheduled_for` in the future -> `pending`. Still
+       owed, and it fires normally.
+    5. No status record, `scheduled_for` in the past -> `missed`.
+
+    Rule 3 is what stops a duplicate launch. `run-now` can claim a job whose
+    scheduled time is still ahead, so without it rule 4 would restore an
+    already-launched job as `pending` and the scheduler would fire it again.
+
+    Rule 5 is a deliberate refusal to fire retroactively. A job whose time passed
+    while the database was gone would otherwise launch a session at an
+    unpredictable moment for work the user may have forgotten scheduling -- the
+    reasoning that made `bridge launch` refuse to spool. `missed` is terminal and
+    visible; recovery is an explicit retry.
+    """
+    if store.count_scheduled_runs() > 0:
+        return RebuildStats(skipped=1)
+
+    when = now
+    schedules_dir, bad_dir = _dirs(spool_dir)
+    stats = RebuildStats()
+
+    records: list[ScheduledRun] = []
+    statuses: list[_Status] = []
+    if schedules_dir.is_dir():
+        for path in sorted(schedules_dir.glob("*.json")):
+            if path.name.endswith(STATUS_SUFFIX):
+                try:
+                    statuses.append(_load_status(path))
+                except Exception:  # noqa: BLE001 - one bad record cannot stop replay
+                    _quarantine(path, bad_dir)
+                    stats.bad += 1
+                continue
+            try:
+                records.append(_load(path))
+            except Exception:  # noqa: BLE001
+                _quarantine(path, bad_dir)
+                stats.bad += 1
+
+    pruned = {s.run_id for s in statuses if s.status == "pruned"}
+    # Latest wins. `pruned` is checked as a set above rather than by recency
+    # because a prune is final regardless of what any later record claims.
+    latest: dict[str, _Status] = {}
+    for s in sorted(statuses, key=lambda s: (s.at, s.run_id)):
+        latest[s.run_id] = s
+
+    records.sort(key=lambda j: (j.created_at, j.id))
+    for job in records:
+        if job.id in pruned:
+            stats.skipped_pruned += 1
+            continue
+        ended = latest.get(job.id)
+        if ended is not None:
+            # A claim with no outcome is `indeterminate`, never `pending`:
+            # the launch may already have happened.
+            job.status = (
+                "indeterminate" if ended.status == "launching" else ended.status
+            )
+            job.completed_at = ended.at
+        elif job.scheduled_for > when:
+            job.status = "pending"
+        else:
+            job.status = "missed"
+            job.completed_at = when
+            stats.missed += 1
+        try:
+            # `restore_scheduled_run`, not `create_scheduled_run`: the latter
+            # omits `completed_at`, and a terminal row without one can never
+            # satisfy retention's `completed_at < ?` bound.
+            store.restore_scheduled_run(job)
+            stats.restored += 1
+        except Exception:  # noqa: BLE001 - one failed insert cannot stop replay
+            pass
+
+    return stats

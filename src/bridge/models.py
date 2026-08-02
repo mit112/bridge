@@ -147,8 +147,10 @@ class ScheduledRun:
 
     `status` moves pending -> launching -> {fired, failed, indeterminate,
     cancelled}; see `store.py`'s conditional-transition methods for the
-    vocabulary. `source_handoff_id` is None for a schedule authored directly
-    rather than from a queued handoff.
+    vocabulary. `missed` is the one status no transition produces: journal
+    replay assigns it to a run whose `scheduled_for` passed while the database
+    was gone, and a missed run never fires. `source_handoff_id` is None for a
+    schedule authored directly rather than from a queued handoff.
     """
 
     id: str
@@ -168,6 +170,7 @@ class ScheduledRun:
     fired_at: int | None = None
     launch_id: str | None = None
     error: str | None = None
+    retry_of: str | None = None
 
 
 @dataclass

@@ -684,6 +684,34 @@ class Store:
             )
         return job.id
 
+    def restore_scheduled_run(self, job: ScheduledRun) -> str:
+        """Insert a scheduled run with its terminal columns intact.
+
+        Journal replay only. `create_scheduled_run` deliberately omits
+        `completed_at`, `fired_at`, `launch_id` and `error` because a newly
+        authored schedule has none of them; a recovered one can have all four,
+        and a terminal row that arrives with `completed_at` NULL is invisible to
+        retention forever. Kept separate rather than widening
+        `create_scheduled_run` so that only recovery can write a terminal row
+        directly.
+        """
+        with self._lock:
+            self.conn.execute(
+                "INSERT INTO scheduled_runs (id, project_path, prompt, summary, "
+                "model, effort, mode, permission_mode, source_handoff_id, "
+                "scheduled_for, status, created_at, claimed_at, completed_at, "
+                "fired_at, launch_id, error, retry_of) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    job.id, job.project_path, job.prompt, job.summary, job.model,
+                    job.effort, job.mode, job.permission_mode, job.source_handoff_id,
+                    job.scheduled_for, job.status, job.created_at or now_epoch(),
+                    job.claimed_at, job.completed_at, job.fired_at, job.launch_id,
+                    job.error, job.retry_of,
+                ),
+            )
+        return job.id
+
     def scheduled_runs(
         self, status: str | None = None, limit: int | None = None, offset: int = 0
     ) -> list[sqlite3.Row]:
