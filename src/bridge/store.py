@@ -141,6 +141,9 @@ COLUMN_MIGRATIONS: dict[str, dict[str, str]] = {
     # incremental scan can resume in the middle of one API response's entries,
     # and without this the totals for actively-running sessions triple again.
     "sessions": {"last_usage_request_id": "TEXT"},
+    # Epoch of the first reindex that found this project's path gone, so a later
+    # manual restore in the panel is never re-archived. NULL = never seen missing.
+    "projects": {"missing_archived_at": "INTEGER"},
 }
 
 
@@ -237,6 +240,20 @@ class Store:
         with self._lock:
             self.conn.execute(
                 "UPDATE projects SET status=? WHERE id=?", (status, project_id)
+            )
+
+    def archive_missing(self, project_id: int, at: int) -> None:
+        """Archive a project whose directory has vanished, stamping WHEN we acted.
+
+        The stamp is the whole point: the auto-archive pass skips any project that
+        already carries one, so a user who restores a still-missing project in the
+        panel is not silently re-archived on the next index. This is the config
+        seed-vs-override rule applied one row over.
+        """
+        with self._lock:
+            self.conn.execute(
+                "UPDATE projects SET status='archived', missing_archived_at=? WHERE id=?",
+                (at, project_id),
             )
 
     def set_project_pinned(self, project_id: int, pinned: bool) -> None:

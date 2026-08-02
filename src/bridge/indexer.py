@@ -67,6 +67,18 @@ def reindex(
         if row is not None:
             store.set_project_status(row["id"], "archived")
 
+    # Auto-archive a project whose directory has vanished (spec:412) -- but only
+    # the FIRST run we see it gone. `missing_archived_at` records that we acted,
+    # so a later manual restore in the panel is not silently undone at the next
+    # index. Iterates all rows (active + hidden + archived): a hidden project
+    # that was deleted should leave the hidden drawer too, and stamping an
+    # already-archived one is a harmless no-op that still protects a future restore.
+    for project in store.projects(include_hidden=True):
+        if project["missing_archived_at"] is not None:
+            continue
+        if not Path(project["path"]).exists():
+            store.archive_missing(project["id"], now_epoch())
+
     # Last, because it can only match sessions this run has already written.
     stats.launches_linked = _link_background_launches(store)
 

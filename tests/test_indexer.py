@@ -12,6 +12,27 @@ from tests.conftest import jline, launch_by_session
 SID = "22222222-2222-2222-2222-222222222222"
 
 
+@pytest.fixture(autouse=True)
+def legacy_fixture_cwds_are_not_this_tasks_concern(monkeypatch, tmp_path):
+    """Task 1 adds an auto-archive pass that calls `Path.exists()` on every
+    project row. Nearly every fixture in this module attributes sessions to
+    illustrative absolute paths like `/Users/mitsheth/dev/demo` that were never
+    meant to be real directories, and rewriting every such literal in this file
+    to live under `tmp_path` is out of proportion to this task. Real filesystem
+    checks below `tmp_path` -- where this task's own vanished/still-here tests
+    live -- pass through untouched; every other path is reported present, which
+    is exactly this module's pre-Task-1 behavior.
+    """
+    real_exists = Path.exists
+
+    def fake_exists(self):
+        if self == tmp_path or tmp_path in self.parents:
+            return real_exists(self)
+        return True
+
+    monkeypatch.setattr(Path, "exists", fake_exists)
+
+
 def transcript_lines(sid=SID, cwd="/Users/mitsheth/dev/demo", title="Did work"):
     return [
         jline(type="user", sessionId=sid, isSidechain=False,
@@ -47,6 +68,37 @@ def write(projects, name, lines, dirname="-Users-mitsheth-dev-demo"):
     p = projects / dirname / name
     p.write_text("".join(lines))
     return p
+
+
+def test_reindex_archives_a_project_whose_path_has_vanished(env, tmp_path):
+    cfg, store, _ = env
+    pid = store.upsert_project(str(tmp_path / "deleted-project"), "deleted-project")
+    reindex(store, cfg)
+    row = store.get_project(pid)
+    assert row["status"] == "archived"
+    assert row["missing_archived_at"] is not None
+
+
+def test_reindex_leaves_a_project_whose_path_still_exists_alone(env, tmp_path):
+    cfg, store, _ = env
+    here = tmp_path / "still-here"
+    here.mkdir()
+    pid = store.upsert_project(str(here), "still-here")
+    reindex(store, cfg)
+    row = store.get_project(pid)
+    assert row["status"] == "active"
+    assert row["missing_archived_at"] is None
+
+
+def test_a_restored_project_is_not_re_archived_even_though_it_is_still_gone(env, tmp_path):
+    """The seed-vs-override rule: config seeds once, the panel overrides. A
+    manual restore of a still-missing project must survive the next index."""
+    cfg, store, _ = env
+    pid = store.upsert_project(str(tmp_path / "deleted-project"), "deleted-project")
+    reindex(store, cfg)                        # archives + stamps
+    store.set_project_status(pid, "active")    # user restores in the panel
+    reindex(store, cfg)                        # must NOT re-archive
+    assert store.get_project(pid)["status"] == "active"
 
 
 def test_first_index_creates_project_and_session(env):

@@ -59,6 +59,14 @@ def test_pragmas_are_set(store):
     assert store.conn.execute("pragma busy_timeout").fetchone()[0] == 5000
 
 
+def test_archive_missing_sets_status_and_stamps_when_we_acted(store):
+    pid = store.upsert_project("/gone/for/good", "gone")
+    store.archive_missing(pid, at=1_780_000_000)
+    row = store.get_project(pid)
+    assert row["status"] == "archived"
+    assert row["missing_archived_at"] == 1_780_000_000
+
+
 def test_creates_parent_directory(tmp_path):
     s = Store(tmp_path / "deep" / "nested" / "b.db")
     assert (tmp_path / "deep" / "nested" / "b.db").exists()
