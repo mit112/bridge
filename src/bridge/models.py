@@ -142,6 +142,35 @@ class Launch:
 
 
 @dataclass
+class ScheduledRun:
+    """A session queued to launch at a future time.
+
+    `status` moves pending -> launching -> {fired, failed, indeterminate,
+    cancelled}; see `store.py`'s conditional-transition methods for the
+    vocabulary. `source_handoff_id` is None for a schedule authored directly
+    rather than from a queued handoff.
+    """
+
+    id: str
+    project_path: str
+    prompt: str
+    mode: str
+    scheduled_for: int
+    summary: str | None = None
+    model: str | None = None
+    effort: str | None = None
+    permission_mode: str | None = None
+    source_handoff_id: str | None = None
+    created_at: int = 0
+    status: str = "pending"
+    claimed_at: int | None = None
+    completed_at: int | None = None
+    fired_at: int | None = None
+    launch_id: str | None = None
+    error: str | None = None
+
+
+@dataclass
 class Card:
     project_id: int
     path: str

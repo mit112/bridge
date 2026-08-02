@@ -13,7 +13,7 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
-from bridge.models import GitState, Handoff, Launch, SessionRecord
+from bridge.models import GitState, Handoff, Launch, ScheduledRun, SessionRecord
 
 SCHEMA = [
     """
@@ -130,6 +130,29 @@ SCHEMA = [
         probed_at INTEGER NOT NULL
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS scheduled_runs (
+        id TEXT PRIMARY KEY,
+        project_path TEXT NOT NULL,
+        prompt TEXT NOT NULL,
+        summary TEXT,
+        model TEXT,
+        effort TEXT,
+        mode TEXT NOT NULL,
+        permission_mode TEXT,
+        source_handoff_id TEXT,
+        scheduled_for INTEGER NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        created_at INTEGER NOT NULL,
+        claimed_at INTEGER,
+        completed_at INTEGER,
+        fired_at INTEGER,
+        launch_id TEXT,
+        error TEXT
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_scheduled_runs_status "
+    "ON scheduled_runs(status, scheduled_for)",
 ]
 
 # Additive column migrations. SQLite has no `ADD COLUMN IF NOT EXISTS`, so we
@@ -623,3 +646,99 @@ class Store:
                 (project_id, since_epoch),
             ).fetchone()
             return row["t"]
+
+    # --- scheduled_runs -------------------------------------------------------
+    #
+    # Every state transition below is one conditional `UPDATE ... WHERE
+    # status='...'` inside a transaction, checked via rowcount (or re-read for
+    # the caller). This is what makes a repeat claim, a stray edit against an
+    # already-launching job, or a double-fire of the scheduler all lose safely
+    # rather than corrupt the row.
+
+    def create_scheduled_run(self, job: ScheduledRun) -> str:
+        with self._lock:
+            self.conn.execute(
+                "INSERT INTO scheduled_runs (id, project_path, prompt, summary, "
+                "model, effort, mode, permission_mode, source_handoff_id, "
+                "scheduled_for, status, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    job.id, job.project_path, job.prompt, job.summary, job.model,
+                    job.effort, job.mode, job.permission_mode, job.source_handoff_id,
+                    job.scheduled_for, job.status, job.created_at or now_epoch(),
+                ),
+            )
+        return job.id
+
+    def scheduled_runs(self, status: str | None = None) -> list[sqlite3.Row]:
+        with self._lock:
+            sql = "SELECT * FROM scheduled_runs"
+            params: tuple = ()
+            if status is not None:
+                sql += " WHERE status=?"
+                params = (status,)
+            sql += (
+                " ORDER BY CASE WHEN status IN ('pending','launching') THEN 0 "
+                "ELSE 1 END, scheduled_for"
+            )
+            return list(self.conn.execute(sql, params))
+
+    def get_scheduled_run(self, id: str) -> sqlite3.Row | None:
+        with self._lock:
+            return self.conn.execute(
+                "SELECT * FROM scheduled_runs WHERE id=?", (id,)
+            ).fetchone()
+
+    def claim_one_due(self, now: int) -> sqlite3.Row | None:
+        with self.transaction():
+            row = self.conn.execute(
+                "SELECT * FROM scheduled_runs WHERE status='pending' AND scheduled_for<=? "
+                "ORDER BY scheduled_for, created_at, id LIMIT 1", (now,)).fetchone()
+            if row is None:
+                return None
+            cur = self.conn.execute(
+                "UPDATE scheduled_runs SET status='launching', claimed_at=? "
+                "WHERE id=? AND status='pending'", (now, row["id"]))
+            if cur.rowcount != 1:
+                return None                      # lost the race
+            return self.get_scheduled_run(row["id"])
+
+    def claim_specific(self, id: str) -> sqlite3.Row | None:
+        with self.transaction():
+            cur = self.conn.execute(
+                "UPDATE scheduled_runs SET status='launching', claimed_at=? "
+                "WHERE id=? AND status='pending'", (now_epoch(), id))
+            return self.get_scheduled_run(id) if cur.rowcount == 1 else None
+
+    def finish_scheduled_run(
+        self, id: str, *, status: str, launch_id: str | None = None,
+        error: str | None = None, fired_at: int | None = None,
+    ) -> None:
+        with self.transaction():
+            self.conn.execute(
+                "UPDATE scheduled_runs SET status=?, launch_id=?, error=?, fired_at=?, "
+                "completed_at=? WHERE id=? AND status='launching'",
+                (status, launch_id, error, fired_at, now_epoch(), id))
+
+    def edit_pending(self, id: str, **fields) -> bool:
+        # `fields` keys are always hardcoded caller kwargs (never user input
+        # used as a key), matching the COLUMN_MIGRATIONS interpolation note.
+        cols = ", ".join(f"{k}=?" for k in fields)
+        with self.transaction():
+            cur = self.conn.execute(
+                f"UPDATE scheduled_runs SET {cols} WHERE id=? AND status='pending'",
+                (*fields.values(), id))
+            return cur.rowcount == 1
+
+    def cancel_pending(self, id: str) -> bool:
+        with self.transaction():
+            cur = self.conn.execute(
+                "UPDATE scheduled_runs SET status='cancelled', completed_at=? "
+                "WHERE id=? AND status='pending'", (now_epoch(), id))
+            return cur.rowcount == 1
+
+    def reconcile_launching(self, now: int) -> int:
+        with self.transaction():
+            cur = self.conn.execute(
+                "UPDATE scheduled_runs SET status='indeterminate', completed_at=? "
+                "WHERE status='launching'", (now,))
+            return cur.rowcount
