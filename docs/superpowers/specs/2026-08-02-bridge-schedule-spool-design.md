@@ -169,9 +169,16 @@ So each gains a read-only companion, and the caller sequences the three steps it
 | `prunable_scheduled_run_ids(before_epoch)` | ids a prune would delete |
 | `prune_scheduled_runs(ids)` | count actually deleted |
 | `launching_scheduled_run_ids()` | ids currently `launching` |
-| `reconcile_launching(now)` | count flipped (unchanged signature) |
+| `reconcile_launching(now, ids)` | count flipped |
 
-Boot then reads ids → journals each → mutates. **A journal failure skips that row's mutation.**
+Both mutators take explicit ids so boot can read ids → journal each → mutate only what it
+journaled. **A journal failure skips that row's mutation** — an unjournaled `launching` row is left
+`launching` for the next boot to reconcile, because flipping it without a record is what lets a
+run-now'd future job replay as `pending` and fire twice.
+
+The same ordering applies to `PATCH` and `DELETE`: both journal before the database changes. A
+cancellation journaled afterwards leaves a window where the row is `cancelled` but the journal still
+shows only the creation record, and a database loss there replays a cancelled job as fireable.
 Retention is best-effort and can wait for the next boot; journal integrity cannot. This also closes
 the empty-table guard's blind spot: `count_scheduled_runs() == 0` cannot distinguish a lost database
 from one retention emptied, and it does not need to, because every reaped row is guaranteed to carry
