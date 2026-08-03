@@ -17,7 +17,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from bridge import agents
-from bridge.api import _schedule_time_fields
 from bridge.cards import build_cards
 from bridge.config import Config
 from bridge.dashboard import DashboardBuilder
@@ -170,7 +169,7 @@ def build_overview(
     # behind a schedule failure) is redundant to repeat here.
     attention_ids = {item.project_id for item in attention if item.project_id is not None}
     recent = [
-        _project_summary(card, now) for card in cards
+        project_summary(card, now) for card in cards
         if card.project_id not in attention_ids
     ][:RECENT_LIMIT]
     up_next = [
@@ -286,7 +285,11 @@ def _schedule_failures(store: Store, by_path: dict[str, Card]) -> list[Attention
     return out
 
 
-def _project_summary(card: Card, now: int) -> ProjectSummary:
+def project_summary(card: Card, now: int) -> ProjectSummary:
+    """The one `Card` -> `ProjectSummary` projection, shared by Overview,
+    Projects, and (later) the Workspace read model -- promoted from a private
+    helper so a second module can import it instead of re-deriving the same
+    fields from a `Card` a second way and drifting from this one."""
     ended = to_epoch(card.session.ended_at) if card.session else None
     return ProjectSummary(
         project_id=card.project_id,
@@ -320,6 +323,15 @@ def _status_word(card: Card) -> str:
 
 
 def _schedule_row(row, by_path: dict[str, Card], store: Store) -> ScheduleRow:
+    # Imported lazily rather than at module scope: `bridge.api` will (as of
+    # the Projects route) import `bridge.projects_view`, which imports THIS
+    # module for `ProjectSummary`/`project_summary` -- a top-level `from
+    # bridge.api import ...` here would make that a cycle. This is the only
+    # symbol overview.py needs from api.py, so a local import breaks the cycle
+    # for every future consumer without costing anything at call time (Python
+    # caches the module after the first import).
+    from bridge.api import _schedule_time_fields
+
     card = by_path.get(row["project_path"])
     if card is not None:
         project_id, project_name = card.project_id, card.name

@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% from "_components.html" import project_summary_row, empty_state %}
+{% block page_title %}Projects{% endblock %}
+{% block page_summary %}
+<p class="page-lede">Every indexed project, searchable and filterable. Pin, hide, and restore stay one click away.</p>
+{% endblock %}
+{% block content %}
+
+<section class="projects-controls" aria-label="Search and filter projects">
+  <div class="projects-search">
+    <label for="projects-search">Search projects</label>
+    <input type="search" id="projects-search" data-projects-search
+           placeholder="Name or path">
+  </div>
+  <div class="projects-filters" role="group" aria-label="Filter by status">
+    <button type="button" class="btn projects-filter" data-projects-filter="all"
+            aria-pressed="true">All <span class="projects-filter__count">{{ counts.all }}</span></button>
+    <button type="button" class="btn projects-filter" data-projects-filter="needs_attention"
+            aria-pressed="false">Needs attention <span class="projects-filter__count">{{ counts.needs_attention }}</span></button>
+    <button type="button" class="btn projects-filter" data-projects-filter="running"
+            aria-pressed="false">Running <span class="projects-filter__count">{{ counts.running }}</span></button>
+    <button type="button" class="btn projects-filter" data-projects-filter="queued"
+            aria-pressed="false">Queued <span class="projects-filter__count">{{ counts.queued }}</span></button>
+    <button type="button" class="btn projects-filter" data-projects-filter="hidden"
+            aria-pressed="false">Hidden <span class="projects-filter__count">{{ counts.hidden }}</span></button>
+  </div>
+  <p class="projects-count" data-projects-count role="status" aria-live="polite">
+    {{ rows | length }} of {{ counts.all }} project{{ "" if counts.all == 1 else "s" }} shown</p>
+</section>
+
+{% if not rows %}
+  {{ empty_state("No projects indexed yet. Run `uv run python -m bridge index`.") }}
+{% endif %}
+
+<ul class="projects-list" data-projects-list>
+  {% for row in rows %}
+    {% set state = "queued" if row.status_word == "queued" else ("running" if row.status_word == "running" else ("stale" if row.status_word == "stale" else "idle")) %}
+    <li class="projects-list__item" data-project-card="{{ row.project_id }}"
+        data-project-row-item data-project-state="{{ state }}"
+        data-project-name="{{ row.name }}" data-project-path="{{ row.path }}">
+      {{ project_summary_row(row) }}
+      <details class="projects-list__actions">
+        <summary>Actions for {{ row.name }}</summary>
+        <button type="button" class="btn btn--pin" data-project-pin="{{ row.project_id }}"
+                aria-pressed="{{ 'true' if row.pinned else 'false' }}"
+                aria-label="Pin {{ row.name }} above every other project">Pin</button>
+        <button type="button" class="btn" data-project-hide="{{ row.project_id }}"
+                aria-label="Hide {{ row.name }} from the dashboard">Hide</button>
+        <span class="card__hide-status" role="status" aria-live="polite"
+              data-project-status="{{ row.project_id }}"></span>
+      </details>
+    </li>
+  {% endfor %}
+</ul>
+<p class="empty" data-projects-empty hidden>No projects match your search.</p>
+
+<section class="hidden-projects-section" data-hidden-projects hidden>
+  <h2>Hidden projects</h2>
+  {% if not hidden %}
+    {{ empty_state("No hidden projects.") }}
+  {% endif %}
+  <ul data-hidden-list>
+    {% for p in hidden %}
+      <li data-hidden-project="{{ p.id }}">
+        <a href="/project/{{ p.id }}">{{ p.name }}</a>
+        <span class="card__note">{{ p.status }}</span>
+        <button type="button" class="btn" data-project-restore="{{ p.id }}"
+                aria-label="Restore {{ p.name }} to the dashboard">Restore</button>
+      </li>
+    {% endfor %}
+  </ul>
+  <span class="card__note" role="status" aria-live="polite" data-hidden-status></span>
+</section>
+{% endblock %}

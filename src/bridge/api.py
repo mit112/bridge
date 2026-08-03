@@ -28,6 +28,7 @@ from bridge.cards import FIVE_HOURS, LivenessDebouncer, build_cards, spark_point
 from bridge.config import Config
 from bridge.dashboard import DashboardBuilder
 from bridge.models import AgentsState, Handoff, ScheduledRun
+from bridge.projects_view import build_projects
 from bridge.refresh import RefreshCoordinator
 from bridge.registry import display_name, resolve_project
 from bridge.store import Store, now_epoch
@@ -819,6 +820,20 @@ def create_app(
                     "scheduled": pending_schedule_count,
                     "last_index": (diag["last_index"] or {}).get("ran_at"),
                 },
+            },
+        )
+
+    @app.get("/projects", response_class=HTMLResponse)
+    def projects_view(request: Request):
+        model = build_projects(store, cfg)
+        return templates.TemplateResponse(
+            request,
+            "projects.html",
+            {
+                "rows": model.rows,
+                "counts": model.counts,
+                "hidden": model.hidden,
+                "active": "projects",
             },
         )
 

@@ -1,0 +1,214 @@
+"""Projects index: read model + route.
+
+`build_projects` reuses `bridge.cards.build_cards` -- the same probe pattern
+`build_overview` uses -- and `bridge.overview.project_summary`, promoted from
+a private helper so Overview and Projects render identical rows off one
+projection instead of two that could drift. The route tests assert what a
+browser actually receives: a labelled search field, the five filter controls
+with their counts, exactly one `Open project` link per active project, no
+`<textarea>`/`data-launch-model` (that surface belongs to the Project
+workspace, not this index), branch/dirty and last-session age on the row, and
+the Pin/Hide/Restore hooks `projects.js` already delegates on.
+"""
+
+import re
+import subprocess
+from datetime import datetime, timedelta, timezone
+
+from fastapi.testclient import TestClient
+
+from bridge.agents import AgentsState, LiveSession
+from bridge.api import create_app
+from bridge.config import load
+from bridge.models import GitState, Handoff, SessionRecord
+from bridge.projects_view import build_projects
+from bridge.store import Store
+
+GIT = "/usr/bin/git"
+
+
+def _cfg(tmp_path, name="projects"):
+    return load({"db_path": tmp_path / f"{name}.db", "spool_dir": tmp_path / "spool"})
+
+
+def _ended(minutes_ago: int) -> str:
+    return (datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)).isoformat()
+
+
+def _git(cwd, *args):
+    subprocess.run([GIT, *args], cwd=cwd, check=True, capture_output=True, text=True)
+
+
+def _dirty_repo(tmp_path):
+    """A real repo with one uncommitted change, so the git probe `build_cards`
+    runs for real (not injected) still has something to report."""
+    d = tmp_path / "repo"
+    d.mkdir()
+    _git(d, "init", "-q")
+    _git(d, "config", "user.name", "t")
+    _git(d, "config", "user.email", "t@t")
+    (d / "a.txt").write_text("hello\n")
+    _git(d, "add", "a.txt")
+    _git(d, "commit", "-q", "-m", "first commit")
+    (d / "a.txt").write_text("changed\n")
+    return d
+
+
+# --- Model: build_projects ---------------------------------------------------
+
+
+def test_build_projects_counts_by_status(tmp_path):
+    """Seeds a queued-handoff project, a running one, a stale one, an idle one,
+    and a hidden one -- and asserts every count on `ProjectsModel.counts`."""
+    cfg = _cfg(tmp_path)
+    store = Store(cfg.db_path)
+    now = 10_000
+
+    queued_id = store.upsert_project("/p/queued", "queued-project")
+    store.create_handoff(Handoff(
+        id="h1", project_path="/p/queued", next_prompt="keep going", created_at=now,
+    ), queued_id)
+
+    running_id = store.upsert_project("/p/running", "running-project")
+    stale_id = store.upsert_project("/p/stale", "stale-project")
+    idle_id = store.upsert_project("/p/idle", "idle-project")
+
+    hidden_id = store.upsert_project("/p/hidden", "hidden-project")
+    store.set_project_status(hidden_id, "hidden")
+
+    def probe(path: str) -> GitState:
+        if path == "/p/stale":
+            return GitState(
+                status="ok", branch="main", dirty_count=2,
+                oldest_uncommitted_at=now - 100 * 3600,
+            )
+        return GitState(status="ok", branch="main", dirty_count=0)
+
+    def agents_fn() -> AgentsState:
+        return AgentsState(status="ok", sessions=[LiveSession(
+            session_id="live-1", cwd="/p/running", kind="interactive", status="busy",
+        )])
+
+    model = build_projects(store, cfg, probe_fn=probe, agents_fn=agents_fn)
+
+    # Hidden never reaches `build_cards` at all (`store.projects()`
+    # whitelists `active`), so `all` counts only the four active projects.
+    assert model.counts["all"] == 4
+    assert model.counts["needs_attention"] == 3  # queued + running + stale
+    assert model.counts["running"] == 1
+    assert model.counts["queued"] == 1
+    assert model.counts["hidden"] == 1
+    assert [p["id"] for p in model.hidden] == [hidden_id]
+    assert {row.project_id for row in model.rows} == {
+        queued_id, running_id, stale_id, idle_id,
+    }
+
+    store.close()
+
+
+def test_build_projects_rows_keep_the_card_actionability_order(tmp_path):
+    """`rows` is `[project_summary(card, now) for card in cards]` -- the exact
+    order `build_cards`/`cards.sort_key` already produces (handoff first),
+    never re-sorted here."""
+    cfg = _cfg(tmp_path)
+    store = Store(cfg.db_path)
+    now = 10_000
+
+    quiet_id = store.upsert_project("/p/quiet", "quiet-project")
+    queued_id = store.upsert_project("/p/queued", "queued-project")
+    store.create_handoff(Handoff(
+        id="h1", project_path="/p/queued", next_prompt="keep going", created_at=now,
+    ), queued_id)
+
+    model = build_projects(
+        store, cfg,
+        probe_fn=lambda path: GitState(status="ok", branch="main"),
+        agents_fn=lambda: AgentsState(status="ok", sessions=[]),
+    )
+
+    assert [row.project_id for row in model.rows] == [queued_id, quiet_id]
+    store.close()
+
+
+# --- Route: GET /projects ----------------------------------------------------
+
+
+def test_get_projects_returns_200_with_search_filters_and_rows(tmp_path):
+    cfg = _cfg(tmp_path, "route")
+    store = Store(cfg.db_path)
+    repo = _dirty_repo(tmp_path)
+    pid = store.upsert_project(str(repo), "demo-project")
+    store.upsert_session(SessionRecord(
+        session_id="s1", transcript_path="/t/s1", title="Did the thing",
+        ended_at=_ended(5),
+    ), pid)
+
+    hidden_id = store.upsert_project("/p/tucked-away", "tucked-away")
+    store.set_project_status(hidden_id, "hidden")
+    store.close()
+
+    store2 = Store(cfg.db_path)
+    client = TestClient(create_app(store2, cfg))
+    resp = client.get("/projects")
+    assert resp.status_code == 200
+    html = resp.text
+
+    # A labelled search field.
+    assert "Search projects" in html
+    assert 'for="projects-search"' in html
+    assert "data-projects-search" in html
+
+    # Five filter controls, plus a live result count.
+    for value in ("all", "needs_attention", "running", "queued", "hidden"):
+        assert f'data-projects-filter="{value}"' in html
+    assert "data-projects-count" in html
+
+    # One `Open project` row action per active project (the hidden one is not
+    # a card and so gets no row action of its own -- just its Restore hook).
+    assert html.count("Open project") == 1
+    assert f'href="/project/{pid}"' in html
+
+    # No launch/compose surface on this page -- that lives on the workspace.
+    assert html.count("<textarea") == 0
+    assert "data-launch-model" not in html
+    assert "data-compose-prompt" not in html
+
+    # Branch/dirty summary and last-session age.
+    assert re.search(r"\bmain\b", html)
+    assert "dirty" in html
+    assert "Did the thing" in html
+    assert "ago" in html
+
+    # Pin/Hide/Restore, reusing the existing hooks.
+    assert f'data-project-pin="{pid}"' in html
+    assert f'data-project-hide="{pid}"' in html
+    assert f'data-project-restore="{hidden_id}"' in html
+
+    # Exactly one `<h1>`, and the nav marks Projects active.
+    assert len(re.findall(r"<h1\b", html)) == 1
+    assert re.search(r'href="/projects"[^>]*aria-current="page"', html) or \
+        re.search(r'aria-current="page"[^>]*href="/projects"', html)
+
+    store2.close()
+
+
+def test_projects_index_shows_an_empty_state_with_no_projects(tmp_path):
+    cfg = _cfg(tmp_path, "empty")
+    store = Store(cfg.db_path)
+    client = TestClient(create_app(store, cfg))
+    html = client.get("/projects").text
+    assert 'class="empty"' in html
+    assert html.count("Open project") == 0
+    store.close()
+
+
+def test_overview_nav_now_links_to_projects(tmp_path):
+    """Projects is functional as of this task, so the shared shell's nav must
+    grow to include it (no dead ends) rather than staying Milestone 1's
+    Overview/Diagnostics-only list."""
+    cfg = _cfg(tmp_path, "nav")
+    store = Store(cfg.db_path)
+    client = TestClient(create_app(store, cfg))
+    html = client.get("/").text
+    assert 'href="/projects"' in html
+    store.close()

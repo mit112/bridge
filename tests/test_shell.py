@@ -3,9 +3,10 @@
 Every page now extends the same `base.html` shell (sidebar + page-head +
 `<main>`), so these properties -- one `<h1>`, a skip link ahead of the nav, a
 labelled `<nav>` landmark, the active item's `aria-current` -- are asserted
-once here rather than re-derived per page. Milestone 1 ships exactly two live
-nav destinations (Overview, Diagnostics); Projects/Schedule/Settings are added
-by their own milestones, so their absence here is deliberate, not an oversight.
+once here rather than re-derived per page. Nav destinations are added by the
+milestone that lands their route: Overview/Diagnostics shipped first, Projects
+followed (Task 2.5); Schedule/Settings are still absent below because their
+routes do not exist yet, not because the nav is being held back arbitrarily.
 """
 
 import re
@@ -42,10 +43,11 @@ def test_active_nav_marks_aria_current(tmp_path):
         re.search(r'aria-current="page"[^>]*href="/"', html)
 
 
-def test_nav_has_no_dead_ends_in_milestone_one(tmp_path):
+def test_nav_has_no_dead_ends_for_routes_not_yet_built(tmp_path):
     html = _client(tmp_path).get("/").text
-    # Only functional routes appear.
-    assert 'href="/projects"' not in html
+    # Projects is functional as of Task 2.5, so it belongs in the nav now;
+    # Schedule/Settings still do not exist, so they must not appear yet.
+    assert 'href="/projects"' in html
     assert 'href="/schedule"' not in html
     assert 'href="/settings"' not in html
     assert 'href="/diagnostics"' in html
@@ -64,7 +66,7 @@ def test_every_shell_page_has_exactly_one_h1_and_the_shared_landmarks(tmp_path):
     pid = store.upsert_project("/Users/mitsheth/dev/demo", "demo")
     store.close()
     client = TestClient(create_app(Store(cfg.db_path), cfg))
-    for path in ("/", "/diagnostics", f"/project/{pid}"):
+    for path in ("/", "/diagnostics", "/projects", f"/project/{pid}"):
         html = client.get(path).text
         assert len(re.findall(r"<h1\b", html)) == 1, path
         assert '<nav aria-label="Primary"' in html, path
