@@ -665,6 +665,174 @@ def test_refresh_button_posts_and_applies_snapshot(tmp_path):
     assert got["refresh"] == "Updated"
 
 
+# --- Task 2.4: live.js tolerates the leaf-light Overview DOM ----------------
+#
+# Overview (`/`) renders totals, a freshness strip, and (at most) a live-status
+# word -- it has no `[data-cards-list]`, and the one card-shaped element it
+# might address has none of the `[data-git-*]`/`[data-burn-*]`/
+# `[data-sparkline]` leaves `patchGit`/`patchBurn` look for (those hooks now
+# have zero renderers anywhere in the app; git is static text in the
+# workspace). Its freshness strip also never carries `data-generation`/
+# `data-generated-at`: `OverviewModel.freshness` has no server generation
+# counter, so `overview.html`'s call to `freshness_status()` omits both
+# kwargs, and the macro's own `{% if generated_at is not none %}` guard skips
+# rendering the attribute entirely. This harness builds exactly that sparser
+# DOM (not the dashboard-shaped stub the harnesses above use) and drives
+# `bridgeApplyDashboardUpdate` -- the schema-1 entry point every SSE frame and
+# the Refresh button both call -- straight at it.
+OVERVIEW_HARNESS = r'''
+globalThis.window = globalThis;
+globalThis.CSS = { escape: (s) => s };
+let now = 100;
+Date.now = () => now * 1000;
+
+function classes() {
+  const values = new Set();
+  return {
+    add: (...names) => names.forEach((name) => values.add(name)),
+    remove: (...names) => names.forEach((name) => values.delete(name)),
+    values: () => [...values],
+  };
+}
+function node(attrs = {}) {
+  return {
+    attrs: { ...attrs }, hidden: false, textContent: "",
+    classList: classes(),
+    getAttribute(name) { return this.attrs[name] ?? null; },
+    setAttribute(name, value) { this.attrs[name] = String(value); },
+    removeAttribute(name) { delete this.attrs[name]; },
+    closest() { return null; },
+  };
+}
+
+// The real freshness_status() macro only emits data-generated-at/
+// data-generation when the caller passes them -- overview.html's call does
+// not. Only data-index-at and data-server are unconditionally rendered.
+const strip = node({ "data-index-at": "100", "data-server": "available" });
+const label = node();
+const age = node();
+const diagnostics = node();
+const totals = {};
+for (const name of ["projects", "running", "queued", "scheduled", "today",
+                     "last_5h", "burn_rate", "last_index"]) totals[name] = node();
+
+// One leaf-light card: a live-status word and nothing else. querySelector is
+// a real function (as every actual DOM element's is) that simply has no
+// match for a git/burn/sparkline selector -- the realistic "leaf absent"
+// case, not a missing method.
+const liveWord = node();
+liveWord.attrs["data-live-path"] = "/Users/mitsheth/dev/demo";
+const projectCard = node({ "data-project-card": "1" });
+projectCard.querySelector = (sel) => (sel === "[data-live-status]" ? liveWord : null);
+
+const selectors = {
+  "[data-freshness-strip]": strip, "[data-freshness-label]": label,
+  "[data-freshness-age]": age, "[data-diagnostics-alert]": diagnostics,
+  '[data-project-card="1"]': projectCard,
+};
+for (const [name, value] of Object.entries(totals)) selectors[`[data-dashboard-total="${name}"]`] = value;
+
+globalThis.document = {
+  addEventListener() {},
+  querySelector(sel) { return selectors[sel] ?? null; },
+  querySelectorAll() { return []; },
+};
+globalThis.EventSource = class { addEventListener() {} close() {} };
+globalThis.setTimeout = (fn) => { fn(); return 0; };
+window.setTimeout = globalThis.setTimeout;
+globalThis.fetch = async () => ({ ok: true, json: async () => ({}) });
+
+const fs = require("fs");
+eval(fs.readFileSync(process.argv[2], "utf8"));
+
+const errors = [];
+console.error = (...a) => errors.push(String(a[0]));
+
+// Bumped after boot so a stale-vs-fresh outcome actually depends on whether
+// the frame below was accepted, not on whatever the boot-time index_at
+// already matched.
+now = 246;
+
+const frame = {
+  schema: 1, kind: FRAME_KIND, generated_at: 246, generation: FRAME_GENERATION,
+  freshness: { server: "available", index_at: 246, index_age_seconds: 0 },
+  topbar: { projects: 1, running: 1, queued: 0, scheduled: 0, today: 1200,
+    last_5h: 2400, burn_rate: 480, last_index: 246 },
+  diagnostics: { alert: false },
+  cards: {
+    // Leaf-light card: real git/burn payloads arrive (the server still
+    // computes them for the shared envelope) even though nothing in the DOM
+    // renders them.
+    "1": { live: { available: true, status: "busy", started_at: 1 },
+           git: { status: "ok", branch: "main", dirty_count: 2 },
+           burn: { today: 1200, last_5h: 2400, spark_points: "0,20 72,0" } },
+    // No `[data-project-card="2"]` exists at all -- iterating cards must
+    // tolerate one that is simply not on the page.
+    "2": { live: { available: true, status: "idle", started_at: 1 } },
+  },
+};
+
+let threw = null;
+try {
+  window.bridgeApplyDashboardUpdate(frame);
+} catch (error) {
+  threw = String(error);
+}
+
+console.log(JSON.stringify({
+  threw, errors,
+  totalsToday: totals.today.textContent,
+  freshnessLabel: label.textContent,
+  liveWordText: liveWord.textContent,
+}));
+'''
+
+
+def _run_overview_dom(tmp_path, frame_kind: str, frame_generation) -> dict:
+    harness = tmp_path / "overview_harness.js"
+    harness.write_text(
+        OVERVIEW_HARNESS.replace("FRAME_KIND", json.dumps(frame_kind))
+        .replace("FRAME_GENERATION", json.dumps(frame_generation))
+    )
+    proc = subprocess.run(
+        [_node(), str(harness), str(LIVE_JS)], capture_output=True, text=True
+    )
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout)
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_apply_dashboard_update_tolerates_the_leaf_light_overview_dom(tmp_path):
+    """No `[data-cards-list]`, no git/burn/sparkline leaves on the one card
+    that exists, and a second card in the payload with no DOM element at all.
+    A crash here would have taken down the SSE listener for the entire page,
+    not just the missing leaf."""
+    got = _run_overview_dom(tmp_path, "snapshot", 0)
+    assert got["threw"] is None, got["threw"]
+    assert got["errors"] == []
+    assert got["totalsToday"] == "1k"
+    assert got["freshnessLabel"] == "connected"
+    assert got["liveWordText"] == "busy"
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_boot_with_no_data_generation_accepts_the_first_patch_frame(tmp_path):
+    """Overview's freshness strip never carries `data-generation`
+    (`OverviewModel` has no server generation counter), so the boot IIFE reads
+    a missing attribute. `Number(null)` is 0, not NaN -- treating that 0 as a
+    real generation would make a first PATCH frame that also reports
+    generation 0 (a live-only tick before any full update has landed) look
+    "not newer than what we already have", rejecting it and leaving the
+    freshness strip stuck reporting stale/never-indexed indefinitely.
+    Treating the missing attribute as unknown (not 0) accepts that frame."""
+    got = _run_overview_dom(tmp_path, "patch", 0)
+    assert got["threw"] is None, got["threw"]
+    assert got["freshnessLabel"] == "connected", (
+        "a missing data-generation on the freshness strip rejected the first "
+        "patch frame as stale instead of accepting it as the baseline"
+    )
+
+
 # --- Hide and restore: projects.js -------------------------------------------
 
 PROJECTS_JS = Path(__file__).resolve().parent.parent / "src" / "bridge" / "static" / "projects.js"

@@ -75,29 +75,34 @@ function cardFor(projectId) {
   return query(`[data-project-card="${cssValue(projectId)}"]`);
 }
 
+// Overview's leaf-light DOM has no per-project git/burn/sparkline leaves (and
+// the workspace renders git as static text, never as these hooks), so every
+// lookup below the card must tolerate a null result -- not just a card that
+// itself does not exist.
+function leaf(card, selector) {
+  return card && card.querySelector ? card.querySelector(selector) : null;
+}
+
 function patchLive(card, live) {
   if (!card || !live) return;
   const status = live.status || (live.available ? "unknown" : "ended");
-  const band = card.querySelector ? card.querySelector("[data-live-status]") : null;
+  const band = leaf(card, "[data-live-status]");
   setBandState(band, status);
   setText(band, status);
-  const age = card.querySelector ? card.querySelector("[data-live-age]") : null;
-  setText(age, live.started_at == null ? "" : `· ${live.started_at}`);
-  setText(card.querySelector ? card.querySelector("[data-live-model]") : null,
-    live.model ? `· ${live.model}` : "");
-  setText(card.querySelector ? card.querySelector("[data-live-effort]") : null,
-    live.effort ? `/${live.effort}` : "");
+  setText(leaf(card, "[data-live-age]"), live.started_at == null ? "" : `· ${live.started_at}`);
+  setText(leaf(card, "[data-live-model]"), live.model ? `· ${live.model}` : "");
+  setText(leaf(card, "[data-live-effort]"), live.effort ? `/${live.effort}` : "");
 }
 
 function patchGit(card, git) {
   if (!card || !git) return;
-  const branch = card.querySelector("[data-git-branch]");
-  const dirty = card.querySelector("[data-git-dirty]");
-  const ahead = card.querySelector("[data-git-ahead]");
-  const stale = card.querySelector("[data-git-stale]");
-  const cache = card.querySelector("[data-git-cache]");
-  const notRepo = card.querySelector("[data-git-status=\"not_a_repo\"]");
-  const unavailable = card.querySelector("[data-git-status=\"unavailable\"]");
+  const branch = leaf(card, "[data-git-branch]");
+  const dirty = leaf(card, "[data-git-dirty]");
+  const ahead = leaf(card, "[data-git-ahead]");
+  const stale = leaf(card, "[data-git-stale]");
+  const cache = leaf(card, "[data-git-cache]");
+  const notRepo = leaf(card, "[data-git-status=\"not_a_repo\"]");
+  const unavailable = leaf(card, "[data-git-status=\"unavailable\"]");
   const ok = git.status === "ok";
   setText(branch, ok ? git.branch : "");
   setHidden(branch, !ok);
@@ -115,10 +120,9 @@ function patchGit(card, git) {
 
 function patchBurn(card, burn) {
   if (!card || !burn) return;
-  setText(card.querySelector("[data-burn-today]"), `${formatKilo(burn.today)} today`);
-  setText(card.querySelector("[data-burn-last-5h]"), `${formatKilo(burn.last_5h)} last 5h`);
-  setText(card.querySelector("[data-sparkline]"), "");
-  const line = card.querySelector("[data-sparkline]");
+  setText(leaf(card, "[data-burn-today]"), `${formatKilo(burn.today)} today`);
+  setText(leaf(card, "[data-burn-last-5h]"), `${formatKilo(burn.last_5h)} last 5h`);
+  const line = leaf(card, "[data-sparkline]");
   if (line) line.setAttribute("points", burn.spark_points || "");
 }
 
@@ -192,8 +196,13 @@ function patchFreshness(update) {
   const freshness = update.freshness;
   if (!freshness) return;
   const generation = Number(update.generation);
+  // `lastGeneration == null` means the boot read found no usable baseline
+  // (Overview's freshness strip never carries `data-generation` -- see the
+  // boot IIFE below). With no baseline to compare against, the first update
+  // of either kind is accepted rather than rejected as "not newer".
   const successfulGeneration = update.kind === "snapshot"
-    || (Number.isFinite(generation) && lastGeneration != null && generation > lastGeneration);
+    || lastGeneration == null
+    || (Number.isFinite(generation) && generation > lastGeneration);
   if (successfulGeneration && freshness.index_at != null) {
     lastIndexAt = Number(freshness.index_at);
     lastGeneration = Number.isFinite(generation) ? generation : lastGeneration;
@@ -268,7 +277,12 @@ if (document.addEventListener) {
 lastIndexAt = initialIndexAt();
 const initialStrip = query("[data-freshness-strip]");
 if (initialStrip) {
-  const initialGeneration = Number(initialStrip.getAttribute("data-generation"));
+  // `getAttribute` returns `null` for a missing attribute (Overview's strip
+  // never renders `data-generation`), and `Number(null)` is 0 -- a real,
+  // finite generation, not the "unknown" `patchFreshness` needs it to mean.
+  // Reading the raw value first keeps "absent" and "present as 0" distinct.
+  const rawGeneration = initialStrip.getAttribute("data-generation");
+  const initialGeneration = rawGeneration == null ? NaN : Number(rawGeneration);
   lastGeneration = Number.isFinite(initialGeneration) ? initialGeneration : null;
   announceConnectionState(connectionState(initialStrip.getAttribute("data-server"), Math.floor(Date.now() / 1000)));
 }

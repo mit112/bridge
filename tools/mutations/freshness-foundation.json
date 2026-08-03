@@ -67,7 +67,7 @@
     {
       "name": "reset indexed freshness from every accepted patch frame",
       "file": "src/bridge/static/live.js",
-      "old": "  const successfulGeneration = update.kind === \"snapshot\"\n    || (Number.isFinite(generation) && lastGeneration != null && generation > lastGeneration);",
+      "old": "  const successfulGeneration = update.kind === \"snapshot\"\n    || lastGeneration == null\n    || (Number.isFinite(generation) && generation > lastGeneration);",
       "new": "  const successfulGeneration = true;",
       "tests": ["tests/test_static_js.py::test_liveness_patch_does_not_reset_index_freshness"],
       "expect_count": 1
