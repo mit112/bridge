@@ -2008,7 +2008,7 @@ def test_the_topbar_reports_a_burn_rate_over_the_measured_window(client):
         pid,
     )
     body = c.get("/").text
-    assert re.search(r"<dt>burn</dt><dd>10k/h</dd>", body), (
+    assert re.search(r"<dt>burn</dt><dd[^>]*>10k/h</dd>", body), (
         "50k over the 5h window is 10k/h"
     )
     assert "% of" not in body            # still no fabricated denominator
@@ -2045,21 +2045,21 @@ def test_the_topbar_reports_running_sessions_and_queued_handoffs(
         id="h-top", project_path=DEMO, next_prompt="go", status="queued",
     ), pid)
     body = c.get("/").text
-    assert re.search(r"<dt>queued</dt><dd>1</dd>", body)
-    assert re.search(r"<dt>running</dt><dd>2</dd>", body)
+    assert re.search(r"<dt>queued</dt><dd[^>]*>1</dd>", body)
+    assert re.search(r"<dt>running</dt><dd[^>]*>2</dd>", body)
 
 
 def test_the_topbar_says_never_rather_than_leaving_the_index_time_blank(client):
     """An empty cell reads as a rendering fault; a fresh install genuinely has
     not indexed yet."""
     c, _, _ = client
-    assert re.search(r"<dt>indexed</dt><dd>never</dd>", c.get("/").text)
+    assert re.search(r"<dt>indexed</dt><dd[^>]*>never</dd>", c.get("/").text)
 
 
 def test_the_topbar_reports_the_last_index_time_once_there_is_one(client):
     c, store, _ = client
     store.record_index_run({"files_seen": 1}, ran_at=now_epoch(), duration_ms=1)
-    assert re.search(r"<dt>indexed</dt><dd>0m</dd>", c.get("/").text)
+    assert re.search(r"<dt>indexed</dt><dd[^>]*>0m</dd>", c.get("/").text)
 
 
 # --- Live sessions with no project row ----------------------------------------
@@ -2125,8 +2125,8 @@ def test_the_unattributed_block_holds_the_same_status_the_cards_do(
     second = c.get("/").text
     store.close()
 
-    assert re.search(r"<dt>running</dt><dd>1</dd>", first)
-    assert re.search(r"<dt>running</dt><dd>1</dd>", second), (
+    assert re.search(r"<dt>running</dt><dd[^>]*>1</dd>", first)
+    assert re.search(r"<dt>running</dt><dd[^>]*>1</dd>", second), (
         "the sensor said idle once, inside the hold, so running must still count it"
     )
 
@@ -2160,7 +2160,7 @@ def test_a_session_outside_any_project_is_shown_with_its_directory(
         payload = _frames("".join(r.iter_text()))[0][1]
 
     assert any(u["path"] == "/Users/mitsheth/scratch" for u in payload["unattributed"])
-    assert re.search(r"<dt>running</dt><dd>1</dd>", c.get("/").text)
+    assert re.search(r"<dt>running</dt><dd[^>]*>1</dd>", c.get("/").text)
 
 
 def test_a_session_inside_a_project_stays_on_its_card(client, monkeypatch):
@@ -2608,7 +2608,7 @@ def test_the_topbar_scheduled_count_reflects_a_pending_job(client):
 
     body = c.get("/").text
 
-    assert re.search(r"<dt>scheduled</dt><dd data-topbar-scheduled>1</dd>", body)
+    assert re.search(r"<dt>scheduled</dt><dd[^>]*data-topbar-scheduled[^>]*>1</dd>", body)
 
 
 def test_the_schedule_page_shows_a_pending_job(client):
@@ -2632,7 +2632,7 @@ def test_the_topbar_scheduled_count_is_zero_with_nothing_pending(client):
 
     body = c.get("/").text
 
-    assert re.search(r"<dt>scheduled</dt><dd data-topbar-scheduled>0</dd>", body)
+    assert re.search(r"<dt>scheduled</dt><dd[^>]*data-topbar-scheduled[^>]*>0</dd>", body)
 
 
 def test_the_schedule_page_states_explicitly_when_nothing_is_pending(client):
@@ -2687,7 +2687,7 @@ def test_the_topbar_scheduled_count_excludes_a_cancelled_job(client):
 
     body = c.get("/").text
 
-    assert re.search(r"<dt>scheduled</dt><dd data-topbar-scheduled>0</dd>", body)
+    assert re.search(r"<dt>scheduled</dt><dd[^>]*data-topbar-scheduled[^>]*>0</dd>", body)
 
 
 def test_a_cancelled_schedule_does_not_appear_in_the_upcoming_schedule_view(client):

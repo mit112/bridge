@@ -89,6 +89,39 @@ def test_attention_ladder_orders_kinds_and_pins_correct_hrefs(tmp_path):
     store.close()
 
 
+def test_attention_is_bounded_without_repeating_omitted_risks_as_recent(tmp_path):
+    """Removing the cap recreates the multi-screen card wall; deriving Recent
+    from only the displayed slice repeats omitted stale projects as if quiet."""
+    cfg = _cfg(tmp_path)
+    store = Store(cfg.db_path)
+    now = 100_000
+    expected_limit = 6
+    for i in range(expected_limit + 2):
+        store.upsert_project(f"/p/stale-{i}", f"stale-{i}")
+    quiet_id = store.upsert_project("/p/quiet", "quiet")
+
+    def probe(path: str) -> GitState:
+        if path.startswith("/p/stale-"):
+            return GitState(
+                status="ok", branch="main", dirty_count=1,
+                oldest_uncommitted_at=now - 100 * 3600,
+            )
+        return GitState(status="ok", branch="main", dirty_count=0)
+
+    model = build_overview(
+        store, cfg, now=now, probe_fn=probe,
+        agents_fn=lambda: AgentsState(status="ok", sessions=[]),
+    )
+
+    assert len(model.attention) == expected_limit
+    assert model.attention_total == expected_limit + 2
+    assert [item.title for item in model.attention] == [
+        f"stale-{i}" for i in range(expected_limit)
+    ]
+    assert [row.project_id for row in model.recent] == [quiet_id]
+    store.close()
+
+
 def test_schedule_failure_excludes_already_retried_originals(tmp_path):
     cfg = _cfg(tmp_path)
     store = Store(cfg.db_path)
@@ -354,6 +387,28 @@ def test_overview_route_shows_attention_recent_link_and_freshness(tmp_path):
     store.close()
 
 
+def test_overview_route_uses_compact_primary_and_secondary_composition(tmp_path):
+    """Replacing the bounded row composition with generic full-size cards must
+    fail before the landing page can become a second Projects index again."""
+    c, store, _ = _route_client(tmp_path)
+    pid = store.upsert_project("/p/handoff", "handoff-project")
+    store.create_handoff(Handoff(
+        id="h1", project_path="/p/handoff", next_prompt="keep going",
+        summary="Finish the queued work", created_at=1,
+    ), pid)
+
+    html = c.get("/").text
+
+    assert 'class="overview-layout"' in html
+    assert 'class="attention-list"' in html
+    assert 'class="attention-row attention-row--handoff"' in html
+    attention = html[html.index('<section class="overview-primary"'):]
+    attention = attention[:attention.index("</section>")]
+    assert '<a href="/projects">View all projects</a>' in attention
+    assert attention.index("Finish the queued work") < attention.index("Continue in Terminal")
+    store.close()
+
+
 def test_overview_route_keeps_freshness_strip_and_total_hooks_for_live_js(tmp_path):
     c, store, _ = _route_client(tmp_path)
     store.upsert_project("/p/quiet", "quiet-project")
@@ -362,6 +417,7 @@ def test_overview_route_keeps_freshness_strip_and_total_hooks_for_live_js(tmp_pa
 
     assert "data-freshness-strip" in html
     assert html.count("data-dashboard-total=") == 8
+    assert len(re.findall(r"<dd[^>]+data-dashboard-total=", html)) == 8
     assert "data-project-membership-status" in html
     assert "data-diagnostics-alert" in html
     store.close()

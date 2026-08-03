@@ -27,6 +27,7 @@ from bridge.store import Store, now_epoch, to_epoch
 # Overview shows only the highest-value subset; the full lists live on
 # Projects/Schedule. Small enough to read in one glance, per the spec's "calm"
 # requirement for this page.
+ATTENTION_LIMIT = 6
 RECENT_LIMIT = 5
 UP_NEXT_LIMIT = 3
 # A long unretried-failure history must not dominate "Needs attention"; the
@@ -118,6 +119,7 @@ class AttentionItem:
 @dataclass(frozen=True)
 class OverviewModel:
     attention: list[AttentionItem]
+    attention_total: int
     recent: list[ProjectSummary]
     up_next: list[ScheduleRow]
     totals: dict
@@ -168,11 +170,14 @@ def build_overview(
     # trip per scheduled-run row.
     by_path = {card.path: card for card in cards}
 
-    attention = _attention_from_cards(cards) + _schedule_failures(store, by_path)
+    all_attention = _attention_from_cards(cards) + _schedule_failures(store, by_path)
+    attention = all_attention[:ATTENTION_LIMIT]
     # "Needs attention" and "Recent projects" are distinct sections; a project
     # already surfaced above (as a queued handoff, a running session, stale, or
     # behind a schedule failure) is redundant to repeat here.
-    attention_ids = {item.project_id for item in attention if item.project_id is not None}
+    attention_ids = {
+        item.project_id for item in all_attention if item.project_id is not None
+    }
     recent = [
         project_summary(card, now) for card in cards
         if card.project_id not in attention_ids
@@ -184,6 +189,7 @@ def build_overview(
 
     return OverviewModel(
         attention=attention,
+        attention_total=len(all_attention),
         recent=recent,
         up_next=up_next,
         totals=envelope["topbar"],

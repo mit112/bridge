@@ -10,22 +10,13 @@
 {% from "_components.html" import project_summary_row, schedule_row, empty_state %}
 {% block page_title %}Overview{% endblock %}
 {% block page_summary %}
-{# Same eight totals the mega-dashboard's topbar showed, moved here verbatim:
-   `model.totals` is `DashboardBuilder`'s own `topbar` dict, unchanged by the
-   flip, so `data-dashboard-total` stays live.js's stable patch target. #}
-<dl class="totals">
-  <div class="total" data-dashboard-total="projects"><dt>projects</dt><dd>{{ model.totals.projects }}</dd></div>
-  <div class="total" data-dashboard-total="running"><dt>running</dt><dd>{{ model.totals.running }}</dd></div>
-  <div class="total" data-dashboard-total="queued"><dt>queued</dt><dd>{{ model.totals.queued }}</dd></div>
-  <div class="total" data-dashboard-total="scheduled"><dt>scheduled</dt><dd data-topbar-scheduled>{{ model.totals.scheduled }}</dd></div>
-  <div class="total" data-dashboard-total="today"><dt>tokens today</dt><dd>{{ model.totals.today | kilo }}</dd></div>
-  <div class="total" data-dashboard-total="last_5h"><dt>last 5h</dt><dd>{{ model.totals.last_5h | kilo }}</dd></div>
-  {# A rate over the measured window, never a share of a cap: the plan
-     publishes no total, so a percentage would have no denominator and a
-     gauge would be inventing one. #}
-  <div class="total" data-dashboard-total="burn_rate"><dt>burn</dt><dd>{{ model.totals.burn_rate | kilo }}/h</dd></div>
-  <div class="total" data-dashboard-total="last_index"><dt>indexed</dt><dd>{{ (model.totals.last_index | ago_epoch) or "never" }}</dd></div>
-</dl>
+<p class="page-lede">
+  {% if model.attention_total %}
+    {{ model.attention_total }} item{{ "" if model.attention_total == 1 else "s" }} need{{ "s" if model.attention_total == 1 else "" }} your attention.{% if model.attention_total > model.attention | length %} Showing the {{ model.attention | length }} highest priority.{% endif %}
+  {% else %}
+    Nothing needs your attention right now.
+  {% endif %}
+</p>
 {% endblock %}
 {% block page_actions %}
 {% set freshness = model.freshness %}
@@ -39,32 +30,23 @@
 {% endcall %}
 {% endblock %}
 {% block content %}
-{# `.page-lede` is the same lede style `projects.html` already uses. #}
-<p class="page-lede overview-lede">
-  {% if model.attention %}
-    {{ model.attention | length }} item{{ "" if model.attention | length == 1 else "s" }} need{{ "s" if model.attention | length == 1 else "" }} your attention.
-  {% else %}
-    Nothing needs your attention right now.
-  {% endif %}
-</p>
-
-{# `.history` is the same section-spacing + heading style `diagnostics.html`
-   and `schedule.html` already use for their own named groups. #}
-<section class="history" aria-labelledby="overview-attention-title">
-  <h2 id="overview-attention-title">Needs attention</h2>
+<div class="overview-layout">
+<section class="overview-primary" aria-labelledby="overview-attention-title">
+  <div class="overview-section-head">
+    <h2 id="overview-attention-title">Needs attention</h2>
+    <a href="/projects">View all projects</a>
+  </div>
   {% if not model.attention %}
     {{ empty_state("Nothing needs attention.") }}
   {% else %}
-  {# `.cards`/`.card`/`.card--risk` are the same list/card treatment
-     `diagnostics.html`'s own "Needs attention" section already uses. #}
-  <ul class="cards" data-overview-attention>
+  <ul class="attention-list" data-overview-attention>
     {% for item in model.attention %}
-    <li class="card{% if item.kind == 'stale' %} card--risk{% endif %}">
-      <div class="card__head"><h3>{{ item.title }}</h3></div>
-      {# Status is never colour alone: a stale item's warning glyph sits
-         beside the words, the same "⚠ uncommitted..." convention the old
-         per-project card used. #}
-      <p class="card__note">{% if item.kind == "stale" %}⚠ {% endif %}{{ item.summary }}</p>
+    <li class="attention-row attention-row--{{ item.kind }}">
+      <div class="attention-row__body">
+        <span class="attention-row__kind">{% if item.kind in ("stale", "schedule_failure") %}⚠ {% endif %}{{ item.kind | replace("_", " ") }}</span>
+        <h3>{{ item.title }}</h3>
+        <p class="attention-row__summary">{{ item.summary }}</p>
+      </div>
       <a class="btn" href="{{ item.primary_action.href }}">{{ item.primary_action.label }}</a>
     </li>
     {% endfor %}
@@ -72,7 +54,8 @@
   {% endif %}
 </section>
 
-<section class="history" aria-labelledby="overview-recent-title">
+<aside class="overview-secondary" aria-label="Recent and upcoming work">
+<section class="overview-panel" aria-labelledby="overview-recent-title">
   <h2 id="overview-recent-title">Recent projects</h2>
   {% if not model.recent %}
     {{ empty_state("No other projects yet.") }}
@@ -87,10 +70,9 @@
      own: live.js's project-list-changed announcement (`applyCardOrder`)
      still looks this hook up by name. #}
   <p class="card__note" data-project-membership-status role="status" aria-live="polite"></p>
-  <p><a href="/projects">View all projects</a></p>
 </section>
 
-<section class="history" aria-labelledby="overview-up-next-title">
+<section class="overview-panel" aria-labelledby="overview-up-next-title">
   <h2 id="overview-up-next-title">Up next</h2>
   {% if not model.up_next %}
     {{ empty_state("Nothing scheduled.") }}
@@ -107,10 +89,23 @@
   {% endif %}
   <p><a href="/schedule">See the full schedule</a></p>
 </section>
+</aside>
+</div>
 
-{# Absolute values, never a percentage of a cap the plan does not publish --
-   the same rule the topbar strip above already follows. `.muted` is the
-   same quiet-text token every other secondary line on the page already
-   uses (`.card__note`, `.empty`). #}
-<p class="muted overview-usage">Today: {{ model.totals.today | kilo }} tokens · last 5h: {{ model.totals.last_5h | kilo }} tokens</p>
+{# Keep every live-update leaf, but move the dashboard strip into one quiet,
+   collapsed usage disclosure rather than making eight metrics compete with
+   the page question. Hooks live on <dd> so a tick never erases its <dt>. #}
+<details class="overview-usage">
+  <summary>Usage and index details</summary>
+  <dl class="totals overview-metrics">
+    <div class="total"><dt>projects</dt><dd data-dashboard-total="projects">{{ model.totals.projects }}</dd></div>
+    <div class="total"><dt>running</dt><dd data-dashboard-total="running">{{ model.totals.running }}</dd></div>
+    <div class="total"><dt>queued</dt><dd data-dashboard-total="queued">{{ model.totals.queued }}</dd></div>
+    <div class="total"><dt>scheduled</dt><dd data-dashboard-total="scheduled" data-topbar-scheduled>{{ model.totals.scheduled }}</dd></div>
+    <div class="total"><dt>tokens today</dt><dd data-dashboard-total="today">{{ model.totals.today | kilo }}</dd></div>
+    <div class="total"><dt>last 5h</dt><dd data-dashboard-total="last_5h">{{ model.totals.last_5h | kilo }}</dd></div>
+    <div class="total"><dt>burn</dt><dd data-dashboard-total="burn_rate">{{ model.totals.burn_rate | kilo }}/h</dd></div>
+    <div class="total"><dt>indexed</dt><dd data-dashboard-total="last_index">{{ (model.totals.last_index | ago_epoch) or "never" }}</dd></div>
+  </dl>
+</details>
 {% endblock %}
