@@ -62,7 +62,10 @@
   <ul data-hidden-list>
     {% for p in hidden %}
       <li data-hidden-project="{{ p.id }}">
-        <a href="/project/{{ p.id }}">{{ p.name }}</a>
+        {# Plain text, not a link: the workspace route 404s for hidden projects
+           by design (no card -> None), so a link here would be a nav dead-end.
+           Restore is the only action a hidden project offers. #}
+        <span class="hidden-project__name">{{ p.name }}</span>
         <span class="card__note">{{ p.status }}</span>
         <button type="button" class="btn" data-project-restore="{{ p.id }}"
                 aria-label="Restore {{ p.name }} to the dashboard">Restore</button>

@@ -184,6 +184,12 @@ def test_get_projects_returns_200_with_search_filters_and_rows(tmp_path):
     assert f'data-project-hide="{pid}"' in html
     assert f'data-project-restore="{hidden_id}"' in html
 
+    # The hidden entry is a nav dead-end if linked: the workspace route 404s
+    # for hidden projects by design. So its name is plain text, never a link,
+    # and Restore is its only action.
+    assert f'href="/project/{hidden_id}"' not in html
+    assert "tucked-away" in html
+
     # Exactly one `<h1>`, and the nav marks Projects active.
     assert len(re.findall(r"<h1\b", html)) == 1
     assert re.search(r'href="/projects"[^>]*aria-current="page"', html) or \
