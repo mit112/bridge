@@ -3,7 +3,12 @@ from datetime import datetime, timedelta, timezone
 from bridge.agents import AgentsState
 from bridge.config import load
 from bridge.models import GitState, Handoff, LiveSession, ScheduledRun, SessionRecord
-from bridge.overview import RECENT_LIMIT, UP_NEXT_LIMIT, build_overview
+from bridge.overview import (
+    RECENT_LIMIT,
+    SCHEDULE_FAILURE_LIMIT,
+    UP_NEXT_LIMIT,
+    build_overview,
+)
 from bridge.store import Store
 
 
@@ -15,110 +20,192 @@ def _ended(minutes_ago: int) -> str:
     return (datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)).isoformat()
 
 
-def _seed(store: Store, now: int):
-    """Six projects covering every rung of the attention ladder, plus a
-    pinned-but-quiet project to prove pin ordering independent of rank, and a
-    failed scheduled run to prove the schedule-failure category."""
-    pinned = store.upsert_project("/p/pinned", "pinned")
-    store.set_project_pinned(pinned, True)
-    store.upsert_session(SessionRecord(
-        session_id="s-pinned", transcript_path="/t/pinned", ended_at=_ended(5),
-    ), pinned)
+def test_attention_ladder_orders_kinds_and_pins_correct_hrefs(tmp_path):
+    """Ladder ordering (handoff -> running -> stale -> schedule_failure) and
+    the exact context-sensitive primary action for each kind, including the
+    exact interpolated project id -- a mutation that swapped hrefs or ids
+    must fail this."""
+    cfg = _cfg(tmp_path)
+    store = Store(cfg.db_path)
+    now = 10_000
 
-    handoff_proj = store.upsert_project("/p/handoff", "handoff-project")
+    handoff_id = store.upsert_project("/p/handoff", "handoff-project")
     store.create_handoff(Handoff(
         id="h1", project_path="/p/handoff", next_prompt="keep going",
         summary="finish the thing", created_at=now,
-    ), handoff_proj)
+    ), handoff_id)
 
-    running_proj = store.upsert_project("/p/running", "running-project")
+    running_id = store.upsert_project("/p/running", "running-project")
 
-    stale_proj = store.upsert_project("/p/stale", "stale-project")
+    stale_id = store.upsert_project("/p/stale", "stale-project")
 
-    recent_proj = store.upsert_project("/p/recent", "recent-project")
-    store.upsert_session(SessionRecord(
-        session_id="s-recent", transcript_path="/t/recent", ended_at=_ended(60),
-    ), recent_proj)
-
-    idle_proj = store.upsert_project("/p/idle", "idle-project")
-
-    # A failed scheduled run against the recent project (chosen so
-    # project-resolution is exercised, not just a bare path).
+    failure_target_id = store.upsert_project("/p/failure-target", "failure-target")
     store.restore_scheduled_run(ScheduledRun(
-        id="run-failed", project_path="/p/recent", prompt="do the thing",
+        id="run-failed", project_path="/p/failure-target", prompt="do the thing",
         mode="interactive", scheduled_for=now - 100, created_at=now - 200,
         status="failed", completed_at=now - 50, error="boom",
     ))
 
-    return {
-        "pinned": pinned, "handoff": handoff_proj, "running": running_proj,
-        "stale": stale_proj, "recent": recent_proj, "idle": idle_proj,
-    }
-
-
-def _probe_fn(stale_proj_path: str, now: int):
     def probe(path: str) -> GitState:
-        if path == stale_proj_path:
+        if path == "/p/stale":
             return GitState(
                 status="ok", branch="main", dirty_count=3,
                 oldest_uncommitted_at=now - 100 * 3600,
             )
         return GitState(status="ok", branch="main", dirty_count=0)
-    return probe
 
+    def agents_fn() -> AgentsState:
+        return AgentsState(status="ok", sessions=[LiveSession(
+            session_id="live-1", cwd="/p/running", kind="interactive", status="busy",
+        )])
 
-def _agents_fn():
-    return AgentsState(status="ok", sessions=[LiveSession(
-        session_id="live-1", cwd="/p/running", kind="interactive", status="busy",
-    )])
-
-
-def test_attention_ladder_matches_card_priority_and_actions(tmp_path):
-    cfg = _cfg(tmp_path)
-    store = Store(cfg.db_path)
-    now = 10_000
-    ids = _seed(store, now)
-
-    model = build_overview(
-        store, cfg, now=now,
-        probe_fn=_probe_fn("/p/stale", now),
-        agents_fn=_agents_fn,
-    )
+    model = build_overview(store, cfg, now=now, probe_fn=probe, agents_fn=agents_fn)
 
     kinds = [item.kind for item in model.attention]
     assert kinds == ["handoff", "running", "stale", "schedule_failure"]
 
     handoff_item, running_item, stale_item, failure_item = model.attention
-    assert handoff_item.project_id == ids["handoff"]
+
+    assert handoff_item.project_id == handoff_id
     assert handoff_item.primary_action.label == "Continue in Terminal"
-    assert running_item.project_id == ids["running"]
+    assert handoff_item.primary_action.href == f"/project/{handoff_id}?tab=current"
+
+    assert running_item.project_id == running_id
     assert running_item.primary_action.label == "Open project"
-    assert stale_item.project_id == ids["stale"]
+    assert running_item.primary_action.href == f"/project/{running_id}"
+
+    assert stale_item.project_id == stale_id
     assert stale_item.primary_action.label == "Review project state"
+    assert stale_item.primary_action.href == f"/project/{stale_id}"
+
+    assert failure_item.project_id == failure_target_id
     assert failure_item.primary_action.label == "Review scheduled run"
-    assert failure_item.project_id == ids["recent"]
+    assert failure_item.primary_action.href == "/schedule"
 
     store.close()
 
 
-def test_recent_truncates_and_keeps_pin_first(tmp_path):
+def test_schedule_failure_excludes_already_retried_originals(tmp_path):
     cfg = _cfg(tmp_path)
     store = Store(cfg.db_path)
     now = 10_000
-    ids = _seed(store, now)
+    store.upsert_project("/p/retried", "retried-project")
+    store.upsert_project("/p/unretried", "unretried-project")
+
+    # The original failure: its status stays "failed" forever once retried.
+    store.restore_scheduled_run(ScheduledRun(
+        id="orig", project_path="/p/retried", prompt="p", mode="interactive",
+        scheduled_for=now - 500, created_at=now - 600, status="failed",
+        completed_at=now - 400, error="boom",
+    ))
+    # The retry: a fresh row that references the original via `retry_of`.
+    store.restore_scheduled_run(ScheduledRun(
+        id="retry-1", project_path="/p/retried", prompt="p", mode="interactive",
+        scheduled_for=now + 100, created_at=now - 300, status="pending",
+        retry_of="orig",
+    ))
+    # A genuinely unretried failure must still surface.
+    store.restore_scheduled_run(ScheduledRun(
+        id="unretried", project_path="/p/unretried", prompt="p",
+        mode="interactive", scheduled_for=now - 500, created_at=now - 600,
+        status="failed", completed_at=now - 350, error="oops",
+    ))
 
     model = build_overview(
         store, cfg, now=now,
-        probe_fn=_probe_fn("/p/stale", now),
-        agents_fn=_agents_fn,
+        probe_fn=lambda path: GitState(status="ok", branch="main"),
+        agents_fn=lambda: AgentsState(status="ok", sessions=[]),
     )
 
+    failure_run_ids = [item.meta["run_id"] for item in model.attention
+                       if item.kind == "schedule_failure"]
+    assert failure_run_ids == ["unretried"]
+
+    store.close()
+
+
+def test_schedule_failure_limit_and_newest_completed_first(tmp_path):
+    cfg = _cfg(tmp_path)
+    store = Store(cfg.db_path)
+    now = 10_000
+    completed_ats = [100, 500, 300, 700, 200, 600, 400]  # 7 > SCHEDULE_FAILURE_LIMIT
+    for i, completed_at in enumerate(completed_ats):
+        path = f"/p/fail{i}"
+        store.upsert_project(path, f"fail-project-{i}")
+        store.restore_scheduled_run(ScheduledRun(
+            id=f"fail-{i}", project_path=path, prompt="p", mode="interactive",
+            scheduled_for=now - 1000, created_at=now - 1000, status="failed",
+            completed_at=completed_at, error="boom",
+        ))
+
+    model = build_overview(
+        store, cfg, now=now,
+        probe_fn=lambda path: GitState(status="ok", branch="main"),
+        agents_fn=lambda: AgentsState(status="ok", sessions=[]),
+    )
+
+    failures = [item for item in model.attention if item.kind == "schedule_failure"]
+    assert len(failures) == SCHEDULE_FAILURE_LIMIT
+    completed_order = [item.meta["run_id"] for item in failures]
+    expected_order = [
+        f"fail-{i}" for i, _ in sorted(
+            enumerate(completed_ats), key=lambda p: p[1], reverse=True,
+        )
+    ][:SCHEDULE_FAILURE_LIMIT]
+    assert completed_order == expected_order
+
+    store.close()
+
+
+def test_recent_excludes_projects_already_in_attention(tmp_path):
+    cfg = _cfg(tmp_path)
+    store = Store(cfg.db_path)
+    now = 10_000
+    handoff_id = store.upsert_project("/p/handoff", "handoff-project")
+    store.create_handoff(Handoff(
+        id="h1", project_path="/p/handoff", next_prompt="keep going", created_at=now,
+    ), handoff_id)
+    store.upsert_project("/p/quiet1", "quiet-1")
+    store.upsert_project("/p/quiet2", "quiet-2")
+
+    model = build_overview(
+        store, cfg, now=now,
+        probe_fn=lambda path: GitState(status="ok", branch="main"),
+        agents_fn=lambda: AgentsState(status="ok", sessions=[]),
+    )
+
+    assert handoff_id in [item.project_id for item in model.attention]
+    assert handoff_id not in [row.project_id for row in model.recent]
+
+    store.close()
+
+
+def test_recent_truncates_to_limit_and_pin_sorts_first(tmp_path):
+    cfg = _cfg(tmp_path)
+    store = Store(cfg.db_path)
+    now = 10_000
+
+    pinned_id = store.upsert_project("/p/pinned", "pinned")
+    store.set_project_pinned(pinned_id, True)
+    store.upsert_session(SessionRecord(
+        session_id="s-pinned", transcript_path="/t/pinned", ended_at=_ended(5),
+    ), pinned_id)
+
+    for i in range(6):
+        store.upsert_project(f"/p/quiet{i}", f"quiet-{i}")
+
+    model = build_overview(
+        store, cfg, now=now,
+        probe_fn=lambda path: GitState(status="ok", branch="main"),
+        agents_fn=lambda: AgentsState(status="ok", sessions=[]),
+    )
+
+    # 7 quiet/pinned projects seeded, none of them attention-worthy; `recent`
+    # still truncates to RECENT_LIMIT.
     assert len(model.recent) == RECENT_LIMIT
-    assert model.recent[0].project_id == ids["pinned"]
+    assert model.recent[0].project_id == pinned_id
     assert model.recent[0].pinned is True
     assert model.recent[0].status_word == "recent"
-    # The idle project is the 6th card; it is truncated out of `recent`.
-    assert ids["idle"] not in [row.project_id for row in model.recent]
 
     store.close()
 

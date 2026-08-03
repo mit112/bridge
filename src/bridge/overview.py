@@ -29,6 +29,9 @@ from bridge.store import Store, now_epoch, to_epoch
 # requirement for this page.
 RECENT_LIMIT = 5
 UP_NEXT_LIMIT = 3
+# A long unretried-failure history must not dominate "Needs attention"; the
+# same cap-and-truncate treatment `recent`/`up_next` already get.
+SCHEDULE_FAILURE_LIMIT = 5
 
 # Terminal, non-cancelled scheduled-run statuses: something Bridge promised to
 # do and did not, as opposed to `fired` (it happened) or `cancelled` (the user
@@ -144,10 +147,22 @@ def build_overview(
     )
     envelope = builder.full_update(live_state=live_state, cards=cards, now=now)
 
-    attention = _attention_from_cards(cards) + _schedule_failures(store)
-    recent = [_project_summary(card, now) for card in cards[:RECENT_LIMIT]]
+    # One lookup built from the cards this call already fetched, reused by
+    # both schedule helpers below instead of a `store.project_by_path` round
+    # trip per scheduled-run row.
+    by_path = {card.path: card for card in cards}
+
+    attention = _attention_from_cards(cards) + _schedule_failures(store, by_path)
+    # "Needs attention" and "Recent projects" are distinct sections; a project
+    # already surfaced above (as a queued handoff, a running session, stale, or
+    # behind a schedule failure) is redundant to repeat here.
+    attention_ids = {item.project_id for item in attention if item.project_id is not None}
+    recent = [
+        _project_summary(card, now) for card in cards
+        if card.project_id not in attention_ids
+    ][:RECENT_LIMIT]
     up_next = [
-        _schedule_row(row, store)
+        _schedule_row(row, by_path, store)
         for row in store.scheduled_runs(status="pending")[:UP_NEXT_LIMIT]
     ]
 
@@ -212,25 +227,45 @@ def _attention_from_cards(cards: list[Card]) -> list[AttentionItem]:
     return items
 
 
-def _schedule_failures(store: Store) -> list[AttentionItem]:
+def _schedule_failures(store: Store, by_path: dict[str, Card]) -> list[AttentionItem]:
     """Terminal, non-cancelled scheduled runs: a promise Bridge did not keep.
 
     Appended after the per-project ladder rather than interleaved into it: a
     schedule failure is not a property of any one card's rank, so it has no
     natural position in `sort_key`'s ordering.
+
+    Excludes any run already superseded by a retry: `retry_of` on the newer
+    row is the store's own record of that, the same set `api.py`'s dashboard
+    route already builds (`retried = {r["retry_of"] for r in rows if
+    r["retry_of"]}`) before deciding what may still offer a Retry action.
+    Without this, a failure that was already retried would re-surface here
+    forever, since the original row's status never changes once retried.
+    Capped to `SCHEDULE_FAILURE_LIMIT`, newest-completed first, so a long
+    unretried-failure history cannot dominate the section.
     """
+    rows = store.scheduled_runs()
+    retried = {r["retry_of"] for r in rows if r["retry_of"]}
+    failures = [
+        r for r in rows
+        if r["status"] in SCHEDULE_FAILURE_STATUSES and r["id"] not in retried
+    ]
+    failures.sort(key=lambda r: (r["completed_at"] or 0), reverse=True)
+
     out: list[AttentionItem] = []
-    for row in store.scheduled_runs():
-        if row["status"] not in SCHEDULE_FAILURE_STATUSES:
-            continue
-        project = store.project_by_path(row["project_path"])
-        title = project["name"] if project is not None else row["project_path"]
+    for row in failures[:SCHEDULE_FAILURE_LIMIT]:
+        card = by_path.get(row["project_path"])
+        if card is not None:
+            project_id, title = card.project_id, card.name
+        else:
+            project = store.project_by_path(row["project_path"])
+            project_id = project["id"] if project is not None else None
+            title = project["name"] if project is not None else row["project_path"]
         summary = f"Scheduled run {row['status']}"
         if row["error"]:
             summary = f"{summary}: {row['error']}"
         out.append(AttentionItem(
             kind="schedule_failure",
-            project_id=project["id"] if project is not None else None,
+            project_id=project_id,
             title=title,
             summary=summary,
             primary_action=Action("Review scheduled run", "/schedule"),
@@ -268,12 +303,21 @@ def _status_word(card: Card) -> str:
     return "idle"
 
 
-def _schedule_row(row, store: Store) -> ScheduleRow:
-    project = store.project_by_path(row["project_path"])
+def _schedule_row(row, by_path: dict[str, Card], store: Store) -> ScheduleRow:
+    card = by_path.get(row["project_path"])
+    if card is not None:
+        project_id, project_name = card.project_id, card.name
+    else:
+        # Falls back to a store lookup only for a path Bridge no longer has a
+        # card for (e.g. an archived project) -- the common case resolves off
+        # the cards already fetched, with no per-row query.
+        project = store.project_by_path(row["project_path"])
+        project_id = project["id"] if project is not None else None
+        project_name = project["name"] if project is not None else None
     return ScheduleRow(
         id=row["id"],
-        project_id=project["id"] if project is not None else None,
-        project_name=project["name"] if project is not None else None,
+        project_id=project_id,
+        project_name=project_name,
         prompt_preview=(row["prompt"] or "")[:120],
         scheduled_for=row["scheduled_for"],
         status=row["status"],
