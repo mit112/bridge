@@ -713,6 +713,171 @@ def test_a_refused_pin_leaves_the_announced_state_alone(tmp_path):
     assert "\u26a0" in got["cardStatus"]
 
 
+# --- Task 2.5: projects.js -- client-side search + filter -------------------
+#
+# The server renders the full stable list; this harness proves the filtering
+# itself never reloads and never fetches -- `fetch` is stubbed only to record
+# whether it was ever called, and every scenario below asserts it was not.
+# `[data-project-row-item]` rows and `[data-projects-filter]` buttons are
+# plain JS objects (no real DOM), matching this file's existing style rather
+# than adding a DOM library dependency.
+
+PROJECTS_FILTER_HARNESS = """
+globalThis.window = globalThis;
+let clickHandler = null;
+let inputHandler = null;
+let fetchCalled = false;
+globalThis.fetch = async () => { fetchCalled = true; return { ok: true }; };
+
+function makeFilterButton(name, pressed) {
+  return {
+    attrs: { "data-projects-filter": name, "aria-pressed": pressed },
+    getAttribute(n) { return this.attrs[n] ?? null; },
+    setAttribute(n, v) { this.attrs[n] = v; },
+  };
+}
+const filterAll = makeFilterButton("all", "true");
+const filterAttention = makeFilterButton("needs_attention", "false");
+const filterRunning = makeFilterButton("running", "false");
+const filterQueued = makeFilterButton("queued", "false");
+const filterHidden = makeFilterButton("hidden", "false");
+const filterButtons = [filterAll, filterAttention, filterRunning, filterQueued, filterHidden];
+
+function makeRow(name, path, state) {
+  return {
+    hidden: false,
+    attrs: { "data-project-name": name, "data-project-path": path, "data-project-state": state },
+    getAttribute(n) { return this.attrs[n] ?? null; },
+  };
+}
+// queued, running, idle -- deliberately no "stale" row: needs_attention's
+// three-state union is exercised by queued+running alone, and this keeps the
+// fixture small.
+const rowAlpha = makeRow("Alpha Project", "/x/alpha", "queued");
+const rowBeta = makeRow("Beta", "/x/beta-path", "running");
+const rowGamma = makeRow("Gamma", "/x/gamma", "idle");
+const rows = [rowAlpha, rowBeta, rowGamma];
+
+const hiddenRows = [{ hidden: false, textContent: "Zeta hidden-project" }];
+
+const searchInput = { value: "" };
+const countNode = { textContent: "" };
+const emptyNode = { hidden: true };
+const listNode = { hidden: false };
+const hiddenSection = { hidden: true };
+
+globalThis.document = {
+  addEventListener(type, fn) {
+    if (type === "click") clickHandler = fn;
+    if (type === "input") inputHandler = fn;
+  },
+  querySelector(sel) {
+    if (sel === "[data-projects-list]") return listNode;
+    if (sel === "[data-projects-search]") return searchInput;
+    if (sel === "[data-projects-count]") return countNode;
+    if (sel === "[data-projects-empty]") return emptyNode;
+    if (sel === "[data-hidden-projects]") return hiddenSection;
+    if (sel === '[data-projects-filter][aria-pressed="true"]') {
+      return filterButtons.find((b) => b.attrs["aria-pressed"] === "true") || null;
+    }
+    return null;
+  },
+  querySelectorAll(sel) {
+    if (sel === "[data-project-row-item]") return rows;
+    if (sel === "[data-projects-filter]") return filterButtons;
+    if (sel === "[data-hidden-project]") return hiddenRows;
+    return [];
+  },
+};
+
+const fs = require("fs");
+eval(fs.readFileSync(process.argv[2], "utf8"));
+
+// Simulate typing into the search field, then (optionally) clicking a filter
+// button -- exactly the two entry points `applyProjectsFilter` has.
+searchInput.value = QUERY;
+inputHandler({ target: { closest: (sel) => (sel === "[data-projects-search]" ? searchInput : null) } });
+
+if (FILTER_TARGET) {
+  const target = filterButtons.find((b) => b.attrs["data-projects-filter"] === FILTER_TARGET);
+  clickHandler({ target: { closest: (sel) => (sel === "[data-projects-filter]" ? target : null) } });
+}
+
+console.log(JSON.stringify({
+  rowHidden: rows.map((r) => r.hidden),
+  hiddenRowHidden: hiddenRows.map((r) => r.hidden),
+  count: countNode.textContent,
+  emptyHidden: emptyNode.hidden,
+  listHidden: listNode.hidden,
+  hiddenSectionHidden: hiddenSection.hidden,
+  pressed: filterButtons.map((b) => b.attrs["aria-pressed"]),
+  fetchCalled,
+}));
+"""
+
+
+def _run_projects_filter(tmp_path, query: str, filter_target):
+    harness = tmp_path / "projects_filter_harness.js"
+    target_literal = json.dumps(filter_target) if filter_target is not None else "null"
+    harness.write_text(
+        PROJECTS_FILTER_HARNESS.replace("QUERY", json.dumps(query))
+        .replace("FILTER_TARGET", target_literal)
+    )
+    proc = subprocess.run(
+        [_node(), str(harness), str(PROJECTS_JS)], capture_output=True, text=True
+    )
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout)
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_projects_search_hides_rows_not_matching_name_or_path(tmp_path):
+    got = _run_projects_filter(tmp_path, "beta", None)
+    assert got["rowHidden"] == [True, False, True]
+    assert got["count"] == "1 project shown"
+    assert got["emptyHidden"] is True
+    assert got["fetchCalled"] is False
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_projects_search_matches_the_path_as_well_as_the_name(tmp_path):
+    got = _run_projects_filter(tmp_path, "beta-path", None)
+    assert got["rowHidden"] == [True, False, True]
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_projects_filter_running_combines_with_the_search(tmp_path):
+    got = _run_projects_filter(tmp_path, "", "running")
+    assert got["rowHidden"] == [True, False, True]
+    assert got["count"] == "1 project shown"
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_projects_filter_needs_attention_covers_queued_and_running(tmp_path):
+    got = _run_projects_filter(tmp_path, "", "needs_attention")
+    assert got["rowHidden"] == [False, False, True]
+    assert got["count"] == "2 projects shown"
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_projects_search_with_no_match_shows_the_empty_state(tmp_path):
+    got = _run_projects_filter(tmp_path, "zzz-nope", None)
+    assert got["rowHidden"] == [True, True, True]
+    assert got["count"] == "0 projects shown"
+    assert got["emptyHidden"] is False
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_projects_hidden_filter_reveals_the_hidden_section_with_no_fetch(tmp_path):
+    got = _run_projects_filter(tmp_path, "", "hidden")
+    assert got["listHidden"] is True
+    assert got["hiddenSectionHidden"] is False
+    assert got["hiddenRowHidden"] == [False]
+    assert got["pressed"] == ["false", "false", "false", "false", "true"]
+    assert got["fetchCalled"] is False
+
+
+
 # --- Task 5: schedule.js — the datetime<->epoch math and the click flows ----
 #
 # The highest-risk code in Task 5: a timezone or seconds/milliseconds mistake

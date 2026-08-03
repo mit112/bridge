@@ -529,6 +529,19 @@ main { width: min(100%, 68rem); margin-inline: auto; padding: var(--space-6); }
 }
 .pill--work { color: var(--pill-work-fg); background: var(--pill-work-bg); }
 .pill--risk { color: var(--pill-risk-fg); background: var(--pill-risk-bg); }
+/* The state words `status_pill` renders for a `ProjectSummary`
+   (queued/running/stale/recent/idle): queued and running both read as
+   "something is moving", so they share the work-soft treatment; stale reuses
+   the risk-soft pair already held to AA by tests/test_contrast.py; recent and
+   idle are quiet, so they stay a bordered neutral rather than minting a third
+   colour pair. */
+.pill--queued, .pill--running { color: var(--pill-work-fg); background: var(--pill-work-bg); }
+.pill--stale { color: var(--pill-risk-fg); background: var(--pill-risk-bg); }
+.pill--recent, .pill--idle {
+  color: var(--text-secondary);
+  background: var(--surface);
+  border: 1px solid var(--rule);
+}
 
 /* --- Phase 3: the launch band ---------------------------------------------- */
 
@@ -787,6 +800,96 @@ main { width: min(100%, 68rem); margin-inline: auto; padding: var(--space-6); }
 }
 .diag th { width: 18rem; }
 
+/* --- Projects index: the shared project-row macro's own children, plus the
+   search/filter controls and list layout wrapping it. `project_summary_row`
+   in _components.html already emits these class names; nothing styled them
+   until this page rendered the macro for the first time. -------------------- */
+
+.page-lede { margin: var(--space-1) 0 0; color: var(--text-secondary); font-size: var(--text-sm); }
+
+.project-row {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+  padding: var(--space-2) 0;
+}
+.project-row__name { font-weight: 650; }
+.project-row__path {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+.project-row__branch, .project-row__dirty, .project-row__session {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+/* The row's own `Open project` link always trails the row's content. */
+.project-row .btn { margin-left: auto; }
+
+.projects-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+}
+.projects-search { display: flex; flex-direction: column; gap: var(--space-1); }
+.projects-search label { font-size: var(--text-sm); color: var(--text-secondary); }
+.projects-search input {
+  font: inherit;
+  font-size: var(--text-sm);
+  min-height: var(--control-min);
+  min-width: 16rem;
+  padding: .3rem .6rem;
+  color: var(--text);
+  background: var(--field-bg);
+  border: 1px solid var(--field-border);
+  border-radius: var(--radius-sm);
+}
+.projects-filters { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+/* A toggle group, not radio buttons -- `aria-pressed` is the state, exactly
+   as `.btn--pin` already reads it; only one is ever "true" at a time. */
+.projects-filter[aria-pressed="true"] {
+  background: var(--btn-primary-bg);
+  color: var(--btn-primary-fg);
+  border-color: var(--btn-primary-bg);
+}
+.projects-filter__count { font-variant-numeric: tabular-nums; margin-left: .3em; }
+.projects-count { margin: 0 0 var(--space-2); color: var(--text-secondary); font-size: var(--text-sm); }
+
+.projects-list { list-style: none; margin: 0; padding: 0; }
+.projects-list__item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--row-border);
+}
+.projects-list__item .project-row { flex: 1 1 auto; }
+/* The disclosure holding Pin/Hide/Restore: secondary to the row's own `Open
+   project` link, so it collapses by default rather than competing with it. */
+.projects-list__actions {
+  flex: 0 0 auto;
+  padding: var(--space-2) 0;
+}
+.projects-list__actions summary {
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+.projects-list__actions .btn { margin-top: var(--space-1); }
+
+.hidden-projects-section { margin-top: var(--space-8); }
+.hidden-projects-section h2 { font: 700 1rem/1.3 var(--font-sans); margin: 0 0 var(--space-2); }
+.hidden-projects-section ul { list-style: none; margin: 0; padding: 0; }
+.hidden-projects-section li {
+  display: flex; align-items: center; gap: var(--space-2);
+  padding: var(--space-2) 0; border-bottom: 1px solid var(--row-border);
+}
+
 @media (max-width: 720px) {
   .page-head { position: static; padding: var(--space-3) var(--space-4); }
   .totals { gap: var(--space-1) var(--space-4); }
@@ -797,6 +900,9 @@ main { width: min(100%, 68rem); margin-inline: auto; padding: var(--space-6); }
   .launch, .schedule-form { align-items: stretch; }
   .launch__field, .schedule-form__field { flex: 1 1 9rem; }
   .launch__select, .schedule-form input, .schedule-form select { width: 100%; }
+  .projects-controls { flex-direction: column; align-items: stretch; }
+  .projects-search input { width: 100%; min-width: 0; }
+  .projects-list__item { flex-direction: column; align-items: stretch; }
 }
 
 @media (prefers-reduced-motion: reduce) {

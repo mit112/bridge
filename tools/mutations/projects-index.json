@@ -1,0 +1,32 @@
+[
+  {
+    "name": "drop the word 'projects' from the search field's label, so it reads as a bare, ambiguous Search",
+    "file": "src/bridge/templates/projects.html",
+    "old": "    <label for=\"projects-search\">Search projects</label>",
+    "new": "    <label for=\"projects-search\">Search</label>",
+    "tests": [
+      "tests/test_projects_route.py::test_get_projects_returns_200_with_search_filters_and_rows"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "drop the project id from the Open-project row action's href, so every row points at nothing",
+    "file": "src/bridge/templates/_components.html",
+    "old": "<a class=\"btn\" href=\"/project/{{ summary.project_id }}\">Open project</a>",
+    "new": "<a class=\"btn\" href=\"/project/\">Open project</a>",
+    "tests": [
+      "tests/test_projects_route.py::test_get_projects_returns_200_with_search_filters_and_rows"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "count every card as queued regardless of whether it actually has a handoff, so the Queued filter's number is meaningless",
+    "file": "src/bridge/projects_view.py",
+    "old": "        \"queued\": sum(1 for card in cards if card.handoff),",
+    "new": "        \"queued\": len(cards),",
+    "tests": [
+      "tests/test_projects_route.py::test_build_projects_counts_by_status"
+    ],
+    "expect_count": 1
+  }
+]

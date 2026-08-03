@@ -90,7 +90,12 @@ document.addEventListener("click", async (event) => {
   if (hide) {
     const id = hide.getAttribute("data-project-hide");
     const card = hide.closest("[data-project-card]");
-    const name = card ? card.querySelector("h2").textContent.trim() : id;
+    // The dashboard's card names itself in an `<h2>`; the Projects index row
+    // (`project_summary_row`) names itself in a `.project-row__name` span
+    // instead -- both are checked so Hide announces the right name on either
+    // page rather than throwing on a null `<h2>` lookup.
+    const nameNode = card ? card.querySelector("h2, .project-row__name") : null;
+    const name = nameNode ? nameNode.textContent.trim() : id;
     try {
       await patchProject(id, "hidden");
       const list = document.querySelector("[data-hidden-list]");
@@ -102,6 +107,18 @@ document.addEventListener("click", async (event) => {
       console.error("bridge: hiding the project failed", error);
       say(`[data-project-status="${id}"]`, "⚠ Not hidden");
     }
+    return;
+  }
+
+  const filterButton = event.target.closest("[data-projects-filter]");
+  if (filterButton) {
+    // One filter pressed at a time: the others' `aria-pressed` is what tells
+    // a screen reader (and `applyProjectsFilter`) which is active, so it is
+    // the state, not a class kept separately that could disagree with it.
+    document.querySelectorAll("[data-projects-filter]").forEach((btn) => {
+      btn.setAttribute("aria-pressed", String(btn === filterButton));
+    });
+    applyProjectsFilter();
     return;
   }
 
@@ -120,3 +137,77 @@ document.addEventListener("click", async (event) => {
     say("[data-hidden-status]", "⚠ Not restored");
   }
 });
+
+// --- Search + filter (progressive enhancement) ------------------------------
+//
+// The server renders the full stable list, already in `cards.sort_key`
+// order; this only toggles `hidden` on rows already in the DOM. No fetch, no
+// reload -- a search keystroke or a filter click must never race the
+// pin/hide/restore handlers above, which is exactly why this never rebuilds
+// a row, only shows or hides one that already exists.
+
+function normalizeProjectsQuery(value) {
+  return (value || "").toLowerCase();
+}
+
+// "Needs attention" is not a `data-project-state` value of its own -- it is
+// the same predicate `projects_view.build_projects` counts under that name
+// (a queued handoff, a running session, or stale dirty work), so the three
+// states it covers have to be spelled out here rather than added as a fourth
+// row state that would have to be kept in sync with the model's own.
+function projectsMatchesFilter(state, filter) {
+  if (filter === "all") return true;
+  if (filter === "needs_attention") {
+    return state === "queued" || state === "running" || state === "stale";
+  }
+  return state === filter;
+}
+
+function applyProjectsFilter() {
+  const list = document.querySelector("[data-projects-list]");
+  if (!list) return; // not on the Projects page
+
+  const pressed = document.querySelector('[data-projects-filter][aria-pressed="true"]');
+  const filter = pressed ? pressed.getAttribute("data-projects-filter") : "all";
+  const showingHidden = filter === "hidden";
+  const search = document.querySelector("[data-projects-search]");
+  const query = normalizeProjectsQuery(search ? search.value : "");
+
+  list.hidden = showingHidden;
+  const hiddenSection = document.querySelector("[data-hidden-projects]");
+  if (hiddenSection) hiddenSection.hidden = !showingHidden;
+
+  let shown = 0;
+  if (showingHidden) {
+    document.querySelectorAll("[data-hidden-project]").forEach((row) => {
+      const visible = !query || normalizeProjectsQuery(row.textContent).includes(query);
+      row.hidden = !visible;
+      if (visible) shown += 1;
+    });
+  } else {
+    document.querySelectorAll("[data-project-row-item]").forEach((row) => {
+      const name = normalizeProjectsQuery(row.getAttribute("data-project-name"));
+      const path = normalizeProjectsQuery(row.getAttribute("data-project-path"));
+      const matchesQuery = !query || name.includes(query) || path.includes(query);
+      const visible = matchesQuery
+        && projectsMatchesFilter(row.getAttribute("data-project-state"), filter);
+      row.hidden = !visible;
+      if (visible) shown += 1;
+    });
+  }
+
+  const count = document.querySelector("[data-projects-count]");
+  if (count) count.textContent = `${shown} project${shown === 1 ? "" : "s"} shown`;
+
+  const empty = document.querySelector("[data-projects-empty]");
+  if (empty) empty.hidden = shown !== 0;
+}
+
+document.addEventListener("input", (event) => {
+  if (event.target.closest("[data-projects-search]")) applyProjectsFilter();
+});
+
+// Runs once at load so the count and empty state reflect the server's own
+// render (the "all" filter, no query) rather than whatever text the server
+// happened to put there before this file executed.
+applyProjectsFilter();
