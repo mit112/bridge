@@ -1,35 +1,120 @@
+/* --- Three-layer token system: primitive (hex) -> semantic (var alias) ->
+   component. Components must reference the semantic layer (or the legacy
+   names below it, kept as aliases), never a primitive or a raw colour. ----- */
 :root {
   color-scheme: light dark;
-  --bg: #f4f2ed; --fg: #1c1b19; --muted: #625e57;
-  --line: #d6d1c7; --card: #fffdf8; --surface-raised: #ffffff;
-  /* Form-control boundaries only. `--line` is a 1.34:1 hairline against --card,
-     which is fine for a table rule and fails WCAG 1.4.11's 3:1 for a control's
-     visible boundary. Measured 3.51:1 here. Kept as 6-digit lowercase hex
-     because that is the only form test_contrast.py's parser can see. */
-  --field-line: #7f888f;
-  --risk-fg: #8a3a00; --risk-bg: #fff1df; --accent: #0b5fb0;
-  --queued-fg: #3f3c37; --queued-bg: #eeece6; --queued-line: #77736b;
+
+  /* Primitive tokens, light (default). Six-digit lowercase hex only --
+     tests/test_contrast.py's parser can see nothing else. */
+  --p-nav: #152125;
+  --p-canvas: #f4f6f5;
+  --p-surface: #ffffff;
+  --p-text: #182427;
+  --p-text-2: #657378;
+  --p-rule: #d9e1df;
+  --p-work: #176579;
+  --p-work-soft: #dcecef;
+  --p-risk: #a64f2f;
+  --p-risk-soft: #f6e6df;
+  /* Form-control boundaries only, held to WCAG 1.4.11's 3:1. Measured 4.66:1
+     against --p-surface and 4.29:1 against --p-canvas. */
+  --p-field-line: #6b767c;
+
+  /* Semantic layer: names components should reach for. */
+  --canvas: var(--p-canvas);
+  --surface: var(--p-surface);
+  --surface-raised: var(--p-surface);
+  --text: var(--p-text);
+  --text-secondary: var(--p-text-2);
+  --rule: var(--p-rule);
+  --work: var(--p-work);
+  --work-soft: var(--p-work-soft);
+  --risk: var(--p-risk);
+  --risk-soft: var(--p-risk-soft);
+  --field-line: var(--p-field-line);
+  --focus: var(--p-work);
+  --nav: var(--p-nav);
+
+  /* Legacy semantic names, repointed at the primitives above so existing
+     component CSS and templates keep working unchanged. */
+  --bg: var(--canvas); --fg: var(--text); --muted: var(--text-secondary);
+  --line: var(--rule); --card: var(--surface); --accent: var(--work);
+  --risk-fg: var(--risk); --risk-bg: var(--risk-soft);
+  --queued-fg: var(--work); --queued-bg: var(--work-soft); --queued-line: var(--work);
   --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --display: "Avenir Next", Avenir, var(--sans);
-  --space-1: .25rem; --space-2: .5rem; --space-3: .75rem;
-  --space-4: 1rem; --space-6: 1.5rem; --space-8: 2rem;
-  --text-xs: .75rem; --text-sm: .8125rem; --text-body: .9375rem;
-  --text-title: 1.25rem; --text-page: 1.5rem;
-  --radius-sm: 4px; --radius-md: 6px;
+
+  /* Spacing scale, 4px base. */
+  --space-1: .25rem; --space-2: .5rem; --space-3: .75rem; --space-4: 1rem;
+  --space-5: 1.25rem; --space-6: 1.5rem; --space-7: 1.75rem; --space-8: 2rem;
+  --space-9: 2.25rem; --space-10: 2.5rem;
+
+  /* Type scale. */
+  --text-xs: .75rem; --text-sm: .8125rem; --text-body: 1rem;
+  --text-title: 1.25rem; --text-page: 1.5rem; --text-h1: 1.5rem;
+
+  --radius-sm: 4px; --radius-md: 6px; --radius-6: 6px; --radius-12: 12px;
   --control-min: 2rem;
+
+  /* Timing. */
+  --motion-fast: 150ms; --motion: 200ms;
 }
+
+/* Forces a theme regardless of OS preference (a later Settings task uses
+   this). Same values as the blocks below -- the attribute selector's higher
+   specificity is what lets it win over `prefers-color-scheme`. */
+:root[data-theme="light"] {
+  --p-nav: #152125;
+  --p-canvas: #f4f6f5;
+  --p-surface: #ffffff;
+  --p-text: #182427;
+  --p-text-2: #657378;
+  --p-rule: #d9e1df;
+  --p-work: #176579;
+  --p-work-soft: #dcecef;
+  --p-risk: #a64f2f;
+  --p-risk-soft: #f6e6df;
+  --p-field-line: #6b767c;
+  --surface-raised: var(--p-surface);
+}
+
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #171817; --fg: #ecebe6; --muted: #aaa79f;
-    --line: #343731; --card: #20221f; --surface-raised: #282a26;
-    /* Lightened rather than inverted, and desaturated for the dark surface.
-       Measured 3.34:1 against --card. */
-    --field-line: #68717a;
-    --risk-fg: #ffcf9e; --risk-bg: #3a2508; --accent: #82b7e8;
+    --p-nav: #0f191c;
+    --p-canvas: #12191b;
+    --p-surface: #192326;
+    --p-raised: #202d30;
+    --p-text: #eef3f2;
+    --p-text-2: #a9b7b8;
+    --p-rule: #38474a;
+    --p-work: #77b4c0;
+    --p-work-soft: #213e44;
+    --p-risk: #e19a7e;
     /* Desaturated and lightened for the dark surface, not inverted. */
-    --queued-fg: #d5d1c9; --queued-bg: #282722; --queued-line: #8d887e;
+    --p-risk-soft: #402820;
+    /* Lightened rather than inverted, and desaturated for the dark surface.
+       Measured 3.72:1 against --p-surface. */
+    --p-field-line: #6f7c80;
+
+    --surface-raised: var(--p-raised);
   }
+}
+
+:root[data-theme="dark"] {
+  --p-nav: #0f191c;
+  --p-canvas: #12191b;
+  --p-surface: #192326;
+  --p-raised: #202d30;
+  --p-text: #eef3f2;
+  --p-text-2: #a9b7b8;
+  --p-rule: #38474a;
+  --p-work: #77b4c0;
+  --p-work-soft: #213e44;
+  --p-risk: #e19a7e;
+  --p-risk-soft: #402820;
+  --p-field-line: #6f7c80;
+  --surface-raised: var(--p-raised);
 }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }

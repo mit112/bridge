@@ -3,6 +3,11 @@
 Phase 1 verified contrast by hand, which does not survive a token being edited.
 This parses `app.css` and computes the ratios, so changing a colour to something
 unreadable fails the suite.
+
+The redesign's three-layer token system (primitive -> semantic -> component)
+means the semantic names (`--bg`, `--card`, ...) are themselves `var(--p-...)`
+aliases, invisible to this module's hex-literal parser. So this suite reads the
+PRIMITIVE tokens (`--p-*`) directly -- they are where the real hex lives.
 """
 
 import re
@@ -14,44 +19,19 @@ CSS = Path(__file__).resolve().parent.parent / "src" / "bridge" / "static" / "ap
 
 # (foreground token, background token, minimum ratio, what it is)
 PAIRS = [
-    ("--fg", "--bg", 4.5, "body text"),
-    ("--fg", "--card", 4.5, "text on a card"),
-    ("--muted", "--card", 4.5, "muted metadata on a card"),
-    ("--risk-fg", "--risk-bg", 4.5, "stale warning text"),
-    ("--queued-fg", "--queued-bg", 4.5, "queued-handoff heading and status"),
-    ("--fg", "--card", 4.5, "copy button label"),
-    # Non-text UI: the focus ring and the block's border need 3:1 (WCAG 1.4.11).
-    ("--accent", "--card", 3.0, "focus ring against a card"),
-    ("--queued-line", "--queued-bg", 3.0, "queued block border"),
-    # Phase 3: a form control's visible boundary. `--line` measures 1.34:1 light
-    # and 1.28:1 dark against --card, so the selects and the prompt field get
-    # their own token and it is computed here rather than eyeballed.
-    ("--field-line", "--card", 3.0, "form control border"),
-    # The prompt field's border is adjacent to two surfaces: its own --card fill
-    # and the queued block it sits in, so both sides are held to 3:1.
-    ("--field-line", "--queued-bg", 3.0, "prompt field border in a queued block"),
-    # The armed permission affordance: the label's text and the select's border,
-    # both `--risk-fg` on the bare card. Only `--card` is listed because
-    # `.launch` sits outside the handoff block (app.css:161), so this control
-    # never renders on `--queued-bg`.
-    #
-    # Recorded because it is NOT independently falsifiable today, and a row that
-    # cannot fail is the kind of thing this suite is otherwise careful to avoid.
-    # `--card` is lighter than `--risk-bg` in the light theme and darker than it
-    # in the dark one, so this pair measures HIGHER than the `--risk-fg` /
-    # `--risk-bg` row above in both (7.61 vs 7.21, 11.57 vs 10.13). It is
-    # dominated: nothing can break it that does not break that row first, and a
-    # sweep of every `--card` value at 8-step RGB found no exception. It is kept
-    # because the domination is a property of the current palette, not of the
-    # design -- move `--risk-bg` and this row starts doing real work.
-    ("--risk-fg", "--card", 4.5, "armed permission label and select border"),
-    # Task 5: the compose box and schedule form sit directly on --bg (inside
-    # `.card`'s own --bg-toned prompt area), not --card, so their control
-    # border is pinned against the surface it actually renders on.
-    ("--field-line", "--bg", 3.0, "compose/schedule-form control border"),
-    # The Scheduled section's failed-job status renders on the bare page
-    # background, not a card -- --risk-fg/--risk-bg is a different pair.
-    ("--risk-fg", "--bg", 4.5, "failed schedule status"),
+    ("--p-text", "--p-canvas", 4.5, "body text on canvas"),
+    ("--p-text", "--p-surface", 4.5, "body text on a surface"),
+    ("--p-text-2", "--p-canvas", 4.5, "secondary text on canvas"),
+    ("--p-text-2", "--p-surface", 4.5, "secondary text on a surface"),
+    ("--p-work", "--p-surface", 4.5, "work-accent text/link on a surface"),
+    ("--p-work", "--p-canvas", 4.5, "work-accent text/link on canvas"),
+    ("--p-risk", "--p-surface", 4.5, "risk text on a surface"),
+    ("--p-risk", "--p-risk-soft", 4.5, "risk text on risk-soft pill"),
+    ("--p-work", "--p-work-soft", 4.5, "work text on work-soft pill"),
+    # Non-text UI boundaries need 3:1 (WCAG 1.4.11).
+    ("--p-work", "--p-surface", 3.0, "focus ring against a surface"),
+    ("--p-field-line", "--p-surface", 3.0, "form control border on a surface"),
+    ("--p-field-line", "--p-canvas", 3.0, "form control border on canvas"),
 ]
 
 
@@ -79,7 +59,10 @@ def themes() -> dict[str, dict[str, str]]:
     light_src, dark_src = css[:dark_start], css[dark_start:]
 
     def tokens(text: str) -> dict[str, str]:
-        return dict(re.findall(r"(--[a-z-]+):\s*(#[0-9a-fA-F]{6})", text))
+        # Token names may carry a digit (`--p-text-2`), so the name class
+        # includes 0-9 alongside the lowercase letters and hyphens; the
+        # colour side stays a strict six-digit hex literal.
+        return dict(re.findall(r"(--[a-z0-9-]+):\s*(#[0-9a-fA-F]{6})", text))
 
     light = tokens(light_src)
     dark = dict(light)
@@ -89,8 +72,9 @@ def themes() -> dict[str, dict[str, str]]:
 
 def test_the_stylesheet_defines_both_themes():
     t = themes()
-    assert t["light"]["--queued-fg"] != t["dark"]["--queued-fg"], (
-        "dark mode must define its own queued colours, not inherit the light ones"
+    assert t["light"]["--p-text-2"] != t["dark"]["--p-text-2"], (
+        "dark mode must define its own secondary-text colour, not inherit the "
+        "light one"
     )
 
 
@@ -112,7 +96,7 @@ def test_no_pure_black_or_white_surfaces(theme):
     """anti-pure-black: pure #000/#fff on the opposite extreme is fatiguing."""
     tokens = themes()[theme]
     if theme == "dark":
-        assert tokens["--bg"].lower() != "#000000"
-        assert tokens["--fg"].lower() != "#ffffff"
+        assert tokens["--p-canvas"].lower() != "#000000"
+        assert tokens["--p-text"].lower() != "#ffffff"
     else:
-        assert tokens["--fg"].lower() != "#000000"
+        assert tokens["--p-text"].lower() != "#000000"
