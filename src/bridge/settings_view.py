@@ -134,13 +134,21 @@ def _hook_status(cfg: Config, settings_path: Path) -> HookStatus:
     if not isinstance(hooks, dict):
         hooks = {}
 
+    # The three http handlers are only half the wiring: Claude Code will not
+    # actually call an http hook whose URL is not in `allowedHttpHookUrls`, and
+    # `_hook_issue.next_action` already tells users to add it. So "present"
+    # requires BOTH the handlers AND the endpoint being allow-listed; otherwise
+    # the same recovery guidance applies, as partial or absent.
+    allowed = data.get("allowedHttpHookUrls") if isinstance(data, dict) else None
+    url_allowed = isinstance(allowed, list) and expected_url in allowed
+
     events = tuple(
         HookEventStatus(name=name, installed=_event_installed(hooks.get(name), expected_url))
         for name in HOOK_EVENTS
     )
 
     installed_count = sum(1 for e in events if e.installed)
-    if installed_count == len(HOOK_EVENTS):
+    if installed_count == len(HOOK_EVENTS) and url_allowed:
         state = "present"
     elif installed_count == 0:
         state = "absent"

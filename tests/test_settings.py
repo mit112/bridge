@@ -81,6 +81,29 @@ def test_hook_status_present_when_all_three_hooks_point_at_this_port(tmp_path):
     assert model.hook_status.issues == ()
 
 
+def test_hook_status_not_present_when_endpoint_missing_from_allowlist(tmp_path):
+    """All three handlers can be wired, but Claude Code will not call an http
+    hook whose URL is not in `allowedHttpHookUrls` -- so a settings file with
+    the handlers but no allow-list entry is NOT "present"; the recovery
+    guidance (which already says to add the URL there) still applies."""
+    cfg = _cfg(tmp_path, port=9999)
+    url = "http://127.0.0.1:9999/api/hooks"
+    hooks = {
+        name: {"hooks": [{"type": "http", "url": url, "timeout": 2}]}
+        for name in ("Notification", "SessionStart", "SessionEnd")
+    }
+    settings_path = tmp_path / "no-allowlist.json"
+    # The handlers are all present; `allowedHttpHookUrls` is simply absent.
+    settings_path.write_text(json.dumps({"hooks": hooks}))
+
+    model = build_settings(cfg, settings_path=settings_path)
+
+    assert model.hook_status.state != "present"
+    assert all(e.installed for e in model.hook_status.events)
+    assert model.hook_status.issues
+    assert "allowedHttpHookUrls" in model.hook_status.issues[0]["next_action"]
+
+
 def test_hook_status_absent_when_settings_file_missing(tmp_path):
     cfg = _cfg(tmp_path)
     settings_path = tmp_path / "does-not-exist.json"
