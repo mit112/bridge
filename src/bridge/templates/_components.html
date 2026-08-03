@@ -1,0 +1,69 @@
+{# Shared component macros: the row/pill/table-shell markup that Overview,
+   Projects, and Schedule all need but none of them owns. Every field these
+   macros render comes from `bridge.overview.ProjectSummary` /
+   `bridge.overview.ScheduleRow` (server-computed, absolute numbers -- no
+   percentage-of-cap math happens here); autoescape stays on for all of it,
+   so nothing here is ever marked `safe`. #}
+
+{% macro status_pill(state) %}<span class="pill pill--{{ state }}">{{ state }}</span>{% endmacro %}
+
+{% macro empty_state(message) %}<p class="empty">{{ message }}</p>{% endmacro %}
+
+{# Compact duration for a seconds-count (not an epoch): "3h"/"2d"/"45m". Same
+   m/h/d shape as `bridge.api._ago`/`_ago_epoch`, but those two both take an
+   already-known-epoch value and diff it against `now` themselves --
+   `ProjectSummary.last_session_age_seconds` is already the elapsed duration,
+   so reusing either filter here would double-subtract `now`. Kept as a
+   private macro rather than a new registered filter. #}
+{% macro _duration_seconds(secs) %}{% if secs < 3600 %}{{ (secs // 60) | int }}m{% elif secs < 86400 %}{{ (secs // 3600) | int }}h{% else %}{{ (secs // 86400) | int }}d{% endif %}{% endmacro %}
+
+{% macro project_summary_row(summary) %}
+<div class="project-row">
+  <span class="project-row__name">{{ summary.name }}</span>
+  <code class="project-row__path">{{ summary.path }}</code>
+  {{ status_pill(summary.status_word) }}
+  {% if summary.branch %}<span class="project-row__branch">{{ summary.branch }}</span>{% endif %}
+  {% if summary.dirty_count %}<span class="project-row__dirty">{{ summary.dirty_count }} dirty</span>{% endif %}
+  {% if summary.last_session_title %}
+  <span class="project-row__session card__note">{{ summary.last_session_title }}{% if summary.last_session_age_seconds is not none %} · {{ _duration_seconds(summary.last_session_age_seconds) }} ago{% endif %}</span>
+  {% endif %}
+  <a class="btn" href="/project/{{ summary.project_id }}">Open project</a>
+</div>
+{% endmacro %}
+
+{# `label` becomes the region's accessible name -- callers pass the same
+   strings project.html's tables already use ("Handoffs table", "Launches
+   table", "Indexed sessions table") so existing keyboard-scroll-region tests
+   keep matching once those tables are ported to call this instead of
+   hand-writing the wrapper. The `<table>`/`<caption>` themselves are the
+   caller's content, not this macro's -- Jinja can only pass caller markup
+   through `{{ caller() }}`, so `history_table_shell` takes no caption param. #}
+{% macro history_table_shell(label) %}
+<div class="table-scroll" tabindex="0" role="region" aria-label="{{ label }}">
+{{ caller() }}
+</div>
+{% endmacro %}
+
+{# The shared schedule row: Overview's "Up next" preview calls this with
+   `interactive=False` (the default); a later milestone builds the full
+   Schedule page and passes `interactive=True` to light up the action
+   controls below. `data-scheduled-for` is the exact hook name
+   `schedule.js`'s `paintScheduledTimes` already looks for on the dashboard's
+   own scheduled rows -- keep it unchanged so that wiring keeps working once
+   this macro replaces the hand-written markup there. #}
+{% macro schedule_row(row, interactive=False) %}
+<li class="schedule-row" data-schedule-row="{{ row.id }}">
+  <time data-scheduled-for="{{ row.scheduled_for }}">{{ row.scheduled_for }}</time>
+  <span class="schedule-row__project">{{ row.project_name }}</span>
+  {{ status_pill(row.status) }}
+  {% if row.error %}<span class="schedule-row__error card__note">{{ row.error }}</span>{% endif %}
+  {% if interactive %}
+    {# Extension point only -- deliberately left empty for Task 2.2. A later
+       milestone ports the existing dashboard.html scheduled-run action
+       controls here (`data-scheduled-run-now` / `-edit-toggle` / `-cancel` /
+       `-retry`), gated the same way dashboard.html gates them today
+       (run-now/edit/cancel for `pending`/`launching`, retry for a terminal
+       failure). Do not implement those controls in this task. #}
+  {% endif %}
+</li>
+{% endmacro %}
