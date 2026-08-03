@@ -1,0 +1,128 @@
+"""Project workspace read model: the tabbed `/project/{id}` surface.
+
+Assembled from the same sources Overview/Projects use -- `cards.build_cards`
+for the project's `Card` (never a second, divergent git or liveness probe) and
+`store.get_git_cache` for the "as of ... ago" git panel, exactly as the
+pre-redesign `detail` route in `api.py` already reads it. History
+(`sessions`/`handoffs`/`launches`) stays capped at the existing default of 50,
+newest first, and only the selected tab's list is populated -- the other two
+are empty lists, never fetched, since a tab a user is not viewing has no
+reason to pay for a query.
+"""
+
+from __future__ import annotations
+
+import dataclasses
+import sqlite3
+from dataclasses import dataclass
+
+from bridge import sessionmeta
+from bridge.cards import build_cards
+from bridge.config import Config
+from bridge.models import AgentsState, Card, GitState
+from bridge.store import Store
+
+# Exactly the tab vocabulary the workspace route accepts. Anything else
+# (missing, unknown, typo'd) normalizes to "current" -- there is no blank tab.
+VALID_TABS = ("current", "sessions", "handoffs", "launches")
+DEFAULT_TAB = "current"
+
+
+@dataclass(frozen=True)
+class WorkspaceModel:
+    project: sqlite3.Row
+    # The single `cards.Card` for this project -- the same projection
+    # Overview/Projects render, reused rather than re-derived. Launch option
+    # catalogs (`launch_models`/`launch_efforts`/`launch_permission_modes`)
+    # live on this card already; the workspace does not duplicate them.
+    card: Card
+    # The queued handoff, or None. Reused off `card.handoff` rather than a
+    # second `store.queued_handoff` call.
+    handoff: dict | None
+    # The git panel's cache-with-`cached_at` view (mirrors the pre-redesign
+    # `detail` route), distinct from `card.git` which never carries
+    # `cached_at` set from a live probe.
+    git: GitState | None
+    tab: str
+    sessions: list[sqlite3.Row]
+    handoffs: list[sqlite3.Row]
+    launches: list[sqlite3.Row]
+    session_metas: dict
+
+
+def _normalize_tab(tab: str | None) -> str:
+    return tab if tab in VALID_TABS else DEFAULT_TAB
+
+
+def build_workspace(
+    store: Store,
+    cfg: Config,
+    project_id: int,
+    tab: str,
+    *,
+    live_state: AgentsState | None = None,
+    probe_fn=None,
+    agents_fn=None,
+) -> WorkspaceModel | None:
+    """Assemble the workspace for one project, or None for an unknown id.
+
+    `probe_fn` defaults to a cache-reading stand-in (`GitState(status=
+    "unavailable")`), the same trick `DashboardBuilder.live_patch` uses, so a
+    page view never spawns a live git probe for every project -- `build_cards`
+    falls back to each project's git cache instead. `agents_fn` follows
+    `live_state` when given (mirroring `DashboardBuilder.full_update`): a
+    caller that already polled liveness once passes it straight through
+    instead of paying for a second probe.
+    """
+    row = store.get_project(project_id)
+    if row is None:
+        return None
+
+    tab = _normalize_tab(tab)
+
+    cards = build_cards(
+        store,
+        cfg,
+        probe_fn=(probe_fn or (lambda _p: GitState(status="unavailable"))),
+        agents_fn=(agents_fn or (lambda: live_state) if live_state is not None else agents_fn),
+        debouncer=None,
+        hook_state=None,
+    )
+    card = next((c for c in cards if c.project_id == project_id), None)
+    if card is None:
+        # A project row can exist (e.g. hidden/archived) while `build_cards`
+        # -- which reads `store.projects()` with `include_hidden=False` --
+        # never produces a card for it. No card means no workspace to render.
+        return None
+
+    cached_git = store.get_git_cache(project_id)
+    git: GitState | None = None
+    if cached_git is not None:
+        git, probed_at = cached_git
+        git = dataclasses.replace(git, cached_at=probed_at)
+
+    sessions: list[sqlite3.Row] = []
+    handoffs: list[sqlite3.Row] = []
+    launches: list[sqlite3.Row] = []
+    if tab == "sessions":
+        sessions = store.sessions(project_id, limit=50)
+    elif tab == "handoffs":
+        handoffs = store.handoffs(project_id, limit=50)
+    elif tab == "launches":
+        launches = store.launches(project_id, limit=50)
+
+    session_metas = sessionmeta.read_many(
+        [s["id"] for s in sessions], cfg.session_meta_dir
+    )
+
+    return WorkspaceModel(
+        project=row,
+        card=card,
+        handoff=card.handoff,
+        git=git,
+        tab=tab,
+        sessions=sessions,
+        handoffs=handoffs,
+        launches=launches,
+        session_metas=session_metas,
+    )
