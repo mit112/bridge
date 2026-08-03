@@ -1,6 +1,10 @@
+import re
 from datetime import datetime, timedelta, timezone
 
+from fastapi.testclient import TestClient
+
 from bridge.agents import AgentsState
+from bridge.api import create_app
 from bridge.config import load
 from bridge.models import GitState, Handoff, LiveSession, ScheduledRun, SessionRecord
 from bridge.overview import (
@@ -305,4 +309,59 @@ def test_no_handoff_or_schedule_failure_yields_empty_attention(tmp_path):
 
     assert model.attention == []
 
+    store.close()
+
+
+# --- Route: GET / renders the calm Overview (Task 2.3) -----------------------
+
+
+def _route_client(tmp_path, name="route"):
+    cfg = load({"db_path": tmp_path / f"{name}.db", "spool_dir": tmp_path / "spool"})
+    store = Store(cfg.db_path)
+    return TestClient(create_app(store, cfg)), store, cfg
+
+
+def test_overview_route_has_no_textarea_or_launch_selectors(tmp_path):
+    """The compose/launch/handoff surface belongs to the Project workspace now
+    (spec:Milestone-2's calm-Overview requirement); `/` must carry none of it."""
+    c, store, _ = _route_client(tmp_path)
+    store.upsert_project("/p/quiet", "quiet-project")
+
+    html = c.get("/").text
+
+    assert html.count("<textarea") == 0
+    assert "data-launch-model" not in html
+    assert "data-compose-prompt" not in html
+    store.close()
+
+
+def test_overview_route_shows_attention_recent_link_and_freshness(tmp_path):
+    c, store, _ = _route_client(tmp_path)
+    pid = store.upsert_project("/p/handoff", "handoff-project")
+    store.create_handoff(Handoff(
+        id="h1", project_path="/p/handoff", next_prompt="keep going", created_at=1,
+    ), pid)
+
+    html = c.get("/").text
+
+    assert ">Needs attention<" in html
+    assert "Continue in Terminal" in html
+    assert f'href="/project/{pid}?tab=current"' in html
+    assert '<a href="/projects">View all projects</a>' in html
+    assert "data-freshness-strip" in html
+    assert re.search(r'data-freshness-state="\w+"', html)
+    assert 'data-dashboard-refresh>Refresh</button>' in html
+    store.close()
+
+
+def test_overview_route_keeps_freshness_strip_and_total_hooks_for_live_js(tmp_path):
+    c, store, _ = _route_client(tmp_path)
+    store.upsert_project("/p/quiet", "quiet-project")
+
+    html = c.get("/").text
+
+    assert "data-freshness-strip" in html
+    assert html.count("data-dashboard-total=") == 8
+    assert "data-project-membership-status" in html
+    assert "data-diagnostics-alert" in html
     store.close()

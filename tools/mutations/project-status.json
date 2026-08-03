@@ -4,7 +4,9 @@
     "file": "src/bridge/api.py",
     "old": "        if store.get_project(project_id) is None:\n            raise HTTPException(status_code=404, detail=\"unknown project\")\n        if body.status is not None:",
     "new": "        if body.status is not None:",
-    "tests": ["tests/test_api.py::test_patching_an_unknown_project_is_404_not_a_silent_success"],
+    "tests": [
+      "tests/test_api.py::test_patching_an_unknown_project_is_404_not_a_silent_success"
+    ],
     "expect_count": 1
   },
   {
@@ -12,7 +14,9 @@
     "file": "src/bridge/api.py",
     "old": "            store.set_project_status(project_id, body.status)",
     "new": "            pass",
-    "tests": ["tests/test_api.py::test_hiding_a_project_removes_it_from_the_dashboard"],
+    "tests": [
+      "tests/test_api.py::test_hiding_a_project_removes_it_from_the_dashboard"
+    ],
     "expect_count": 1
   },
   {
@@ -20,7 +24,9 @@
     "file": "src/bridge/api.py",
     "old": "ProjectStatus = Literal[\"active\", \"hidden\", \"archived\"]",
     "new": "ProjectStatus = str",
-    "tests": ["tests/test_api.py::test_an_unknown_status_is_refused"],
+    "tests": [
+      "tests/test_api.py::test_an_unknown_status_is_refused"
+    ],
     "expect_count": 1
   },
   {
@@ -28,7 +34,9 @@
     "file": "src/bridge/api.py",
     "old": "        if self.status is None and self.pinned is None:\n            raise ValueError(\"supply status, pinned, or both\")",
     "new": "        pass",
-    "tests": ["tests/test_api.py::test_a_project_patch_with_neither_field_is_422_not_a_silent_no_op"],
+    "tests": [
+      "tests/test_api.py::test_a_project_patch_with_neither_field_is_422_not_a_silent_no_op"
+    ],
     "expect_count": 1
   },
   {
@@ -36,7 +44,9 @@
     "file": "src/bridge/api.py",
     "old": "            store.set_project_pinned(project_id, body.pinned)",
     "new": "            pass",
-    "tests": ["tests/test_api.py::test_the_card_reports_its_pin_state_to_assistive_technology"],
+    "tests": [
+      "tests/test_api.py::test_the_card_reports_its_pin_state_to_assistive_technology"
+    ],
     "expect_count": 1
   },
   {
@@ -44,7 +54,9 @@
     "file": "src/bridge/api.py",
     "old": "        if body.pinned is not None:",
     "new": "        if False:",
-    "tests": ["tests/test_api.py::test_pinning_and_hiding_are_independent"],
+    "tests": [
+      "tests/test_api.py::test_pinning_and_hiding_are_independent"
+    ],
     "expect_count": 1
   },
   {
@@ -52,7 +64,9 @@
     "file": "src/bridge/store.py",
     "old": "                \"UPDATE projects SET pinned=? WHERE id=?\", (int(pinned), project_id)",
     "new": "                \"UPDATE projects SET pinned=? WHERE id=?\", (0, project_id)",
-    "tests": ["tests/test_api.py::test_a_pinned_project_sorts_above_a_queued_handoff"],
+    "tests": [
+      "tests/test_api.py::test_a_pinned_project_sorts_above_a_queued_handoff"
+    ],
     "expect_count": 1
   },
   {
@@ -60,7 +74,9 @@
     "file": "src/bridge/cards.py",
     "old": "    return (0 if card.pinned else 1, rank, live_rank, -(ended or 0),\n            card.name.lower())",
     "new": "    return (rank, live_rank, -(ended or 0), card.name.lower())",
-    "tests": ["tests/test_api.py::test_a_pinned_project_sorts_above_a_queued_handoff"],
+    "tests": [
+      "tests/test_api.py::test_a_pinned_project_sorts_above_a_queued_handoff"
+    ],
     "expect_count": 1
   },
   {
@@ -68,7 +84,9 @@
     "file": "src/bridge/cards.py",
     "old": "    return (0 if card.pinned else 1, rank,",
     "new": "    return (1 if card.pinned else 0, rank,",
-    "tests": ["tests/test_api.py::test_a_pinned_project_sorts_above_a_queued_handoff"],
+    "tests": [
+      "tests/test_api.py::test_a_pinned_project_sorts_above_a_queued_handoff"
+    ],
     "expect_count": 1
   },
   {
@@ -76,15 +94,19 @@
     "file": "src/bridge/cards.py",
     "old": "                pinned=bool(row[\"pinned\"]),",
     "new": "                pinned=False,",
-    "tests": ["tests/test_api.py::test_a_pinned_project_sorts_above_a_queued_handoff"],
+    "tests": [
+      "tests/test_api.py::test_a_pinned_project_sorts_above_a_queued_handoff"
+    ],
     "expect_count": 1
   },
   {
     "name": "hardcode aria-pressed, so the toggle never announces its state",
-    "file": "src/bridge/templates/_card.html",
-    "old": "              aria-pressed=\"{{ 'true' if card.pinned else 'false' }}\"",
-    "new": "              aria-pressed=\"false\"",
-    "tests": ["tests/test_api.py::test_the_card_reports_its_pin_state_to_assistive_technology"],
+    "file": "src/bridge/templates/projects.html",
+    "old": "aria-pressed=\"{{ 'true' if row.pinned else 'false' }}\"",
+    "new": "aria-pressed=\"false\"",
+    "tests": [
+      "tests/test_api.py::test_the_card_reports_its_pin_state_to_assistive_technology"
+    ],
     "expect_count": 1
   },
   {
@@ -92,23 +114,29 @@
     "file": "src/bridge/static/projects.js",
     "old": "    const next = pin.getAttribute(\"aria-pressed\") !== \"true\";",
     "new": "    const next = true;",
-    "tests": ["tests/test_static_js.py::test_pin_toggles_from_the_state_it_announces"],
+    "tests": [
+      "tests/test_static_js.py::test_pin_toggles_from_the_state_it_announces"
+    ],
     "expect_count": 1
   },
   {
     "name": "never list the hidden projects, making hide a one-way door",
-    "file": "src/bridge/api.py",
-    "old": "        hidden = [\n            r for r in store.projects(include_hidden=True) if r[\"status\"] != \"active\"\n        ]",
-    "new": "        hidden = []",
-    "tests": ["tests/test_api.py::test_a_hidden_project_is_still_listed_so_it_can_be_restored"],
+    "file": "src/bridge/projects_view.py",
+    "old": "hidden = [\n        dict(row) for row in store.projects(include_hidden=True)\n        if row[\"status\"] != \"active\"\n    ]",
+    "new": "hidden = []",
+    "tests": [
+      "tests/test_api.py::test_a_hidden_project_is_still_listed_so_it_can_be_restored"
+    ],
     "expect_count": 1
   },
   {
     "name": "list every project as hidden, including the ones on screen",
-    "file": "src/bridge/api.py",
-    "old": "            r for r in store.projects(include_hidden=True) if r[\"status\"] != \"active\"",
-    "new": "            r for r in store.projects(include_hidden=True)",
-    "tests": ["tests/test_api.py::test_the_hidden_list_is_rendered_even_when_empty"],
+    "file": "src/bridge/projects_view.py",
+    "old": "dict(row) for row in store.projects(include_hidden=True)\n        if row[\"status\"] != \"active\"",
+    "new": "dict(row) for row in store.projects(include_hidden=True)",
+    "tests": [
+      "tests/test_api.py::test_the_hidden_list_is_rendered_even_when_empty"
+    ],
     "expect_count": 1
   },
   {
@@ -116,7 +144,9 @@
     "file": "src/bridge/indexer.py",
     "old": "    for archived in unseen_archived:",
     "new": "    for archived in cfg.archived_paths:",
-    "tests": ["tests/test_indexer.py::test_restoring_an_archived_project_survives_the_next_index"],
+    "tests": [
+      "tests/test_indexer.py::test_restoring_an_archived_project_survives_the_next_index"
+    ],
     "expect_count": 1
   },
   {
@@ -124,7 +154,9 @@
     "file": "src/bridge/indexer.py",
     "old": "    unseen_archived = [\n        p for p in cfg.archived_paths if store.project_by_path(p) is None\n    ]",
     "new": "    unseen_archived = list(cfg.archived_paths)",
-    "tests": ["tests/test_indexer.py::test_restoring_an_archived_project_survives_the_next_index"],
+    "tests": [
+      "tests/test_indexer.py::test_restoring_an_archived_project_survives_the_next_index"
+    ],
     "expect_count": 1
   },
   {
@@ -132,39 +164,29 @@
     "file": "src/bridge/indexer.py",
     "old": "        p for p in cfg.archived_paths if store.project_by_path(p) is None",
     "new": "        p for p in cfg.archived_paths if store.project_by_path(p) is not None",
-    "tests": ["tests/test_indexer.py::test_configured_archive_path_is_created_then_hidden"],
+    "tests": [
+      "tests/test_indexer.py::test_configured_archive_path_is_created_then_hidden"
+    ],
     "expect_count": 1
   },
   {
     "name": "drop the hide control from the card",
-    "file": "src/bridge/templates/_card.html",
-    "old": "      <button type=\"button\" class=\"btn\" data-project-hide=\"{{ card.project_id }}\"",
-    "new": "      <button type=\"button\" class=\"btn\" data-project-hid=\"{{ card.project_id }}\"",
-    "tests": ["tests/test_api.py::test_every_card_offers_a_hide_control"],
+    "file": "src/bridge/templates/projects.html",
+    "old": "<button type=\"button\" class=\"btn\" data-project-hide=\"{{ row.project_id }}\"",
+    "new": "<button type=\"button\" class=\"btn\" data-project-hid=\"{{ row.project_id }}\"",
+    "tests": [
+      "tests/test_api.py::test_every_card_offers_a_hide_control"
+    ],
     "expect_count": 1
   },
   {
     "name": "leave the card row unidentifiable, so the client cannot find what to remove",
-    "file": "src/bridge/templates/dashboard.html",
-    "old": "<li data-project-card=\"{{ card.project_id }}\">",
-    "new": "<li>",
-    "tests": ["tests/test_api.py::test_every_card_offers_a_hide_control"],
-    "expect_count": 1
-  },
-  {
-    "name": "render the empty hidden list visibly instead of hiding it",
-    "file": "src/bridge/templates/dashboard.html",
-    "old": "<details class=\"hidden-projects\" data-hidden-projects {% if not hidden %}hidden{% endif %}>",
-    "new": "<details class=\"hidden-projects\" data-hidden-projects>",
-    "tests": ["tests/test_api.py::test_the_hidden_list_is_rendered_even_when_empty"],
-    "expect_count": 1
-  },
-  {
-    "name": "omit the hidden list entirely when empty, stranding the first project hidden",
-    "file": "src/bridge/templates/dashboard.html",
-    "old": "<details class=\"hidden-projects\" data-hidden-projects {% if not hidden %}hidden{% endif %}>",
-    "new": "<details class=\"hidden-projects\" data-hidden-projects {% if not hidden %}hidden{% endif %}>\n{% if hidden %}",
-    "tests": ["tests/test_api.py::test_the_hidden_list_is_rendered_even_when_empty"],
+    "file": "src/bridge/templates/projects.html",
+    "old": "<li class=\"projects-list__item\" data-project-card=\"{{ row.project_id }}\"",
+    "new": "<li class=\"projects-list__item\"",
+    "tests": [
+      "tests/test_api.py::test_every_card_offers_a_hide_control"
+    ],
     "expect_count": 1
   },
   {
@@ -172,7 +194,9 @@
     "file": "src/bridge/static/projects.js",
     "old": "      await patchProject(id, \"hidden\");\n      const list = document.querySelector(\"[data-hidden-list]\");",
     "new": "      if (card) card.remove();\n      await patchProject(id, \"hidden\");\n      const list = document.querySelector(\"[data-hidden-list]\");",
-    "tests": ["tests/test_static_js.py::test_a_refused_hide_leaves_the_card_on_screen_and_says_so"],
+    "tests": [
+      "tests/test_static_js.py::test_a_refused_hide_leaves_the_card_on_screen_and_says_so"
+    ],
     "expect_count": 1
   },
   {
@@ -180,7 +204,9 @@
     "file": "src/bridge/static/projects.js",
     "old": "      await patchProject(id, \"hidden\");",
     "new": "      await patchProject(id, \"archived\");",
-    "tests": ["tests/test_static_js.py::test_hide_patches_the_status_and_moves_the_card_into_the_hidden_list"],
+    "tests": [
+      "tests/test_static_js.py::test_hide_patches_the_status_and_moves_the_card_into_the_hidden_list"
+    ],
     "expect_count": 1
   },
   {
@@ -188,7 +214,9 @@
     "file": "src/bridge/static/projects.js",
     "old": "    await patchProject(id, \"active\");",
     "new": "    await patchProject(id, \"hidden\");",
-    "tests": ["tests/test_static_js.py::test_restore_patches_active_and_drops_the_row"],
+    "tests": [
+      "tests/test_static_js.py::test_restore_patches_active_and_drops_the_row"
+    ],
     "expect_count": 1
   },
   {
@@ -196,7 +224,9 @@
     "file": "src/bridge/static/projects.js",
     "old": "      bumpHiddenCount(1);",
     "new": "      ;",
-    "tests": ["tests/test_static_js.py::test_hide_patches_the_status_and_moves_the_card_into_the_hidden_list"],
+    "tests": [
+      "tests/test_static_js.py::test_hide_patches_the_status_and_moves_the_card_into_the_hidden_list"
+    ],
     "expect_count": 1
   },
   {
@@ -204,7 +234,9 @@
     "file": "src/bridge/static/projects.js",
     "old": "      if (list) list.append(hiddenRow(id, name));",
     "new": "      ;",
-    "tests": ["tests/test_static_js.py::test_hide_patches_the_status_and_moves_the_card_into_the_hidden_list"],
+    "tests": [
+      "tests/test_static_js.py::test_hide_patches_the_status_and_moves_the_card_into_the_hidden_list"
+    ],
     "expect_count": 1
   },
   {
@@ -212,7 +244,9 @@
     "file": "src/bridge/static/projects.js",
     "old": "  if (!response.ok) throw new Error(`HTTP ${response.status}`);",
     "new": "  ;",
-    "tests": ["tests/test_static_js.py::test_a_refused_restore_leaves_the_row_in_the_list"],
+    "tests": [
+      "tests/test_static_js.py::test_a_refused_restore_leaves_the_row_in_the_list"
+    ],
     "expect_count": 1
   }
 ]

@@ -31,9 +31,9 @@
   },
   {
     "name": "replace the visible pin label with an emoji-only control",
-    "file": "src/bridge/templates/_card.html",
-    "old": "              title=\"Pin to the top\">Pin</button>",
-    "new": "              title=\"Pin to the top\"><span aria-hidden=\"true\">📌</span></button>",
+    "file": "src/bridge/templates/project.html",
+    "old": "          title=\"Pin to the top\">Pin</button>",
+    "new": "          title=\"Pin to the top\"><span aria-hidden=\"true\">\ud83d\udccc</span></button>",
     "tests": [
       "tests/test_api.py::test_pin_control_has_a_persistent_visible_label"
     ],

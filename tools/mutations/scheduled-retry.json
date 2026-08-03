@@ -54,32 +54,12 @@
   },
   {
     "name": "invert the already-retried check, offering Retry only where the server refuses it",
-    "file": "src/bridge/api.py",
+    "file": "src/bridge/schedule_view.py",
     "old": "and row[\"id\"] not in retried)",
     "new": "and row[\"id\"] in retried)",
     "tests": [
       "tests/test_api.py::test_a_job_that_has_already_been_retried_offers_no_second_retry_button",
       "tests/test_api.py::test_the_scheduled_section_offers_a_retry_affordance_on_a_failed_job"
-    ],
-    "expect_count": 1
-  },
-  {
-    "name": "drop the dashboard's terminal-row cap, so finished runs accumulate on the page forever",
-    "file": "src/bridge/api.py",
-    "old": "for row in active + terminal[:DASHBOARD_TERMINAL_SCHEDULES]:",
-    "new": "for row in active + terminal:",
-    "tests": [
-      "tests/test_api.py::test_the_dashboard_caps_terminal_rows_and_says_how_many_it_held_back"
-    ],
-    "expect_count": 1
-  },
-  {
-    "name": "cap the active jobs too, hiding a launch that is still going to happen",
-    "file": "src/bridge/api.py",
-    "old": "for row in active + terminal[:DASHBOARD_TERMINAL_SCHEDULES]:",
-    "new": "for row in active[:DASHBOARD_TERMINAL_SCHEDULES] + terminal[:DASHBOARD_TERMINAL_SCHEDULES]:",
-    "tests": [
-      "tests/test_api.py::test_the_dashboard_never_holds_back_an_active_job"
     ],
     "expect_count": 1
   },
@@ -197,39 +177,19 @@
   },
   {
     "name": "the server-rendered retry button loses its per-row accessible name",
-    "file": "src/bridge/templates/dashboard.html",
-    "old": "                    aria-label=\"Retry {{ job.project_name }} run scheduled for {{ job.scheduled_for_utc }}\">Retry</button>",
-    "new": "                    >Retry</button>",
+    "file": "src/bridge/templates/_components.html",
+    "old": "              aria-label=\"Retry {{ row.project_name }} run scheduled for {{ row.scheduled_for_utc }}\">Retry</button>",
+    "new": "              >Retry</button>",
     "tests": [
       "tests/test_api.py::test_the_retry_button_carries_only_the_id_it_retries"
     ],
     "expect_count": 1
   },
   {
-    "name": "the truncation note names hidden history and offers no route to it",
-    "file": "src/bridge/templates/dashboard.html",
-    "old": "      <a href=\"/api/schedule\">see the full history</a></p>",
-    "new": "      see the full history</p>",
-    "tests": [
-      "tests/test_api.py::test_the_dashboard_caps_terminal_rows_and_says_how_many_it_held_back"
-    ],
-    "expect_count": 1
-  },
-  {
-    "name": "the capped list stops pointing at the note explaining the cap",
-    "file": "src/bridge/templates/dashboard.html",
-    "old": " {% if scheduled_older %}aria-describedby=\"scheduled-older\"{% endif %}",
-    "new": "",
-    "tests": [
-      "tests/test_api.py::test_the_dashboard_caps_terminal_rows_and_says_how_many_it_held_back"
-    ],
-    "expect_count": 1
-  },
-  {
     "name": "the unrenderable-epoch guard goes, putting datetime=\"None\" back in the markup",
-    "file": "src/bridge/templates/dashboard.html",
-    "old": "{% if job.scheduled_for_iso %}datetime=\"{{ job.scheduled_for_iso }}\"{% endif %}",
-    "new": "datetime=\"{{ job.scheduled_for_iso }}\"",
+    "file": "src/bridge/templates/_components.html",
+    "old": "{% if row.scheduled_for_iso %} datetime=\"{{ row.scheduled_for_iso }}\"{% endif %}",
+    "new": " datetime=\"{{ row.scheduled_for_iso }}\"",
     "tests": [
       "tests/test_api.py::test_an_unrenderable_scheduled_for_omits_the_datetime_attribute"
     ],

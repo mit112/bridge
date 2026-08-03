@@ -1,0 +1,116 @@
+{# The calm Overview: "what needs my attention", plus a quiet look at recent
+   projects and what is coming up. Renders `bridge.overview.OverviewModel`
+   (`model` in this template) -- no per-project git/burn/sparkline leaves, no
+   compose/launch/handoff surface, no scheduled/hidden-projects detail. Those
+   surfaces are the Project workspace's (`/project/{id}?tab=current`), the
+   Projects index's (`/projects`), and the Schedule page's (`/schedule`) to
+   own; this page only links to them. #}
+{% extends "base.html" %}
+{% from "_shell.html" import freshness_status %}
+{% from "_components.html" import project_summary_row, schedule_row, empty_state %}
+{% block page_title %}Overview{% endblock %}
+{% block page_summary %}
+{# Same eight totals the mega-dashboard's topbar showed, moved here verbatim:
+   `model.totals` is `DashboardBuilder`'s own `topbar` dict, unchanged by the
+   flip, so `data-dashboard-total` stays live.js's stable patch target. #}
+<dl class="totals">
+  <div class="total" data-dashboard-total="projects"><dt>projects</dt><dd>{{ model.totals.projects }}</dd></div>
+  <div class="total" data-dashboard-total="running"><dt>running</dt><dd>{{ model.totals.running }}</dd></div>
+  <div class="total" data-dashboard-total="queued"><dt>queued</dt><dd>{{ model.totals.queued }}</dd></div>
+  <div class="total" data-dashboard-total="scheduled"><dt>scheduled</dt><dd data-topbar-scheduled>{{ model.totals.scheduled }}</dd></div>
+  <div class="total" data-dashboard-total="today"><dt>tokens today</dt><dd>{{ model.totals.today | kilo }}</dd></div>
+  <div class="total" data-dashboard-total="last_5h"><dt>last 5h</dt><dd>{{ model.totals.last_5h | kilo }}</dd></div>
+  {# A rate over the measured window, never a share of a cap: the plan
+     publishes no total, so a percentage would have no denominator and a
+     gauge would be inventing one. #}
+  <div class="total" data-dashboard-total="burn_rate"><dt>burn</dt><dd>{{ model.totals.burn_rate | kilo }}/h</dd></div>
+  <div class="total" data-dashboard-total="last_index"><dt>indexed</dt><dd>{{ (model.totals.last_index | ago_epoch) or "never" }}</dd></div>
+</dl>
+{% endblock %}
+{% block page_actions %}
+{% set freshness = model.freshness %}
+{% set freshness_state = "unavailable" if freshness.server == "unavailable" or freshness.index_at is none else ("stale" if freshness.index_age_seconds >= 45 else "connected") %}
+{% call freshness_status(freshness_state,
+                          freshness.index_age_seconds if freshness.index_age_seconds is not none else "never indexed",
+                          index_at=freshness.index_at,
+                          server=freshness.server) %}
+  <button type="button" class="btn" data-dashboard-refresh>Refresh</button>
+  <span class="card__note" data-refresh-status role="status" aria-live="polite"></span>
+{% endcall %}
+{% endblock %}
+{% block content %}
+{# `.page-lede` is the same lede style `projects.html` already uses. #}
+<p class="page-lede overview-lede">
+  {% if model.attention %}
+    {{ model.attention | length }} item{{ "" if model.attention | length == 1 else "s" }} need{{ "s" if model.attention | length == 1 else "" }} your attention.
+  {% else %}
+    Nothing needs your attention right now.
+  {% endif %}
+</p>
+
+{# `.history` is the same section-spacing + heading style `diagnostics.html`
+   and `schedule.html` already use for their own named groups. #}
+<section class="history" aria-labelledby="overview-attention-title">
+  <h2 id="overview-attention-title">Needs attention</h2>
+  {% if not model.attention %}
+    {{ empty_state("Nothing needs attention.") }}
+  {% else %}
+  {# `.cards`/`.card`/`.card--risk` are the same list/card treatment
+     `diagnostics.html`'s own "Needs attention" section already uses. #}
+  <ul class="cards" data-overview-attention>
+    {% for item in model.attention %}
+    <li class="card{% if item.kind == 'stale' %} card--risk{% endif %}">
+      <div class="card__head"><h3>{{ item.title }}</h3></div>
+      {# Status is never colour alone: a stale item's warning glyph sits
+         beside the words, the same "⚠ uncommitted..." convention the old
+         per-project card used. #}
+      <p class="card__note">{% if item.kind == "stale" %}⚠ {% endif %}{{ item.summary }}</p>
+      <a class="btn" href="{{ item.primary_action.href }}">{{ item.primary_action.label }}</a>
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</section>
+
+<section class="history" aria-labelledby="overview-recent-title">
+  <h2 id="overview-recent-title">Recent projects</h2>
+  {% if not model.recent %}
+    {{ empty_state("No other projects yet.") }}
+  {% else %}
+  {# `.projects-list`/`.projects-list__item` are `projects.html`'s own list
+     treatment around this exact macro -- reused rather than duplicated. #}
+  <ul class="projects-list">
+    {% for row in model.recent %}<li class="projects-list__item">{{ project_summary_row(row) }}</li>{% endfor %}
+  </ul>
+  {% endif %}
+  {# Kept even though Overview renders no per-card membership list of its
+     own: live.js's project-list-changed announcement (`applyCardOrder`)
+     still looks this hook up by name. #}
+  <p class="card__note" data-project-membership-status role="status" aria-live="polite"></p>
+  <p><a href="/projects">View all projects</a></p>
+</section>
+
+<section class="history" aria-labelledby="overview-up-next-title">
+  <h2 id="overview-up-next-title">Up next</h2>
+  {% if not model.up_next %}
+    {{ empty_state("Nothing scheduled.") }}
+  {% else %}
+  {# `.scheduled`'s own descendant selectors (`.scheduled ul`/`li`) give this
+     preview the identical row layout the Schedule page already uses, for
+     free -- the same reuse `schedule.html` itself relies on (see its own
+     comment at the top of `.scheduled` in app.css). #}
+  <div class="scheduled overview-up-next">
+    <ul>
+      {% for row in model.up_next %}{{ schedule_row(row, interactive=False) }}{% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+  <p><a href="/schedule">See the full schedule</a></p>
+</section>
+
+{# Absolute values, never a percentage of a cap the plan does not publish --
+   the same rule the topbar strip above already follows. `.muted` is the
+   same quiet-text token every other secondary line on the page already
+   uses (`.card__note`, `.empty`). #}
+<p class="muted overview-usage">Today: {{ model.totals.today | kilo }} tokens · last 5h: {{ model.totals.last_5h | kilo }} tokens</p>
+{% endblock %}

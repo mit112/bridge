@@ -6,7 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from bridge import launcher, spool
-from bridge.api import DASHBOARD_TERMINAL_SCHEDULES, create_app
+from bridge.api import create_app
 from bridge.config import load
 from bridge.models import GitState, Handoff, Launch, ScheduledRun, SessionRecord
 from bridge.registry import resolve_project
@@ -50,24 +50,46 @@ def test_dashboard_renders_project_and_title(client):
     assert "Did the work" in r.text
 
 
-def test_dashboard_renders_stable_freshness_and_leaf_patch_hooks(client):
+def test_overview_renders_stable_freshness_and_total_hooks(client):
+    """`data-cards-list` (the full reorderable card list) and the per-project
+    git/burn/sparkline leaves retired with the mega-dashboard's per-project
+    cards -- Overview has none of them (spec:Milestone-2's calm-Overview
+    requirement; see `test_workspace_current_tab_carries_the_live_git_and_burn_leaf_hooks`
+    below for where they render now). `data-generated-at`/`data-generation`
+    also drop: `OverviewModel` deliberately carries only
+    `totals`/`freshness`/`diagnostics_alert` off the envelope, not its raw
+    generation-tracking fields."""
     c, _, _ = client
     html = c.get("/").text
     assert 'data-freshness-strip' in html
     assert 'data-dashboard-refresh>Refresh</button>' in html
     assert 'data-project-membership-status' in html
-    assert 'data-cards-list' in html
     assert html.count('data-dashboard-total=') == 8
-    for hook in (
-        "data-live-status", "data-git-branch", "data-git-dirty",
-        "data-git-ahead", "data-git-stale", "data-git-cache",
-        "data-burn-today", "data-burn-last-5h", "data-sparkline",
-    ):
-        assert hook in html
-    assert 'data-generated-at=' in html
-    assert 'data-generation=' in html
     assert 'data-index-at=' in html
     assert 'data-server=' in html
+
+
+def test_workspace_current_tab_carries_the_live_and_burn_leaf_hooks(client):
+    """These per-project leaves moved off `/` with the mega-dashboard's own
+    cards; `_workspace_current.html` (via the shared `live_status`/
+    `token_burn` macros) is their only remaining renderer.
+
+    NOTE: `data-git-branch`/`-dirty`/`-ahead`/`-stale`/`-cache` are NOT in
+    this list. `_card.html` was their only renderer, and it retires with this
+    task -- but `_workspace_current.html`'s own git block (Milestone 3's UI
+    extraction) never carried those `data-*` hooks in the first place, hand-
+    rolling plain `<span>{{ git.branch }}</span>` markup instead. That gap
+    predates this task; deleting `_card.html` only makes it total (repo-wide,
+    not one page short). Fixing it means adding hooks to
+    `_workspace_current.html`, which is out of this task's stage list --
+    flagged for Task 2.4 (live.js's own leaf-patch guards) or a follow-up."""
+    c, _, pid = client
+    html = c.get(f"/project/{pid}?tab=current").text
+    for hook in (
+        "data-live-status", "data-burn-today", "data-burn-last-5h",
+        "data-sparkline",
+    ):
+        assert hook in html
 
 
 def test_dashboard_renders_with_zero_projects(tmp_path):
@@ -130,8 +152,8 @@ def test_project_and_diagnostics_tables_are_keyboard_scroll_regions(client):
 
 
 def test_pin_control_has_a_persistent_visible_label(client):
-    c, _, _ = client
-    html = c.get("/").text
+    c, _, pid = client
+    html = c.get(f"/project/{pid}").text
     button = re.search(r"<button[^>]*data-project-pin.*?</button>", html, re.S)
     assert button
     assert ">Pin</button>" in button.group(0)
@@ -261,7 +283,10 @@ def test_stale_project_shows_warning_glyph_and_text(tmp_path):
     try:
         c = TestClient(create_app(store, cfg))
         text = c.get("/").text
-        assert "47 dirty" in text
+        # `47 dirty` was `_card.html`'s wording; the Overview attention ladder
+        # (`bridge.overview._attention_from_cards`) uses its own summary text
+        # for the same fact -- still a word, never colour alone.
+        assert "47 uncommitted change(s)" in text
         assert "⚠" in text
         assert "uncommitted" in text.lower()
     finally:
@@ -269,7 +294,12 @@ def test_stale_project_shows_warning_glyph_and_text(tmp_path):
         store.close()
 
 
-def test_not_a_repo_shows_neutral_note_not_warning(tmp_path):
+def test_not_a_repo_does_not_render_a_false_warning_on_overview(tmp_path):
+    """The per-project `not a git repo` neutral note lived in `_card.html`,
+    which retired with the mega-dashboard; Overview's `project_summary_row`
+    carries no git-status word at all for a non-actionable state. What must
+    still hold on Overview is the WCAG-relevant half of the old contract: a
+    project with nothing wrong must never render a false alarm glyph."""
     from bridge.models import GitState
 
     import bridge.cards as cards_mod
@@ -287,7 +317,7 @@ def test_not_a_repo_shows_neutral_note_not_warning(tmp_path):
     cards_mod.gitprobe.probe = lambda p: GitState(status="not_a_repo")
     try:
         text = TestClient(create_app(store, cfg)).get("/").text
-        assert "not a git repo" in text.lower()
+        assert "plain" in text
         assert "⚠" not in text
     finally:
         cards_mod.gitprobe.probe = orig
@@ -582,12 +612,16 @@ def test_a_live_post_is_journaled_so_the_database_stays_disposable(tmp_path):
 
 
 def test_a_queued_prompt_is_html_escaped_on_the_card(handoff_app):
-    """A prompt is arbitrary text and routinely contains markup."""
+    """A prompt is arbitrary text and routinely contains markup.
+
+    The raw prompt (and the Copy button that targets it) render on the
+    Project workspace's Current tab now -- Overview's attention item shows
+    only the handoff's `summary`, never the full prompt text."""
     c, _, _ = handoff_app
     prompt = "before <script>alert('xss')</script> after"
-    c.post("/api/handoff", json=body("h1", prompt=prompt))
+    pid = c.post("/api/handoff", json=body("h1", prompt=prompt)).json()["project_id"]
 
-    html = c.get("/").text
+    html = c.get(f"/project/{pid}?tab=current").text
 
     assert "<script>alert(" not in html, "the prompt was rendered as live markup"
     assert "&lt;script&gt;alert(" in html
@@ -596,9 +630,11 @@ def test_a_queued_prompt_is_html_escaped_on_the_card(handoff_app):
 
 def test_the_card_shows_the_handoff_and_a_labelled_copy_affordance(handoff_app):
     c, _, _ = handoff_app
-    c.post("/api/handoff", json=body("h1", prompt="carry on from here"))
+    pid = c.post(
+        "/api/handoff", json=body("h1", prompt="carry on from here")
+    ).json()["project_id"]
 
-    html = c.get("/").text
+    html = c.get(f"/project/{pid}?tab=current").text
 
     assert "Next step queued" in html
     assert "a summary" in html
@@ -618,8 +654,8 @@ def test_the_card_shows_the_handoff_and_a_labelled_copy_affordance(handoff_app):
 
 def test_a_card_with_no_handoff_shows_no_empty_affordance(client):
     """No orphan Copy button, no empty block, on the majority of cards."""
-    c, _, _ = client
-    html = c.get("/").text
+    c, _, pid = client
+    html = c.get(f"/project/{pid}?tab=current").text
     assert "Next step queued" not in html
     assert "Copy prompt" not in html
     assert "data-copy-target" not in html
@@ -939,14 +975,14 @@ def test_the_editable_prompt_is_html_escaped_in_the_textarea(launch_app):
     """
     c, _, _, _ = launch_app
     prompt = "before </textarea><script>alert('xss')</script> after"
-    c.post("/api/handoff", json=body("h1", prompt=prompt))
+    pid = c.post("/api/handoff", json=body("h1", prompt=prompt)).json()["project_id"]
 
-    html = c.get("/").text
+    html = c.get(f"/project/{pid}?tab=current").text
 
     assert "</textarea><script>" not in html, "the prompt closed its own field"
     assert "&lt;/textarea&gt;&lt;script&gt;" in html
-    # Balanced, not a fixed count: Task 5's compose box adds a second, always-
-    # empty textarea to every card, so the number that matters is that every
+    # Balanced, not a fixed count: the compose box adds a second, always-empty
+    # textarea to every workspace, so the number that matters is that every
     # opened field was also closed -- an unescaped `</textarea>` in the prompt
     # would leave one dangling open (or one bare close with nothing to match).
     assert html.count("<textarea") == html.count("</textarea>"), (
@@ -961,7 +997,7 @@ def test_both_launch_selects_are_labelled_and_preselect_the_suggestion(launch_ap
         json=body("h1", suggested_model="sonnet", suggested_effort="xhigh"),
     ).json()["project_id"]
 
-    html = c.get("/").text
+    html = c.get(f"/project/{pid}?tab=current").text
     lid = f"launch-{pid}"
 
     assert f'<label class="launch__label" for="{lid}-model">Model</label>' in html
@@ -998,7 +1034,7 @@ def test_a_suggestion_the_config_does_not_list_is_still_preselected(launch_app):
     ).json()["project_id"]
     assert off_catalog not in [m.value for m in load({}).models]
 
-    html = c.get("/").text
+    html = c.get(f"/project/{pid}?tab=current").text
 
     assert f'<option value="{off_catalog}" selected>{off_catalog}</option>' in html
     assert f'id="launch-{pid}-model"' in html
@@ -1010,9 +1046,9 @@ def test_with_no_suggestion_the_first_catalog_entry_is_selected(launch_app):
     later reorder of the catalog would change what launches with no warning.
     """
     c, store, _, _ = launch_app
-    store.upsert_project("/Users/mitsheth/dev/nohandoff", "nohandoff")
+    pid = store.upsert_project("/Users/mitsheth/dev/nohandoff", "nohandoff")
 
-    html = c.get("/").text
+    html = c.get(f"/project/{pid}?tab=current").text
 
     first = load({}).models[0]
     assert (
@@ -1021,18 +1057,22 @@ def test_with_no_suggestion_the_first_catalog_entry_is_selected(launch_app):
 
 
 def test_two_cards_produce_no_duplicate_element_id(launch_app):
-    """Ids are keyed off `project_id`; keying them off the handoff id would emit a
-    bare prefix on the card with nothing queued and collide across cards."""
-    c, store, _, _ = launch_app
-    c.post("/api/handoff", json=body("h1", path=DEMO))
-    store.upsert_project("/Users/mitsheth/dev/second", "second")
+    """Ids are keyed off `project_id`; keying them off the handoff id would emit
+    a bare prefix when nothing is queued and collide with any other
+    project-id-keyed id on the page. The mega-dashboard's two-cards-on-one-page
+    version of this check retired with it -- only one project's workspace ever
+    renders per page now -- but the Current tab still renders launch-band,
+    compose-box, and handoff ids together on that ONE page, which is where an
+    id collision would show up."""
+    c, _, _, _ = launch_app
+    pid = c.post("/api/handoff", json=body("h1", path=DEMO)).json()["project_id"]
 
-    html = c.get("/").text
+    html = c.get(f"/project/{pid}?tab=current").text
 
     ids = re.findall(r'\sid="([^"]+)"', html)
     assert len(ids) == len(set(ids)), f"duplicate ids: {sorted(ids)}"
-    assert len([i for i in ids if i.startswith("launch-")]) == 6, (
-        "three selects on each of the two cards"
+    assert len([i for i in ids if i.startswith("launch-")]) == 3, (
+        "three selects on the launch band"
     )
 
 
@@ -1041,7 +1081,7 @@ def test_a_card_with_no_queued_handoff_still_renders_a_launch_band(launch_app):
     c, store, _, _ = launch_app
     pid = store.upsert_project("/Users/mitsheth/dev/quiet", "quiet")
 
-    html = c.get("/").text
+    html = c.get(f"/project/{pid}?tab=current").text
 
     assert f'data-launch="launch-{pid}"' in html
     assert f'data-compose-launch="launch-{pid}"' in html
@@ -1058,9 +1098,9 @@ def test_a_card_with_no_queued_handoff_still_renders_a_launch_band(launch_app):
 def test_every_new_control_is_labelled_and_none_leaves_the_tab_order(launch_app):
     """Keyboard operability asserted structurally rather than by hand."""
     c, _, _, _ = launch_app
-    c.post("/api/handoff", json=body("h1"))
+    pid = c.post("/api/handoff", json=body("h1")).json()["project_id"]
 
-    html = c.get("/").text
+    html = c.get(f"/project/{pid}?tab=current").text
 
     # `<main id="main" tabindex="-1">` is the one deliberate exception: it is
     # the skip link's landmark target, not a control, and WCAG's own
@@ -1078,9 +1118,11 @@ def test_every_new_control_is_labelled_and_none_leaves_the_tab_order(launch_app)
     for tag in fields:
         ident = re.search(r'\sid="([^"]+)"', tag)
         assert (ident and ident.group(1) in labelled) or "aria-label=" in tag, tag
-    # The ▶ has no text node of its own, so its accessible name is explicit.
+    # The workspace's primary launch button carries its own visible text
+    # ("Continue in Terminal"/"Start session") plus an explicit aria-label
+    # naming the project, unlike the dashboard's icon-only ▶ this superseded.
     assert re.search(
-        r'<button[^>]*data-launch-button[^>]*aria-label="Launch a session for [^"]+"',
+        r'<button[^>]*data-launch-button[^>]*aria-label="Continue a session for [^"]+"',
         html,
     )
     # The launch status is a live region with a key of its own, so it and the
@@ -1160,8 +1202,8 @@ def test_no_handoff_field_can_arm_a_permission_mode(launch_app):
     exactly the sticky default the design forbids.
     """
     c, _, _, _ = launch_app
-    c.post("/api/handoff", json=body("h1"))
-    html = c.get("/").text
+    pid = c.post("/api/handoff", json=body("h1")).json()["project_id"]
+    html = c.get(f"/project/{pid}?tab=current").text
 
     # The rendered select always lands on the no-flag option, whatever the
     # handoff says, and the dangerous option is never the selected one.
@@ -1176,8 +1218,8 @@ def test_no_handoff_field_can_arm_a_permission_mode(launch_app):
 
 def test_the_permission_select_is_labelled_and_marked_dangerous(launch_app):
     c, _, _, _ = launch_app
-    c.post("/api/handoff", json=body("h1"))
-    html = c.get("/").text
+    pid = c.post("/api/handoff", json=body("h1")).json()["project_id"]
+    html = c.get(f"/project/{pid}?tab=current").text
     assert re.search(r'<label[^>]*for="launch-\d+-perm">Permissions</label>', html)
     # Colour is never the only signal: the option says so in words.
     assert "SKIP ALL CHECKS" in html
@@ -1187,12 +1229,17 @@ def test_the_permission_select_is_labelled_and_marked_dangerous(launch_app):
 
 
 def test_a_stale_git_probe_renders_the_last_good_state_and_its_age(tmp_path):
-    """Rendered rather than asserted on the dataclass, because the filter choice
-    is the bug: `ago` takes an ISO-8601 string and `cached_at` is an epoch int,
-    so the wrong one either raises or renders nonsense."""
-    from bridge.models import GitState
+    """Rendered rather than asserted on the dataclass, because the filter
+    choice is the bug: `ago` takes an ISO-8601 string and `cached_at` is an
+    epoch int, so the wrong one either raises or renders nonsense.
 
-    import bridge.cards as cards_mod
+    The Project workspace never live-probes git at all (`build_workspace`
+    passes `build_cards` an always-`unavailable` `probe_fn` and reads
+    `store.get_git_cache` directly instead, per
+    `test_workspace_never_live_probes_git`) -- so this seeds the cache the
+    same way `test_the_project_page_shows_the_cached_git_log` does, rather
+    than monkeypatching a probe the route no longer calls."""
+    from bridge.models import GitState
 
     cfg = load({"db_path": tmp_path / "g.db", "spool_dir": tmp_path / "spool"})
     store = Store(cfg.db_path)
@@ -1202,20 +1249,17 @@ def test_a_stale_git_probe_renders_the_last_good_state_and_its_age(tmp_path):
                       title="Work", ended_at="2026-07-30T10:00:00.000Z"),
         pid,
     )
-    orig = cards_mod.gitprobe.probe
-    try:
-        cards_mod.gitprobe.probe = lambda p: GitState(status="ok", branch="cached-branch")
-        c = TestClient(create_app(store, cfg))
-        assert "cached-branch" in c.get("/").text
+    store.put_git_cache(
+        pid, GitState(status="ok", branch="cached-branch"), probed_at=1_780_000_000,
+    )
 
-        cards_mod.gitprobe.probe = lambda p: GitState(status="unavailable")
-        text = c.get("/").text
-        assert "cached-branch" in text, "the last good branch was not shown"
-        assert "as of" in text
-        assert "git unavailable" not in text
-    finally:
-        cards_mod.gitprobe.probe = orig
-        store.close()
+    c = TestClient(create_app(store, cfg))
+    text = c.get(f"/project/{pid}").text
+
+    assert "cached-branch" in text, "the last good branch was not shown"
+    assert "git checked" in text
+    assert "ago" in text
+    store.close()
 
 
 # --- Phase 4 Task 7: diagnostics ---------------------------------------------
@@ -1293,14 +1337,26 @@ def test_diagnostics_counts_only_still_queued_handoffs(client):
 
 
 def test_the_header_links_to_diagnostics_only_when_something_is_wrong(client):
-    """A permanent link would train the eye to ignore it."""
+    """A permanent link would train the eye to ignore it.
+
+    Both branches assert the `hidden` state explicitly: checking only that
+    `data-diagnostics-alert` appears in the markup cannot tell an
+    always-hidden (or always-shown) header apart from one that actually
+    tracks health, since the hook renders unconditionally either way.
+    """
     c, store, _ = client
     store.record_index_run({"parse_errors": 0}, ran_at=1, duration_ms=1)
-    body = c.get("/").text
-    assert "data-diagnostics-alert" in body
-    assert re.search(r'data-diagnostics-alert\s+hidden', body)
+    healthy_body = c.get("/").text
+    assert "data-diagnostics-alert" in healthy_body
+    assert re.search(r'data-diagnostics-alert\s+hidden', healthy_body)
+
     store.record_index_run({"parse_errors": 2}, ran_at=2, duration_ms=1)
-    assert "data-diagnostics-alert" in c.get("/").text
+    degraded_body = c.get("/").text
+    assert "data-diagnostics-alert" in degraded_body
+    assert not re.search(r'data-diagnostics-alert\s+hidden', degraded_body), (
+        "the alert must actually show once something is wrong, not just exist"
+    )
+    assert re.search(r'data-diagnostics-alert[^>]*>\s*⚠', degraded_body)
 
 
 def test_the_diagnostics_page_renders_and_says_so_in_words(client):
@@ -1666,38 +1722,6 @@ def test_the_hold_releases_so_idle_is_delayed_and_not_suppressed(
     assert frames[1][1]["cards"]["1"]["live"]["status"] == "idle"
 
 
-def test_the_unattributed_block_holds_the_same_status_the_cards_do(
-    tmp_path, monkeypatch
-):
-    """One debouncer, both consumers.
-
-    An unattributed session is rendered from `_live_snapshot` while a card is
-    rendered from `build_cards`. Debouncing only the second means two blocks on
-    ONE page disagree about whether the same machine is busy.
-    """
-    from bridge import agents
-    from bridge.models import AgentsState, LiveSession
-
-    cfg = load({"db_path": tmp_path / "un2.db", "spool_dir": tmp_path / "spool"})
-    store = Store(cfg.db_path)
-
-    def state(status):
-        return AgentsState(status="ok", sessions=[LiveSession(
-            session_id="aaaaaaaa-0000-0000-0000-000000000002",
-            cwd="/somewhere/unregistered", kind="interactive", status=status)])
-
-    states = [state("busy"), state("idle")]
-    monkeypatch.setattr(agents, "probe",
-                        lambda *a, **k: states.pop(0) if states else state("idle"))
-    c = TestClient(create_app(store, cfg))
-    assert 'class="live live--busy"' in c.get("/").text
-    second = c.get("/").text
-    store.close()
-
-    assert 'class="live live--busy"' in second, (
-        "the sensor said idle once, inside the hold, so the block still says busy"
-    )
-
 
 def test_the_wire_payload_keys_unattributed_sessions_by_their_own_cwd(
     tmp_path, monkeypatch
@@ -1848,22 +1872,21 @@ def test_hiding_a_project_removes_it_from_the_dashboard(client):
     assert r.json()["status"] == "hidden"
 
     body = c.get("/").text
-    assert not re.search(r'<h2><a href="/project/\d+">demo</a></h2>', body), (
-        "the hidden project still renders a card"
-    )
+    assert "demo" not in body, "the hidden project still renders on the overview"
     assert [p["name"] for p in c.get("/api/projects").json()] == []
 
 
 def test_a_hidden_project_is_still_listed_so_it_can_be_restored(client):
     """Hiding must not be a one-way door.
 
-    `store.projects()` whitelists `active`, so without the list at the foot of
-    the dashboard nothing in the panel could name a hidden project again.
+    The hidden-projects list moved to `/projects` with the mega-dashboard's
+    retirement; `store.projects()` whitelists `active`, so without this list
+    nothing in the panel could name a hidden project again.
     """
     c, _, pid = client
     c.patch(f"/api/projects/{pid}", json={"status": "hidden"})
 
-    body = c.get("/").text
+    body = c.get("/projects").text
     assert f'data-hidden-project="{pid}"' in body
     assert f'data-project-restore="{pid}"' in body
     # The word, so a project archived by config.toml is distinguishable from one
@@ -1882,9 +1905,8 @@ def test_restoring_a_project_brings_its_card_back(client):
     assert r.status_code == 200
     assert r.json()["status"] == "active"
 
-    body = c.get("/").text
-    assert re.search(r'<h2><a href="/project/\d+">demo</a></h2>', body)
-    assert f'data-hidden-project="{pid}"' not in body
+    assert "demo" in c.get("/").text
+    assert f'data-hidden-project="{pid}"' not in c.get("/projects").text
 
 
 def test_an_archived_project_is_listed_as_archived_not_as_hidden(client):
@@ -1892,7 +1914,7 @@ def test_an_archived_project_is_listed_as_archived_not_as_hidden(client):
     c.patch(f"/api/projects/{pid}", json={"status": "archived"})
     assert re.search(
         rf'data-hidden-project="{pid}".*?<span class="card__note">archived</span>',
-        c.get("/").text, re.S,
+        c.get("/projects").text, re.S,
     )
 
 
@@ -1921,8 +1943,12 @@ def test_a_project_patch_with_neither_field_is_422_not_a_silent_no_op(client):
 
 
 def test_every_card_offers_a_hide_control(client):
+    """The card row action moved to `/projects` with the mega-dashboard's
+    retirement; `test_get_projects_returns_200_with_search_filters_and_rows`
+    (test_projects_route.py) already covers the row hooks generally -- this
+    keeps the narrower `data-project-status` report-target assertion."""
     c, _, pid = client
-    body = c.get("/").text
+    body = c.get("/projects").text
     assert f'data-project-hide="{pid}"' in body
     # The row the client removes on success, and the region it reports into if
     # the PATCH fails.
@@ -1931,17 +1957,16 @@ def test_every_card_offers_a_hide_control(client):
 
 
 def test_the_hidden_list_is_rendered_even_when_empty(client):
-    """Hiding the FIRST project needs somewhere to put it.
-
-    Omitting the block until a reload produced one would leave that project
-    unreachable in the meantime -- exactly the one-way door the list prevents.
-    """
-    c, _, _ = client
-    body = c.get("/").text
+    """The hidden-projects list moved to `/projects` with the mega-dashboard's
+    retirement. It must include only projects `store` actually marked
+    hidden/archived -- never an active one that is still showing its own
+    row on the same page."""
+    c, _, pid = client
+    body = c.get("/projects").text
     assert "data-hidden-projects" in body
     assert "data-hidden-list" in body
-    assert re.search(r"<details[^>]*data-hidden-projects[^>]*\shidden[\s>]", body), (
-        "the empty list must be present but not visible"
+    assert f'data-hidden-project="{pid}"' not in body, (
+        "an active project must never appear in the hidden list"
     )
 
 
@@ -2068,53 +2093,103 @@ def test_a_session_outside_any_project_is_not_dropped_from_the_stream(
     )
 
 
-def test_a_session_outside_any_project_is_shown_with_its_directory(
-    client, monkeypatch
+def test_the_unattributed_block_holds_the_same_status_the_cards_do(
+    tmp_path, monkeypatch
 ):
-    """The topbar's running count already includes it, so without this the
-    count and the cards disagree and nothing says where the difference went."""
-    c, _, _ = client
-    _live_elsewhere(monkeypatch, "/Users/mitsheth/scratch")
+    """One debouncer, shared across every consumer of `agents.probe()`.
 
-    body = c.get("/").text
-    assert "Running outside any project" in body
-    assert "/Users/mitsheth/scratch" in body
-    # The same hook the cards use, so live.js patches it knowing nothing about
-    # whether it is a project.
-    assert 'data-live-path="/Users/mitsheth/scratch"' in body
-    # And the count it has to agree with.
-    assert re.search(r"<dt>running</dt><dd>1</dd>", body)
+    The unattributed-session HTML block ("Running outside any project") this
+    test originally exercised retired from `/` with the mega-dashboard's
+    per-project cards and has no replacement page (Task 2.3 explicitly drops
+    unattributed rendering from Overview). What must still hold is the
+    hysteresis itself: the topbar's running count -- fed by the SAME
+    debouncer instance `dashboard_builder` shares across every request --
+    must not flap on a single busy-to-idle sample inside the hold.
+    """
+    from bridge import agents
+    from bridge.models import AgentsState, LiveSession
 
+    cfg = load({"db_path": tmp_path / "un2.db", "spool_dir": tmp_path / "spool"})
+    store = Store(cfg.db_path)
 
-def test_a_session_inside_a_project_stays_on_its_card(client, monkeypatch):
-    """The bucket must not swallow attributed sessions."""
-    c, _, _ = client
-    _live_elsewhere(monkeypatch, DEMO)
+    def state(status):
+        return AgentsState(status="ok", sessions=[LiveSession(
+            session_id="aaaaaaaa-0000-0000-0000-000000000002",
+            cwd="/somewhere/unregistered", kind="interactive", status=status)])
 
-    body = c.get("/").text
-    assert "Running outside any project" not in body
-    assert f'data-live-path="{DEMO}"' in body
+    states = [state("busy"), state("idle")]
+    monkeypatch.setattr(agents, "probe",
+                        lambda *a, **k: states.pop(0) if states else state("idle"))
+    c = TestClient(create_app(store, cfg))
+    first = c.get("/").text
+    second = c.get("/").text
+    store.close()
+
+    assert re.search(r"<dt>running</dt><dd>1</dd>", first)
+    assert re.search(r"<dt>running</dt><dd>1</dd>", second), (
+        "the sensor said idle once, inside the hold, so running must still count it"
+    )
 
 
 def test_two_sessions_in_the_same_directory_report_the_newest(client, monkeypatch):
+    """The mega-dashboard's own HTML rendering of this dedup retired with its
+    per-card surface; `bridge.dashboard._unattributed` still feeds the SSE
+    snapshot's `unattributed` list, which must still report exactly one entry
+    for the directory, not one per session sharing it."""
     c, _, _ = client
     _live_elsewhere(monkeypatch, "/Users/mitsheth/scratch", "/Users/mitsheth/scratch")
-    body = c.get("/").text
-    assert body.count('data-live-path="/Users/mitsheth/scratch"') == 1
+
+    with c.stream("GET", "/events?max_ticks=1&interval=0") as r:
+        payload = _frames("".join(r.iter_text()))[0][1]
+
+    matches = [u for u in payload["unattributed"] if u["path"] == "/Users/mitsheth/scratch"]
+    assert len(matches) == 1
+
+
+def test_a_session_outside_any_project_is_shown_with_its_directory(
+    client, monkeypatch
+):
+    """The unattributed-session HTML detail panel retired from `/` with the
+    mega-dashboard's per-card surface (Task 2.3); the SSE snapshot's
+    `unattributed` list -- and the topbar's running count, which already
+    included these sessions -- must still name the directory."""
+    c, _, _ = client
+    _live_elsewhere(monkeypatch, "/Users/mitsheth/scratch")
+
+    with c.stream("GET", "/events?max_ticks=1&interval=0") as r:
+        payload = _frames("".join(r.iter_text()))[0][1]
+
+    assert any(u["path"] == "/Users/mitsheth/scratch" for u in payload["unattributed"])
+    assert re.search(r"<dt>running</dt><dd>1</dd>", c.get("/").text)
+
+
+def test_a_session_inside_a_project_stays_on_its_card(client, monkeypatch):
+    """The bucket must not swallow attributed sessions. The per-card live
+    band moved to the Project workspace's Current tab with the mega-dashboard's
+    retirement."""
+    c, _, pid = client
+    _live_elsewhere(monkeypatch, DEMO)
+
+    body = c.get(f"/project/{pid}?tab=current").text
+    assert "Running outside any project" not in body
+    assert f'data-live-path="{DEMO}"' in body
 
 
 # --- Pin ----------------------------------------------------------------------
 
 
 def test_a_pinned_project_sorts_above_a_queued_handoff(tmp_path):
-    """The decision this feature turned on.
-
-    Every other sort term is something Bridge inferred; a pin is the one thing
-    the user said outright, and an inference must not overrule an instruction.
-    """
+    """Pin promotes within Recent projects now, but never outranks the
+    Overview attention ladder: a project already surfacing because of a
+    queued handoff (or a running session, or a stale git state) still needs
+    to be read first, whatever else the user has pinned. This supersedes the
+    mega-dashboard's decision (pin outranks everything) with the redesign's
+    own -- attention items are inferred urgency, and a mere pin does not
+    manufacture any -- while still proving the pin itself takes effect."""
     cfg = load({"db_path": tmp_path / "pin.db", "spool_dir": tmp_path / "spool"})
     store = Store(cfg.db_path)
     quiet = store.upsert_project("/p/quiet", "quiet")
+    other = store.upsert_project("/p/other", "other")
     busy = store.upsert_project("/p/busy", "busy")
     store.create_handoff(Handoff(
         id="h-pin", project_path="/p/busy", next_prompt="go", status="queued",
@@ -2122,12 +2197,18 @@ def test_a_pinned_project_sorts_above_a_queued_handoff(tmp_path):
 
     c = TestClient(create_app(store, cfg))
     body = c.get("/").text
-    assert body.index(">busy<") < body.index(">quiet<"), "handoff should lead"
+    assert body.index(">busy<") < body.index(">quiet<"), "the handoff should lead"
+    # Unpinned, `other`/`quiet` fall back to alphabetical order in Recent.
+    assert body.index(">other<") < body.index(">quiet<")
 
     assert c.patch(f"/api/projects/{quiet}", json={"pinned": True}).status_code == 200
     body = c.get("/").text
-    assert body.index(">quiet<") < body.index(">busy<"), (
-        "the pinned project did not outrank the queued handoff"
+    assert body.index(">busy<") < body.index(">quiet<"), (
+        "pinning must not let a quiet project outrank a project that still "
+        "needs attention"
+    )
+    assert body.index(">quiet<") < body.index(">other<"), (
+        "the pinned project did not outrank its unpinned neighbour in Recent"
     )
     store.close()
 
@@ -2144,12 +2225,12 @@ def test_pinning_and_hiding_are_independent(client):
 
 def test_the_card_reports_its_pin_state_to_assistive_technology(client):
     c, _, pid = client
-    body = c.get("/").text
+    body = c.get("/projects").text
     assert f'data-project-pin="{pid}"' in body
     assert re.search(rf'data-project-pin="{pid}"[^>]*aria-pressed="false"', body)
     c.patch(f"/api/projects/{pid}", json={"pinned": True})
     assert re.search(
-        rf'data-project-pin="{pid}"[^>]*aria-pressed="true"', c.get("/").text
+        rf'data-project-pin="{pid}"[^>]*aria-pressed="true"', c.get("/projects").text
     )
 
 
@@ -2291,10 +2372,11 @@ def test_patch_schedule_still_allows_an_omitted_field(client):
     assert r.json()["model"] == "opus"
 
 
-def test_dashboard_renders_despite_a_row_with_an_extreme_scheduled_for(client):
+def test_the_schedule_page_renders_despite_a_row_with_an_extreme_scheduled_for(client):
     """`ScheduleIn` refuses this at creation, but a row seeded before that
     check existed -- or straight through the store -- must still degrade
-    gracefully rather than 500 the whole dashboard."""
+    gracefully rather than 500 the page. The scheduled-runs detail this row
+    exercises moved to `/schedule` with the mega-dashboard's retirement."""
     c, store, _ = client
     # SQLite's INTEGER column tops out around 9.2e18, so this must be an
     # epoch that fits the column yet still overflows `datetime.fromtimestamp`
@@ -2305,7 +2387,7 @@ def test_dashboard_renders_despite_a_row_with_an_extreme_scheduled_for(client):
         mode="background", scheduled_for=999_999_999_999, created_at=1000,
     ))
 
-    r = c.get("/")
+    r = c.get("/schedule")
 
     assert r.status_code == 200
     assert 'data-scheduled-job="sched-extreme"' in r.text
@@ -2321,7 +2403,7 @@ def test_a_launching_scheduled_row_does_not_offer_run_now(client):
     ))
     store.claim_specific("sched-launching")
 
-    body = c.get("/").text
+    body = c.get("/schedule").text
 
     assert 'data-scheduled-job="sched-launching"' in body
     assert 'data-scheduled-run-now="sched-launching"' not in body
@@ -2515,11 +2597,9 @@ def test_a_claim_that_cannot_be_journalled_does_not_fire(launch_app, monkeypatch
 # --- Task 5: the Scheduled panel section --------------------------------------
 
 
-def test_dashboard_shows_the_scheduled_section_and_topbar_count_when_a_job_exists(client):
-    """Server-rendered from `store.scheduled_runs()`, like every other section:
-    the count beside `queued` in the topbar and the job itself must both be
-    visible without any JS having run.
-    """
+def test_the_topbar_scheduled_count_reflects_a_pending_job(client):
+    """The scheduled-runs detail itself moved to `/schedule` with the
+    mega-dashboard's retirement; the topbar count stays on `/`."""
     c, store, _ = client
     store.create_scheduled_run(ScheduledRun(
         id="sched-1", project_path=DEMO, prompt="do the thing",
@@ -2529,38 +2609,52 @@ def test_dashboard_shows_the_scheduled_section_and_topbar_count_when_a_job_exist
     body = c.get("/").text
 
     assert re.search(r"<dt>scheduled</dt><dd data-topbar-scheduled>1</dd>", body)
+
+
+def test_the_schedule_page_shows_a_pending_job(client):
+    """Server-rendered from `store.scheduled_runs()`, like every other
+    section: the job must be visible without any JS having run."""
+    c, store, _ = client
+    store.create_scheduled_run(ScheduledRun(
+        id="sched-1", project_path=DEMO, prompt="do the thing",
+        mode="background", scheduled_for=9_000_000_000,
+    ))
+
+    body = c.get("/schedule").text
+
     assert 'data-scheduled-job="sched-1"' in body
     assert "demo" in body  # the job's project is named, not just its id
     assert "background" in body
-    # Present AND visible -- unlike the empty case below, a real job must not
-    # be hidden behind the `hidden` attribute.
-    assert not re.search(r"<details[^>]*data-scheduled[^>]*\shidden[\s>]", body)
 
 
-def test_the_scheduled_section_is_present_but_collapsed_when_empty(client):
-    """Mirrors `data-hidden-projects`: always rendered, so a client-side insert
-    has somewhere to put the first row, but hidden via the `hidden` attribute
-    rather than omitted so an empty dashboard does not show a dead section.
-    """
+def test_the_topbar_scheduled_count_is_zero_with_nothing_pending(client):
     c, _, _ = client
 
     body = c.get("/").text
 
-    assert "data-scheduled" in body
-    assert re.search(r"<details[^>]*data-scheduled[^>]*\shidden[\s>]", body), (
-        "the empty schedule list must be present but not visible"
-    )
     assert re.search(r"<dt>scheduled</dt><dd data-topbar-scheduled>0</dd>", body)
 
 
-def test_the_scheduled_section_offers_edit_cancel_and_run_now_on_a_pending_job(client):
+def test_the_schedule_page_states_explicitly_when_nothing_is_pending(client):
+    """The mega-dashboard's collapsed-when-empty `<details>` had no
+    equivalent on the dedicated `/schedule` page -- it states the empty case
+    in words instead, the same `empty_state` convention every other list in
+    the redesign uses."""
+    c, _, _ = client
+
+    body = c.get("/schedule").text
+
+    assert "Nothing scheduled." in body
+
+
+def test_the_schedule_page_offers_edit_cancel_and_run_now_on_a_pending_job(client):
     c, store, _ = client
     store.create_scheduled_run(ScheduledRun(
         id="sched-2", project_path=DEMO, prompt="do it later",
         mode="terminal", scheduled_for=9_000_000_000,
     ))
 
-    body = c.get("/").text
+    body = c.get("/schedule").text
 
     assert 'data-scheduled-cancel="sched-2"' in body
     assert 'data-scheduled-run-now="sched-2"' in body
@@ -2576,13 +2670,14 @@ def test_the_scheduled_section_offers_a_retry_affordance_on_a_failed_job(client)
     store.claim_one_due(now=2000)
     store.finish_scheduled_run("sched-3", status="failed", error="no claude on PATH")
 
-    body = c.get("/").text
+    body = c.get("/schedule").text
 
     assert 'data-scheduled-retry="sched-3"' in body
-    assert 'data-scheduled-job="sched-3" class="scheduled__job scheduled__job--failed"' in body
+    assert 'data-scheduled-job="sched-3"' in body
+    assert "scheduled__job--failed" in body
 
 
-def test_a_cancelled_schedule_does_not_linger_in_the_scheduled_section(client):
+def test_the_topbar_scheduled_count_excludes_a_cancelled_job(client):
     c, store, _ = client
     store.create_scheduled_run(ScheduledRun(
         id="sched-4", project_path=DEMO, prompt="never mind",
@@ -2592,8 +2687,20 @@ def test_a_cancelled_schedule_does_not_linger_in_the_scheduled_section(client):
 
     body = c.get("/").text
 
-    assert 'data-scheduled-job="sched-4"' not in body
     assert re.search(r"<dt>scheduled</dt><dd data-topbar-scheduled>0</dd>", body)
+
+
+def test_a_cancelled_schedule_does_not_appear_in_the_upcoming_schedule_view(client):
+    c, store, _ = client
+    store.create_scheduled_run(ScheduledRun(
+        id="sched-4", project_path=DEMO, prompt="never mind",
+        mode="terminal", scheduled_for=9_000_000_000,
+    ))
+    store.cancel_pending("sched-4")
+
+    body = c.get("/schedule").text
+
+    assert 'data-scheduled-job="sched-4"' not in body
 
 
 # --- Follow-up 1 & 2: a retry that keeps the handoff it came from -------------
@@ -2687,7 +2794,7 @@ def test_a_second_retry_of_the_same_failure_is_409(launch_app):
     assert store.count_scheduled_runs() == 2      # the original and one retry
 
 
-def test_the_scheduled_section_offers_a_retry_affordance_on_an_indeterminate_job(client):
+def test_the_schedule_page_offers_a_retry_affordance_on_an_indeterminate_job(client):
     c, store, _ = client
     store.create_scheduled_run(ScheduledRun(
         id="sched-ind", project_path=DEMO, prompt="did it spawn?",
@@ -2696,19 +2803,19 @@ def test_the_scheduled_section_offers_a_retry_affordance_on_an_indeterminate_job
     store.claim_specific("sched-ind")
     store.reconcile_launching(2000, store.launching_scheduled_run_ids())
 
-    body = c.get("/").text
+    body = c.get("/schedule").text
 
     assert 'data-scheduled-retry="sched-ind"' in body
 
 
-def test_the_scheduled_section_offers_a_retry_affordance_on_a_missed_job(client):
+def test_the_schedule_page_offers_a_retry_affordance_on_a_missed_job(client):
     c, store, _ = client
     store.create_scheduled_run(ScheduledRun(
         id="sched-missed", project_path=DEMO, prompt="did it spawn?",
         mode="terminal", scheduled_for=1000, status="missed",
     ))
 
-    body = c.get("/").text
+    body = c.get("/schedule").text
 
     assert 'data-scheduled-retry="sched-missed"' in body
 
@@ -2725,7 +2832,11 @@ def test_a_job_that_has_already_been_retried_offers_no_second_retry_button(clien
     store.finish_scheduled_run("sched-done", status="failed", error="boom")
     store.retry_terminal("sched-done", new_id="sched-done-2", now=3000)
 
-    body = c.get("/").text
+    # `sched-done` is retried now, so `/schedule`'s "upcoming" view (Attention/
+    # Pending/Launching) no longer shows it at all -- History is where a
+    # retried terminal row remains visible without a control that could only
+    # 409.
+    body = c.get("/schedule?view=history").text
 
     assert 'data-scheduled-job="sched-done"' in body
     assert 'data-scheduled-retry="sched-done"' not in body
@@ -2744,7 +2855,7 @@ def test_the_retry_button_carries_only_the_id_it_retries(client):
     store.claim_specific("sched-lean")
     store.finish_scheduled_run("sched-lean", status="failed", error="boom")
 
-    body = c.get("/").text
+    body = c.get("/schedule").text
 
     assert 'data-scheduled-retry="sched-lean"' in body
     assert "data-retry-path" not in body
@@ -2757,17 +2868,6 @@ def test_the_retry_button_carries_only_the_id_it_retries(client):
 
 
 # --- Follow-up 3: retention and pagination ------------------------------------
-
-
-def _terminal_job(store, jid, completed_at):
-    store.create_scheduled_run(ScheduledRun(
-        id=jid, project_path=DEMO, prompt="x", mode="terminal",
-        scheduled_for=1000, created_at=1000,
-    ))
-    store.claim_specific(jid)
-    store.finish_scheduled_run(jid, status="fired")
-    store.conn.execute(
-        "UPDATE scheduled_runs SET completed_at=? WHERE id=?", (completed_at, jid))
 
 
 def test_get_schedule_pages_and_reports_the_total(client):
@@ -2792,51 +2892,16 @@ def test_get_schedule_refuses_a_nonsense_page(client):
     assert c.get("/api/schedule", params={"offset": -1}).status_code == 422
 
 
-def test_the_dashboard_caps_terminal_rows_and_says_how_many_it_held_back(client):
-    c, store, _ = client
-    for i in range(DASHBOARD_TERMINAL_SCHEDULES + 3):
-        _terminal_job(store, f"t{i:02d}", completed_at=5000 + i)
-
-    body = c.get("/").text
-
-    shown = re.findall(r'data-scheduled-job="(t\d\d)"', body)
-    assert len(shown) == DASHBOARD_TERMINAL_SCHEDULES
-    # Newest first: the three oldest are the ones held back.
-    assert "t00" not in shown and shown[0] == f"t{DASHBOARD_TERMINAL_SCHEDULES + 2:02d}"
-    assert "3 older" in body
-    # Reachable, not just announced: a note that names data and offers no route
-    # to it is worse than no note. And the <ul> points at it, so someone
-    # navigating list-to-list meets the caveat rather than stepping over it.
-    assert '<a href="/api/schedule">' in body
-    assert 'aria-describedby="scheduled-older"' in body
-
-
-def test_the_dashboard_never_holds_back_an_active_job(client):
-    """Terminal rows are history; a pending job is work the panel still owes
-    you, and hiding one behind a cap would hide a launch that is going to
-    happen."""
-    c, store, _ = client
-    for i in range(DASHBOARD_TERMINAL_SCHEDULES + 5):
-        store.create_scheduled_run(ScheduledRun(
-            id=f"a{i:02d}", project_path=DEMO, prompt="x", mode="terminal",
-            scheduled_for=9_000_000_000 + i,
-        ))
-
-    body = c.get("/").text
-
-    assert len(re.findall(r'data-scheduled-job="a\d\d"', body)) == \
-        DASHBOARD_TERMINAL_SCHEDULES + 5
-    assert "older" not in body
-
-
-def test_the_dashboard_says_nothing_about_older_rows_when_none_were_held_back(client):
-    c, store, _ = client
-    _terminal_job(store, "t0", completed_at=5000)
-
-    assert "older" not in c.get("/").text
-
-
-# --- Follow-up 4: the row a mutation leaves behind ----------------------------
+# The mega-dashboard's own retention cap (`DASHBOARD_TERMINAL_SCHEDULES`) and
+# its "N older ... see the full history" note retired with it: `/schedule`'s
+# History view (test_schedule_route.py) replaced the cap+note with real
+# Previous/Next pagination over the full row set, already covered by
+# test_history_view_paginates_terminal_rows_with_total and
+# test_history_out_of_range_page_returns_empty_without_raising there, so the
+# three tests that pinned the old cap's behaviour (caps-terminal-rows,
+# never-holds-back-an-active-job, says-nothing-when-none-held-back) are
+# removed rather than retargeted -- there is no "held back" concept left to
+# assert on a page that pages through everything.
 
 
 def test_an_unrenderable_scheduled_for_omits_the_datetime_attribute(client):
@@ -2848,7 +2913,7 @@ def test_an_unrenderable_scheduled_for_omits_the_datetime_attribute(client):
         scheduled_for=999_999_999_999, created_at=1000,
     ))
 
-    body = c.get("/").text
+    body = c.get("/schedule").text
 
     assert 'data-scheduled-job="sched-extreme-2"' in body
     assert 'datetime="None"' not in body
@@ -2857,7 +2922,7 @@ def test_an_unrenderable_scheduled_for_omits_the_datetime_attribute(client):
 def test_every_card_has_a_compose_box_that_posts_to_launch_and_schedule(client):
     c, _, pid = client
 
-    body = c.get("/").text
+    body = c.get(f"/project/{pid}?tab=current").text
 
     cid = f"compose-{pid}"
     assert f'data-compose-run="{cid}"' in body
@@ -2872,7 +2937,7 @@ def test_a_queued_handoff_offers_its_own_schedule_affordance(client):
         "id": "h-sched", "project_path": DEMO, "next_prompt": "next step",
     })
 
-    body = c.get("/").text
+    body = c.get(f"/project/{pid}?tab=current").text
 
     assert 'data-schedule-toggle="schedule-handoff-h-sched"' in body
     assert 'data-schedule-handoff="h-sched"' in body

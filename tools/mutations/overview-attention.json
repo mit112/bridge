@@ -1,0 +1,22 @@
+[
+  {
+    "name": "reverse the attention ladder, putting schedule failures ahead of everything a project itself needs",
+    "file": "src/bridge/overview.py",
+    "old": "    attention = _attention_from_cards(cards) + _schedule_failures(store, by_path)",
+    "new": "    attention = _schedule_failures(store, by_path) + _attention_from_cards(cards)",
+    "tests": [
+      "tests/test_overview.py::test_attention_ladder_orders_kinds_and_pins_correct_hrefs"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "the queued-handoff action loses its own label, becoming indistinguishable from a plain Open",
+    "file": "src/bridge/overview.py",
+    "old": "                    \"Continue in Terminal\", f\"/project/{card.project_id}?tab=current\",",
+    "new": "                    \"Open project\", f\"/project/{card.project_id}?tab=current\",",
+    "tests": [
+      "tests/test_overview.py::test_attention_ladder_orders_kinds_and_pins_correct_hrefs"
+    ],
+    "expect_count": 1
+  }
+]

@@ -28,6 +28,7 @@ from bridge.cards import FIVE_HOURS, LivenessDebouncer, build_cards, spark_point
 from bridge.config import Config
 from bridge.dashboard import DashboardBuilder
 from bridge.models import AgentsState, Handoff, ScheduledRun
+from bridge.overview import build_overview
 from bridge.projects_view import build_projects
 from bridge.refresh import RefreshCoordinator
 from bridge.registry import display_name, resolve_project
@@ -38,13 +39,6 @@ from bridge.workspace import build_workspace
 HERE = Path(__file__).parent
 
 log = logging.getLogger(__name__)
-
-# How many finished scheduled runs the dashboard shows. Active jobs are never
-# capped -- those are launches the panel still owes you -- but terminal ones are
-# history that only grows, and a page that renders every one of them gets slower
-# forever. The rest stay reachable through `GET /api/schedule`, and
-# `store.prune_scheduled_runs` eventually reaps them.
-DASHBOARD_TERMINAL_SCHEDULES = 20
 
 HandoffStatus = Literal["queued", "consumed", "dismissed", "superseded"]
 
@@ -759,116 +753,30 @@ def create_app(
 
     @app.get("/", response_class=HTMLResponse)
     def dashboard(request: Request):
-        # ONE probe for the whole page. `build_cards` guards its own call, so
-        # the guard has to move out here with it: without this a sensor failure
-        # would 500 the dashboard instead of rendering it with no live bands.
+        # ONE probe for the whole page, threaded into both `build_cards` and
+        # `build_overview` so the two can never disagree about what is
+        # running. The per-project cards, compose/launch/handoff surface,
+        # scheduled-runs detail, and hidden-projects panel all moved off `/`
+        # in earlier milestones -- they render at `/project/{id}`,
+        # `/schedule`, and `/projects` now, which is why this route no longer
+        # builds any of them.
         now = now_epoch()
         probe = dashboard_builder._live_state(now)
         cards = build_cards(store, cfg, agents_fn=lambda: probe,
                             debouncer=None, hook_state=None)
-        # `store.projects()` whitelists `active`, so a hidden project is absent
-        # from the cards entirely. Without this list, hiding one would be a
-        # one-way door: nothing in the panel could name it again, let alone
-        # restore it.
-        hidden = [
-            r for r in store.projects(include_hidden=True) if r["status"] != "active"
-        ]
-        # Called once, not twice: `_diagnostics()` runs the liveness sensor, and
-        # the topbar's running count has to be the same number the alert beside
-        # it was computed from.
-        diag = _diagnostics(probe)
-        # Built from the same snapshot the SSE stream sends, so the block below
-        # and the live ticks that patch it can never disagree about what is
-        # running where -- the same reason the overlay is shared at line 218.
-        dashboard_update = dashboard_builder.full_update(
-            live_state=probe, cards=cards, now=now,
-        )
-        unattributed = [
-            dict(session, cwd=session["path"])
-            for session in dashboard_update["unattributed"]
-        ]
-        last_5h = sum(c.tokens_5h for c in cards)
-        # Server-rendered exactly like `hidden` above: `cancelled` is a schedule
-        # someone dismissed on purpose, the one status this list drops, the same
-        # way a `dismissed` handoff never reappears in the queued list. Every
-        # other terminal status (`fired`, `failed`, `indeterminate`) stays, so a
-        # failed run's retry affordance has somewhere to render.
-        #
-        # `alias_map()` read ONCE, outside the comprehension: it is a full table
-        # scan under the store's lock, and `Store.alias_map`'s own docstring is
-        # "read once per index run" -- the same contract `_live_snapshot` and
-        # `fire` already honour by calling it exactly once each. Calling it
-        # per-row here would turn one query into one per scheduled job.
-        scheduled_rows = store.scheduled_runs()
-        alias = store.alias_map()
-        # An active job is work still owed and always renders; a terminal one is
-        # history, capped at the newest `DASHBOARD_TERMINAL_SCHEDULES` so a year
-        # of finished runs cannot turn this page into a scroll. Newest first, by
-        # when they finished -- the failure a person came here to look at is the
-        # one that just happened.
-        active = [r for r in scheduled_rows if r["status"] in ("pending", "launching")]
-        terminal = sorted(
-            (r for r in scheduled_rows if r["status"] not in
-             ("pending", "launching", "cancelled")),
-            key=lambda r: (r["completed_at"] or 0), reverse=True,
-        )
-        older_count = max(0, len(terminal) - DASHBOARD_TERMINAL_SCHEDULES)
-        # A row that has already been retried must not offer a second Retry:
-        # `retry_terminal` refuses it, so the control could only ever 409.
-        retried = {r["retry_of"] for r in scheduled_rows if r["retry_of"]}
-        scheduled = []
-        for row in active + terminal[:DASHBOARD_TERMINAL_SCHEDULES]:
-            # The server stays epoch-only for LOCAL time -- only the browser
-            # knows the viewer's own timezone -- but a raw epoch int is
-            # meaningless before `schedule.js` runs. UTC is the one timezone
-            # the server can render deterministically, so it is the pre-JS
-            # fallback: a real `datetime` attribute (Task 5's review found
-            # none) and a readable string, both overwritten by
-            # `paintScheduledTimes` once the page loads.
-            scheduled_for_iso, scheduled_for_utc = _schedule_time_fields(
-                row["scheduled_for"]
-            )
-            scheduled.append(dict(
-                row,
-                project_name=display_name(
-                    alias.get(row["project_path"], row["project_path"])
-                ),
-                scheduled_for_iso=scheduled_for_iso,
-                scheduled_for_utc=scheduled_for_utc,
-                retryable=(row["status"] in ("failed", "indeterminate", "missed")
-                           and row["id"] not in retried),
-            ))
-        pending_schedule_count = sum(
-            1 for row in scheduled_rows if row["status"] in ("pending", "launching")
-        )
+        model = build_overview(store, cfg, live_state=probe, cards=cards, now=now)
         return templates.TemplateResponse(
             request,
-            "dashboard.html",
+            "overview.html",
             {
-                "cards": cards,
-                "hidden": hidden,
-                "unattributed": unattributed,
-                "scheduled": scheduled,
-                "scheduled_older": older_count,
-                "diag_alert": _needs_attention(diag),
+                "model": model,
+                # `model.diagnostics_alert` IS `_needs_attention(diag)` for
+                # this same probe -- both read the same three conditions off
+                # the same snapshot, so reusing it here (rather than calling
+                # `_diagnostics`/`_needs_attention` a second time) cannot let
+                # the header disagree with the model it was computed from.
+                "diag_alert": model.diagnostics_alert,
                 "active": "overview",
-                "dashboard_update": dashboard_update,
-                "totals": {
-                    "today": sum(c.tokens_today for c in cards),
-                    "last_5h": last_5h,
-                    # A rate over a measured window, not a share of a cap. The
-                    # 5h plan publishes no total, so a percentage would have no
-                    # denominator -- this divides by the window's own length,
-                    # read from the constant that defines it so the two cannot
-                    # drift apart. Integer division: the figure is rendered to
-                    # the nearest thousand anyway.
-                    "burn_rate": last_5h // (FIVE_HOURS // 3600),
-                    "projects": len(cards),
-                    "running": diag["running_sessions"],
-                    "queued": diag["queued_handoffs"],
-                    "scheduled": pending_schedule_count,
-                    "last_index": (diag["last_index"] or {}).get("ran_at"),
-                },
             },
         )
 

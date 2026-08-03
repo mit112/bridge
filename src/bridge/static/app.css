@@ -683,6 +683,13 @@ main { width: min(100%, 68rem); margin-inline: auto; padding: var(--space-6); }
 .history .table-scroll { margin-top: var(--space-2); }
 .sessions__tokens-detail { display: block; color: var(--muted); font-size: .78rem; }
 
+/* The calm Overview (Task 2.3) reuses `.history`/`.cards`/`.projects-list`/
+   `.scheduled` almost entirely -- these are the only page-specific touches
+   it needs beyond that reuse. */
+.overview-lede { margin-bottom: var(--space-2); }
+.overview-up-next { margin-top: var(--space-2); }
+.overview-usage { margin-top: var(--space-8); }
+
 /* --- Milestone 4: the Schedule page (`/schedule`) --------------------------
    Groups reuse `.history`'s own heading/spacing, and their rows reuse
    `.scheduled`'s own descendant-selector layout (`.scheduled ul`/`li`) via the
