@@ -594,6 +594,7 @@ main { width: min(100%, 68rem); margin-inline: auto; padding: var(--space-6); }
   border-bottom: 1px solid var(--row-border);
   font-size: .85rem;
   vertical-align: top;
+  font-variant-numeric: tabular-nums;
 }
 .status--queued { font-weight: 700; }
 .status--failed,

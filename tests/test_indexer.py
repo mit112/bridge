@@ -404,6 +404,7 @@ def render_detail_page(cfg, store, project_id, tab="launches"):
     from jinja2 import Environment, FileSystemLoader, select_autoescape
 
     from bridge import api
+    from bridge.cards import spark_points
     from bridge.workspace import build_workspace
 
     env = Environment(
@@ -413,6 +414,10 @@ def render_detail_page(cfg, store, project_id, tab="launches"):
     env.filters["ago"] = api._ago
     env.filters["ago_epoch"] = api._ago_epoch
     env.filters["kilo"] = api._kilo
+    # Task 3.3's Current tab macros (`live_status`/`token_burn`) also need
+    # `spark_points` to compile, even for a launches-tab render that never
+    # calls them.
+    env.filters["spark_points"] = spark_points
 
     model = build_workspace(store, cfg, project_id, tab)
     return env.get_template("project.html").render(

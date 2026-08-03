@@ -1,18 +1,22 @@
+{% from "_components.html" import history_table_shell %}
 {# Sessions / Handoffs / Launches: the three history tabs, each showing only
    ITS OWN capped list -- `model.sessions`/`model.handoffs`/`model.launches`
    are populated for the selected tab alone, so exactly one of the three
    blocks below ever has rows to show on a given request. Table markup here
    is the pre-redesign `project.html`'s, moved rather than rewritten --
-   `detail-page.json`'s two sidechain/cache-subtotal anchors, every
-   `project-history-ui.json` anchor, and `ui-semantics.json`'s keyboard-scroll
-   anchor all point here now, unchanged from what they guarded before. #}
+   `detail-page.json`'s two sidechain/cache-subtotal anchors and every
+   `project-history-ui.json` anchor point here now, unchanged from what they
+   guarded before. Task 3.4 wraps each table in the shared `history_table_shell`
+   macro (the scroll region it already used, now the single template that owns
+   that markup) instead of hand-rolling the wrapper three times; `ui-semantics.
+   json`'s keyboard-scroll anchor now points at that macro in `_components.html`. #}
 
 {% if model.tab == "handoffs" %}
 <section class="history" aria-labelledby="handoffs-title">
 <h2 id="handoffs-title">Handoffs</h2>
 {% if model.handoffs %}
 <p class="history__scope">Showing up to 50 most recent records.</p>
-<div class="table-scroll" tabindex="0" role="region" aria-label="Handoffs table">
+{% call history_table_shell("Handoffs table") %}
 <table class="handoffs">
   <caption>Handoffs, most recent first</caption>
   <thead>
@@ -28,7 +32,7 @@
     {% endfor %}
   </tbody>
 </table>
-</div>
+{% endcall %}
 {% else %}
 <p class="empty">No handoffs recorded.</p>
 {% endif %}
@@ -39,7 +43,7 @@
 <h2 id="launches-title">Launches</h2>
 {% if model.launches %}
 <p class="history__scope">Showing up to 50 most recent records.</p>
-<div class="table-scroll" tabindex="0" role="region" aria-label="Launches table">
+{% call history_table_shell("Launches table") %}
 <table class="launches">
   <caption>Launches, most recent first</caption>
   <thead>
@@ -68,7 +72,7 @@
     {% endfor %}
   </tbody>
 </table>
-</div>
+{% endcall %}
 {% else %}
 <p class="empty">No launches recorded.</p>
 {% endif %}
@@ -78,7 +82,7 @@
 <section class="history" aria-labelledby="sessions-title">
 <h2 id="sessions-title">Sessions</h2>
 {% if model.sessions %}<p class="history__scope">Showing up to 50 most recent records.</p>{% endif %}
-<div class="table-scroll" tabindex="0" role="region" aria-label="Indexed sessions table">
+{% call history_table_shell("Indexed sessions table") %}
 <table class="sessions">
   <caption>Indexed sessions, most recent first</caption>
   <thead>
@@ -121,6 +125,6 @@
     {% endfor %}
   </tbody>
 </table>
-</div>
+{% endcall %}
 </section>
 {% endif %}

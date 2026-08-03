@@ -1,12 +1,20 @@
 import re
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
 from bridge.api import create_app
 from bridge.cards import build_cards
 from bridge.config import load
-from bridge.models import AgentsState, GitState, Handoff, LiveSession, SessionRecord
+from bridge.models import (
+    AgentsState,
+    GitState,
+    Handoff,
+    Launch,
+    LiveSession,
+    SessionRecord,
+)
 from bridge.store import Store
 from bridge.workspace import build_workspace
 
@@ -531,3 +539,73 @@ def test_handoff_empty_state_is_hidden_when_a_handoff_is_queued(tmp_path):
     html = c.get(f"/project/{pid}?tab=current").text
     assert "hidden" in html.split(f'data-handoff-empty="{pid}"', 1)[1].split(">", 1)[0]
     store.close()
+
+
+# --- Task 3.4: Sessions / Handoffs / Launches history tabs -------------------
+
+
+def _client_with_history(tmp_path):
+    cfg = load({"db_path": tmp_path / "history.db", "spool_dir": tmp_path / "spool"})
+    store = Store(cfg.db_path)
+    pid = store.upsert_project("/p/history-ui", "history-ui-project")
+    store.upsert_session(SessionRecord(
+        session_id="s1", transcript_path="/t/s1", title="Did the work",
+        ended_at=_ended(5),
+    ), pid)
+    store.create_handoff(Handoff(
+        id="h1", project_path="/p/history-ui", next_prompt="next", created_at=1,
+    ), pid)
+    store.create_launch(Launch(
+        id="l1", project_id=pid, mode="terminal", prompt="go", launched_at=1,
+        outcome="started",
+    ))
+    return TestClient(create_app(store, cfg)), store, pid
+
+
+def test_each_history_tab_wraps_its_table_in_the_shared_scroll_region(tmp_path):
+    c, store, pid = _client_with_history(tmp_path)
+    expected_label = {
+        "sessions": "Indexed sessions table",
+        "handoffs": "Handoffs table",
+        "launches": "Launches table",
+    }
+    for tab, label in expected_label.items():
+        html = c.get(f"/project/{pid}?tab={tab}").text
+        assert 'class="table-scroll" tabindex="0" role="region"' in html
+        assert f'aria-label="{label}"' in html
+    store.close()
+
+
+def test_history_tabs_state_the_50_record_cap_explicitly(tmp_path):
+    c, store, pid = _client_with_history(tmp_path)
+    for tab in ("sessions", "handoffs", "launches"):
+        html = c.get(f"/project/{pid}?tab={tab}").text
+        assert "Showing up to 50 most recent records." in html
+    store.close()
+
+
+def test_history_tabs_offer_no_sortable_affordance(tmp_path):
+    c, store, pid = _client_with_history(tmp_path)
+    for tab in ("sessions", "handoffs", "launches"):
+        html = c.get(f"/project/{pid}?tab={tab}").text
+        assert "aria-sort" not in html
+        assert "sortable" not in html
+    store.close()
+
+
+def test_history_tables_use_tabular_numerals():
+    css = (
+        Path(__file__).resolve().parent.parent
+        / "src" / "bridge" / "static" / "app.css"
+    ).read_text()
+    assert (
+        ".handoffs th, .handoffs td, .launches th, .launches td {\n"
+        "  text-align: left;\n"
+        "  padding: .4rem .5rem;\n"
+        "  border-bottom: 1px solid var(--row-border);\n"
+        "  font-size: .85rem;\n"
+        "  vertical-align: top;\n"
+        "  font-variant-numeric: tabular-nums;\n"
+        "}"
+    ) in css
+    assert ".sessions td { font-variant-numeric: tabular-nums; }" in css

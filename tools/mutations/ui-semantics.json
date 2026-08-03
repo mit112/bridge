@@ -21,9 +21,9 @@
   },
   {
     "name": "make the sessions overflow container unreachable by keyboard",
-    "file": "src/bridge/templates/_workspace_history.html",
-    "old": "<div class=\"table-scroll\" tabindex=\"0\" role=\"region\" aria-label=\"Indexed sessions table\">",
-    "new": "<div class=\"table-scroll\">",
+    "file": "src/bridge/templates/_components.html",
+    "old": "<div class=\"table-scroll\" tabindex=\"0\" role=\"region\" aria-label=\"{{ label }}\">",
+    "new": "<div class=\"table-scroll\" aria-label=\"{{ label }}\">",
     "tests": [
       "tests/test_api.py::test_project_and_diagnostics_tables_are_keyboard_scroll_regions"
     ],
