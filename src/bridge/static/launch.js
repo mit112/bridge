@@ -134,3 +134,54 @@ document.addEventListener("click", async (event) => {
     button.removeAttribute("aria-busy");
   }
 });
+
+// Dismiss a queued handoff from the workspace's Current tab. Reuses the same
+// PATCH the handoff prompt already saves through — only the body differs —
+// so no new write path is introduced. No reload: the already-rendered
+// handoff section and empty-state paragraph swap `hidden` in place, and the
+// launch band that was driving the queued handoff demotes to a plain ad hoc
+// launch rather than keep pointing at a prompt that no longer exists.
+document.addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-handoff-dismiss]");
+  if (!button) return;
+
+  const id = button.getAttribute("data-handoff-dismiss");
+  const key = `[data-handoff-dismiss-status="${id}"]`;
+  button.disabled = true;
+  try {
+    const response = await fetch(`/api/handoff/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "dismissed" }),
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+    const section = document.querySelector(`[data-handoff-section="${id}"]`);
+    if (section) section.hidden = true;
+
+    // The launch band that was driving THIS handoff -- matched by
+    // `data-launch-handoff`, not by the band's own id, since the band's id is
+    // keyed off the project, not the handoff. Demoted to a plain launch: the
+    // attributes that named the now-dismissed prompt are removed, and the
+    // primary button's label falls back to the empty-state wording.
+    const band = document.querySelector(`[data-launch-handoff="${id}"]`);
+    if (band) {
+      band.removeAttribute("data-launch-handoff");
+      band.removeAttribute("data-launch-prompt");
+      const launchButton = band.querySelector("[data-launch-button]");
+      if (launchButton && launchButton.textContent.trim() === "Continue in Terminal") {
+        launchButton.textContent = "Start session";
+      }
+    }
+
+    const empty = document.querySelector(`[data-handoff-empty]`);
+    if (empty) empty.hidden = false;
+
+    announce(key, "✓ Dismissed");
+  } catch (error) {
+    console.error("bridge: dismissing the handoff failed", error);
+    announce(key, "⚠ Not dismissed — try again");
+  } finally {
+    button.disabled = false;
+  }
+});

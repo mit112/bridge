@@ -1,7 +1,7 @@
 [
   {
     "name": "key the launch band's ids off the handoff id, so ids collide across cards",
-    "file": "src/bridge/templates/_card.html",
+    "file": "src/bridge/templates/_launch.html",
     "old": "  {% set lid = \"launch-\" ~ card.project_id %}",
     "new": "  {% set lid = \"launch-\" ~ (card.handoff.id if card.handoff else \"\") %}",
     "tests": [
@@ -42,7 +42,7 @@
   },
   {
     "name": "mark the textarea safe, so </textarea><script> escapes the field",
-    "file": "src/bridge/templates/_card.html",
+    "file": "src/bridge/templates/_launch.html",
     "old": "{{ card.handoff.next_prompt }}</textarea>",
     "new": "{{ card.handoff.next_prompt | safe }}</textarea>",
     "tests": [
@@ -52,7 +52,7 @@
   },
   {
     "name": "drop the selected attribute, so the suggestion is not preselected",
-    "file": "src/bridge/templates/_card.html",
+    "file": "src/bridge/templates/_launch.html",
     "old": "        <option value=\"{{ m.value }}\"{% if m.value == sm or (not sm and loop.first) %} selected{% endif %}>{{ m.label }}</option>",
     "new": "        <option value=\"{{ m.value }}\">{{ m.label }}</option>",
     "tests": [

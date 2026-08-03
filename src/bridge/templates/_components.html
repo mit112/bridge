@@ -7,6 +7,40 @@
 
 {% macro status_pill(state) %}<span class="pill pill--{{ state }}">{{ state }}</span>{% endmacro %}
 
+{# Colour plus a word, never colour alone. These leaves are always present so
+   a live tick can patch an ended or unavailable state without building a
+   subtree and without disturbing an in-progress handoff edit. Shared by
+   `_card.html` (the dashboard) and `_workspace_current.html` (Task 3.3) so
+   the live-state read is the SAME projection in both places, never a second
+   probe through a divergent path. #}
+{% macro live_status(card) %}
+{% set state = card.live.status if card.live else ("unknown" if card.live_unavailable else "ended") %}
+<p class="live live--{{ state }}" data-live-parent="{{ card.path }}">
+  <span class="live__dot" aria-hidden="true">●</span>
+  <span data-live-path="{{ card.path }}" data-live-status>{{ state }}</span>
+  <span data-live-age>{% if card.live %}· {{ card.live.started_at | ago_epoch }}{% endif %}</span>
+  {# model/effort come from OUR tables: the liveness sensor has neither. #}
+  <span data-live-model>{% if card.session and card.session.model %}· {{ card.session.model }}{% endif %}</span>
+  <span data-live-effort>{% if card.session and card.session.effort %}/{{ card.session.effort }}{% endif %}</span>
+</p>
+{% endmacro %}
+
+{% macro token_burn(card) %}
+<p class="card__burn">
+  <span data-burn-today>{{ card.tokens_today | kilo }} today</span>
+  <span data-burn-last-5h>{{ card.tokens_5h | kilo }} last 5h</span>
+  {# aria-hidden: the `23k today / 20k last 5h` text beside it is the
+     accessible representation, and a 7-point line adds no detail a screen
+     reader user would not already have heard. #}
+  <svg class="spark" viewBox="0 0 72 20" width="72" height="20"
+       aria-hidden="true" focusable="false">
+    <polyline data-sparkline points="{{ card.spark | spark_points }}" fill="none"
+              stroke="currentColor" stroke-width="1.5"
+              stroke-linejoin="round" stroke-linecap="round"/>
+  </svg>
+</p>
+{% endmacro %}
+
 {% macro empty_state(message) %}<p class="empty">{{ message }}</p>{% endmacro %}
 
 {# Compact duration for a seconds-count (not an epoch): "3h"/"2d"/"45m". Same

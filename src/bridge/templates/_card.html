@@ -1,22 +1,5 @@
-{% macro schedule_form(panel_id, project_path, prompt_id, totals, handoff_id=none) -%}
-<div class="schedule-form" id="{{ panel_id }}" data-schedule-panel hidden
-     data-schedule-path="{{ project_path }}" data-schedule-prompt="{{ prompt_id }}"
-     {%- if handoff_id %} data-schedule-handoff="{{ handoff_id }}"{% endif %}>
-  <span class="schedule-form__field">
-    <label class="compose__label" for="{{ panel_id }}-when">Run at</label>
-    <input type="datetime-local" id="{{ panel_id }}-when" data-schedule-when>
-  </span>
-  <span class="schedule-form__field">
-    <label class="compose__label" for="{{ panel_id }}-mode">Mode</label>
-    <select id="{{ panel_id }}-mode" data-schedule-mode>
-      <option value="terminal" selected>terminal</option>
-      <option value="background">background</option>
-    </select>
-  </span>
-  <button type="button" class="btn" data-schedule-submit="{{ panel_id }}">Schedule</button>
-  <p class="schedule-form__hint">Last 5h across all projects: {{ totals.last_5h | kilo }} tokens</p>
-</div>
-{%- endmacro %}
+{% from "_launch.html" import compose_box, handoff_block, launch_band %}
+{% from "_components.html" import live_status, token_burn %}
 
 <article class="card{% if card.handoff %} card--queued{% elif card.is_stale %} card--risk{% endif %}">
   <header class="card__head">
@@ -47,35 +30,7 @@
   </header>
   <p class="card__path">{{ card.path }}</p>
 
-  {# An ad hoc prompt, independent of whatever is queued below: a project can
-     have a handoff waiting AND something new to try right now. Always
-     rendered, unlike the handoff textarea, because there is always something
-     to compose even when nothing is queued. #}
-  {% set lid = "launch-" ~ card.project_id %}
-  {% set cid = "compose-" ~ card.project_id %}
-  {% set panel = "schedule-" ~ cid %}
-  <section class="compose" aria-labelledby="{{ cid }}-title" data-compose="{{ cid }}">
-    <h3 class="compose__title" id="{{ cid }}-title">New session</h3>
-    <label class="compose__label" for="{{ cid }}">Prompt for {{ card.name }}</label>
-    <textarea class="compose__prompt" id="{{ cid }}" data-compose-prompt="{{ cid }}"></textarea>
-    <p class="compose__actions">
-      <button type="button" class="btn" data-compose-run="{{ cid }}"
-              data-compose-path="{{ card.path }}"
-              data-compose-launch="{{ lid }}">Run now</button>
-      <button type="button" class="btn" data-schedule-toggle="{{ panel }}"
-              aria-expanded="false" aria-controls="{{ panel }}">Schedule…</button>
-      <span class="compose__status" role="status" aria-live="polite"
-            data-compose-status="{{ cid }}"></span>
-      {# A SIBLING of the panel below, not a descendant: on submit,
-         `schedule.js` hides the panel in the same tick it announces success,
-         and a live region inside the node being hidden is read by nothing --
-         `role="status"` only fires on a node still in the accessibility
-         tree. #}
-      <span class="compose__status" role="status" aria-live="polite"
-            data-schedule-status="{{ panel }}"></span>
-    </p>
-    {{ schedule_form(panel, card.path, cid, totals) }}
-  </section>
+  {{ compose_box(card, totals) }}
 
   {% if card.session %}
     <div class="card__session">
@@ -87,18 +42,7 @@
     <p class="card__note">No indexed sessions.</p>
   {% endif %}
 
-  {# Colour plus a word, never colour alone. These leaves are always present so
-     a live tick can patch an ended or unavailable state without building a
-     subtree and without disturbing an in-progress handoff edit. #}
-  {% set live_status = card.live.status if card.live else ("unknown" if card.live_unavailable else "ended") %}
-  <p class="live live--{{ live_status }}" data-live-parent="{{ card.path }}">
-    <span class="live__dot" aria-hidden="true">●</span>
-    <span data-live-path="{{ card.path }}" data-live-status>{{ live_status }}</span>
-    <span data-live-age>{% if card.live %}· {{ card.live.started_at | ago_epoch }}{% endif %}</span>
-    {# model/effort come from OUR tables: the liveness sensor has neither. #}
-    <span data-live-model>{% if card.session and card.session.model %}· {{ card.session.model }}{% endif %}</span>
-    <span data-live-effort>{% if card.session and card.session.effort %}/{{ card.session.effort }}{% endif %}</span>
-  </p>
+  {{ live_status(card) }}
 
   <p class="card__git">
     <span data-git-branch {% if card.git.status != "ok" %}hidden{% endif %}>{{ card.git.branch if card.git.status == "ok" else "" }}</span>
@@ -117,105 +61,9 @@
     <span class="card__note" data-git-status="unavailable" {% if card.git.status != "unavailable" %}hidden{% endif %}>{% if card.git.status == "unavailable" %}git unavailable{% endif %}</span>
   </p>
 
-  {% if card.handoff %}
-    {% set hid = "handoff-" ~ card.handoff.id %}
-    <section class="handoff" aria-labelledby="{{ hid }}-title">
-      <h3 class="handoff__title" id="{{ hid }}-title">Next step queued</h3>
-      {% if card.handoff.summary %}
-        <p class="handoff__summary">{{ card.handoff.summary }}</p>
-      {% endif %}
-      {# Editable in place, with a persistent visible label rather than a
-         placeholder. Jinja escapes the text, which a textarea needs as much as
-         the <pre> did: an unescaped `</textarea>` would close the field early. #}
-      <label class="handoff__label" for="{{ hid }}">Prompt for {{ card.name }}</label>
-      <textarea class="handoff__prompt" id="{{ hid }}"
-                data-prompt-handoff="{{ card.handoff.id }}">{{ card.handoff.next_prompt }}</textarea>
-      <p class="handoff__actions">
-        <button type="button" class="btn" data-copy-target="{{ hid }}">Copy prompt</button>
-        {% set hpanel = "schedule-" ~ hid %}
-        <button type="button" class="btn" data-schedule-toggle="{{ hpanel }}"
-                aria-expanded="false" aria-controls="{{ hpanel }}">Schedule…</button>
-        {# Three status lines, three keys. Copy, save and launch all announce into
-           `role="status"`, and sharing one key would let them overwrite each
-           other's message — so each has its own. #}
-        <span class="handoff__status" role="status" aria-live="polite"
-              data-copy-status="{{ hid }}"></span>
-        <span class="handoff__status" role="status" aria-live="polite"
-              data-prompt-status="{{ hid }}"></span>
-        {# A SIBLING of the schedule-form panel below, not a descendant --
-           see the identical note on the compose box's own status span. #}
-        <span class="handoff__status" role="status" aria-live="polite"
-              data-schedule-status="{{ hpanel }}"></span>
-      </p>
-      {# Schedules the CURRENT contents of the prompt field above, read fresh at
-         submit time -- the same reason `launch.js`'s click handler never trusts
-         a `focusout` save to have landed first. `data-schedule-handoff` is what
-         attaches the resulting job to this handoff via `source_handoff_id`. #}
-      {{ schedule_form(hpanel, card.path, hid, totals, card.handoff.id) }}
-    </section>
-  {% endif %}
+  {{ handoff_block(card, totals) }}
 
-  {# The launch band renders OUTSIDE the handoff guard: a project with nothing
-     queued is still launchable. Its ids are therefore keyed off `project_id`,
-     never off a handoff id that may not exist — a bare `handoff-` prefix would
-     repeat on every card and silently break each `<label for>`. #}
-  {% set sm = card.handoff.suggested_model if card.handoff else None %}
-  {% set se = card.handoff.suggested_effort if card.handoff else None %}
-  {# `card.launch_models` already has an off-catalog suggestion prepended —
-     `cards.model_options` does it, because building a ModelChoice here would
-     mean exposing the class to the template environment. Effort has no
-     versions to name, so it stays a bare list and keeps its inline prepend. #}
-  {% set effort_options = ([se] if se and se not in card.launch_efforts else []) + card.launch_efforts %}
-  <p class="launch" data-launch="{{ lid }}" data-launch-path="{{ card.path }}"
-     {%- if card.handoff %} data-launch-handoff="{{ card.handoff.id }}"
-     data-launch-prompt="{{ "handoff-" ~ card.handoff.id }}"{% endif %}>
-    <span class="launch__field">
-      <label class="launch__label" for="{{ lid }}-model">Model</label>
-      <select class="launch__select" id="{{ lid }}-model" data-launch-model="{{ lid }}">
-        {%- for m in card.launch_models %}
-        <option value="{{ m.value }}"{% if m.value == sm or (not sm and loop.first) %} selected{% endif %}>{{ m.label }}</option>
-        {%- endfor %}
-      </select>
-    </span>
-    <span class="launch__field">
-      <label class="launch__label" for="{{ lid }}-effort">Effort</label>
-      <select class="launch__select" id="{{ lid }}-effort" data-launch-effort="{{ lid }}">
-        {%- for e in effort_options %}
-        <option value="{{ e }}"{% if e == se or (not se and loop.first) %} selected{% endif %}>{{ e }}</option>
-        {%- endfor %}
-      </select>
-    </span>
-    {# Always renders with the no-flag option selected. Deliberately NOT driven
-       by any handoff suggestion: no authored brief may arm a permission mode,
-       and nothing here is remembered between launches. #}
-    <span class="launch__field launch__field--perm">
-      <label class="launch__label" for="{{ lid }}-perm">Permissions</label>
-      <select class="launch__select" id="{{ lid }}-perm" data-launch-perm="{{ lid }}">
-        {%- for p in card.launch_permission_modes %}
-        <option value="{{ p.value }}"{% if p.danger %} class="launch__option--danger"{% endif %}{% if loop.first %} selected{% endif %}>{{ p.label }}</option>
-        {%- endfor %}
-      </select>
-    </span>
-    <button type="button" class="btn btn--icon" data-launch-button="{{ lid }}"
-            aria-label="Launch a session for {{ card.name }}"
-            title="Launch a session in Terminal"><span aria-hidden="true">▶</span></button>
-    {# Distinct from `data-copy-status`: the two would otherwise overwrite each
-       other. A failure says so in words as well as its glyph. #}
-    <span class="launch__status" role="status" aria-live="polite"
-          data-launch-status="{{ lid }}"></span>
-  </p>
+  {{ launch_band(card) }}
 
-  <p class="card__burn">
-    <span data-burn-today>{{ card.tokens_today | kilo }} today</span>
-    <span data-burn-last-5h>{{ card.tokens_5h | kilo }} last 5h</span>
-    {# aria-hidden: the `23k today / 20k last 5h` text beside it is the
-       accessible representation, and a 7-point line adds no detail a screen
-       reader user would not already have heard. #}
-    <svg class="spark" viewBox="0 0 72 20" width="72" height="20"
-         aria-hidden="true" focusable="false">
-      <polyline data-sparkline points="{{ card.spark | spark_points }}" fill="none"
-                stroke="currentColor" stroke-width="1.5"
-                stroke-linejoin="round" stroke-linecap="round"/>
-    </svg>
-  </p>
+  {{ token_burn(card) }}
 </article>

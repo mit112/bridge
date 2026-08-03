@@ -1,0 +1,211 @@
+{# The continuation surface: compose box, queued-handoff panel, launch band,
+   and the schedule mini-form. Extracted out of `_card.html` (Task 3.3) so the
+   dashboard's per-card surface and the Project workspace's Current tab render
+   the identical markup and `data-*` hooks from ONE place -- `_card.html` and
+   `_workspace_current.html` both call these macros, and neither hand-writes
+   the interactive surface itself. Every extra parameter defaults to the
+   dashboard's original behaviour untouched, so `_card.html`'s calls (which
+   pass none of them) produce byte-identical output to before the extraction.
+   Autoescape stays on; nothing here is ever marked `safe`. #}
+
+{% macro schedule_form(panel_id, project_path, prompt_id, totals, handoff_id=none) -%}
+<div class="schedule-form" id="{{ panel_id }}" data-schedule-panel hidden
+     data-schedule-path="{{ project_path }}" data-schedule-prompt="{{ prompt_id }}"
+     {%- if handoff_id %} data-schedule-handoff="{{ handoff_id }}"{% endif %}>
+  <span class="schedule-form__field">
+    <label class="compose__label" for="{{ panel_id }}-when">Run at</label>
+    <input type="datetime-local" id="{{ panel_id }}-when" data-schedule-when>
+  </span>
+  <span class="schedule-form__field">
+    <label class="compose__label" for="{{ panel_id }}-mode">Mode</label>
+    <select id="{{ panel_id }}-mode" data-schedule-mode>
+      <option value="terminal" selected>terminal</option>
+      <option value="background">background</option>
+    </select>
+  </span>
+  <button type="button" class="btn" data-schedule-submit="{{ panel_id }}">Schedule</button>
+  <p class="schedule-form__hint">Last 5h across all projects: {{ totals.last_5h | kilo }} tokens</p>
+</div>
+{%- endmacro %}
+
+{# An ad hoc prompt, independent of whatever is queued below: a project can
+   have a handoff waiting AND something new to try right now. Always
+   rendered, unlike the handoff textarea, because there is always something
+   to compose even when nothing is queued.
+
+   `collapsed`, added for the workspace's "Start a different session" /
+   "Start session" surfaces, wraps the SAME markup in a `<details>` rather
+   than branching it, so the dashboard's own call (which passes it) keeps
+   producing the exact section it always has. #}
+{% macro compose_box(card, totals, collapsed=False) %}
+  {% set cid = "compose-" ~ card.project_id %}
+  {% set panel = "schedule-" ~ cid %}
+  {% if collapsed %}<details class="compose__disclosure"><summary>Start a different session</summary>{% endif %}
+  <section class="compose" aria-labelledby="{{ cid }}-title" data-compose="{{ cid }}">
+    <h3 class="compose__title" id="{{ cid }}-title">New session</h3>
+    <label class="compose__label" for="{{ cid }}">Prompt for {{ card.name }}</label>
+    <textarea class="compose__prompt" id="{{ cid }}" data-compose-prompt="{{ cid }}"></textarea>
+    <p class="compose__actions">
+      {# `launch-{{ card.project_id }}` inline, not a shared `{% set lid %}`
+         with `launch_band` below: the two macros are independent call sites
+         now, and `launch_band` owns the one `{% set lid %}` the
+         handoff-id-collision mutation spec anchors on -- this stays a
+         literal so that anchor keeps matching exactly once. #}
+      <button type="button" class="btn" data-compose-run="{{ cid }}"
+              data-compose-path="{{ card.path }}"
+              data-compose-launch="launch-{{ card.project_id }}">Run now</button>
+      <button type="button" class="btn" data-schedule-toggle="{{ panel }}"
+              aria-expanded="false" aria-controls="{{ panel }}">Schedule…</button>
+      <span class="compose__status" role="status" aria-live="polite"
+            data-compose-status="{{ cid }}"></span>
+      {# A SIBLING of the panel below, not a descendant: on submit,
+         `schedule.js` hides the panel in the same tick it announces success,
+         and a live region inside the node being hidden is read by nothing --
+         `role="status"` only fires on a node still in the accessibility
+         tree. #}
+      <span class="compose__status" role="status" aria-live="polite"
+            data-schedule-status="{{ panel }}"></span>
+    </p>
+    {{ schedule_form(panel, card.path, cid, totals) }}
+  </section>
+  {% if collapsed %}</details>{% endif %}
+{% endmacro %}
+
+{# The queued-handoff panel.
+
+   `collapse_prompt` (the workspace's "Edit prompt" toggle) wraps the SAME
+   `<textarea>` -- same id, same `data-prompt-handoff` hook, same escaped
+   text -- in a `<details>` behind a short preview, rather than duplicating
+   it: the dashboard's call passes neither this nor `show_dismiss`/
+   `show_span_line`, so its section is untouched.
+   `show_span_line` renders the session -> handoff -> next line ONLY when
+   `card.session` is truthy (an ended session on record) -- never decorative,
+   guarded the same way every other real-state line on this card already is.
+   `show_dismiss` adds the "Dismiss handoff" action; its JS lives in
+   `launch.js` beside the other handoff-scoped listeners. #}
+{% macro handoff_block(card, totals, collapse_prompt=False, show_dismiss=False, show_span_line=False) %}
+  {% if card.handoff %}
+    {% set hid = "handoff-" ~ card.handoff.id %}
+    <section class="handoff" aria-labelledby="{{ hid }}-title"
+             {%- if show_dismiss %} data-handoff-section="{{ card.handoff.id }}"{% endif %}>
+      <h3 class="handoff__title" id="{{ hid }}-title">Next step queued</h3>
+      {% if card.handoff.summary %}
+        <p class="handoff__summary">{{ card.handoff.summary }}</p>
+      {% endif %}
+      {% if show_span_line and card.session %}
+      <p class="workspace-span">{{ card.session.title or "Untitled session" }} → next: {{ card.handoff.summary or "see the saved prompt" }}</p>
+      {% endif %}
+      {% if collapse_prompt %}
+      <p class="handoff__preview">{{ card.handoff.next_prompt[:200] }}{% if card.handoff.next_prompt | length > 200 %}…{% endif %}</p>
+      <details class="handoff__edit">
+        <summary>Edit prompt</summary>
+      {% endif %}
+      {# Editable in place, with a persistent visible label rather than a
+         placeholder. Jinja escapes the text, which a textarea needs as much as
+         the <pre> did: an unescaped `</textarea>` would close the field early. #}
+      <label class="handoff__label" for="{{ hid }}">Prompt for {{ card.name }}</label>
+      <textarea class="handoff__prompt" id="{{ hid }}"
+                data-prompt-handoff="{{ card.handoff.id }}">{{ card.handoff.next_prompt }}</textarea>
+      {% if collapse_prompt %}
+      </details>
+      {% endif %}
+      <p class="handoff__actions">
+        <button type="button" class="btn" data-copy-target="{{ hid }}">Copy prompt</button>
+        {% set hpanel = "schedule-" ~ hid %}
+        <button type="button" class="btn" data-schedule-toggle="{{ hpanel }}"
+                aria-expanded="false" aria-controls="{{ hpanel }}">Schedule…</button>
+        {% if show_dismiss %}
+        <button type="button" class="btn" data-handoff-dismiss="{{ card.handoff.id }}">Dismiss handoff</button>
+        {% endif %}
+        {# Status lines, one key each. Copy, save, dismiss and launch all
+           announce into `role="status"`, and sharing one key would let them
+           overwrite each other's message -- so each has its own. #}
+        <span class="handoff__status" role="status" aria-live="polite"
+              data-copy-status="{{ hid }}"></span>
+        <span class="handoff__status" role="status" aria-live="polite"
+              data-prompt-status="{{ hid }}"></span>
+        {# A SIBLING of the schedule-form panel below, not a descendant --
+           see the identical note on the compose box's own status span. #}
+        <span class="handoff__status" role="status" aria-live="polite"
+              data-schedule-status="{{ hpanel }}"></span>
+        {% if show_dismiss %}
+        <span class="handoff__status" role="status" aria-live="polite"
+              data-handoff-dismiss-status="{{ card.handoff.id }}"></span>
+        {% endif %}
+      </p>
+      {# Schedules the CURRENT contents of the prompt field above, read fresh at
+         submit time -- the same reason `launch.js`'s click handler never trusts
+         a `focusout` save to have landed first. `data-schedule-handoff` is what
+         attaches the resulting job to this handoff via `source_handoff_id`. #}
+      {{ schedule_form(hpanel, card.path, hid, totals, card.handoff.id) }}
+    </section>
+  {% endif %}
+{% endmacro %}
+
+{# The launch band renders OUTSIDE the handoff guard: a project with nothing
+   queued is still launchable. Its ids are therefore keyed off `project_id`,
+   never off a handoff id that may not exist -- a bare `handoff-` prefix would
+   repeat on every card and silently break each `<label for>`.
+
+   `primary`, added for the workspace's single primary action, swaps the
+   compact icon-only ▶ button for a labelled `.btn--primary` one -- "Continue
+   in Terminal" when a handoff is queued, "Start session" when nothing is.
+   `collapse_options` wraps the model/effort/permission selects in a
+   `<details>` ("Change options"), leaving the button itself outside so it
+   stays visible without opening the disclosure. Neither is passed by
+   `_card.html`, so its band is unchanged. #}
+{% macro launch_band(card, primary=False, collapse_options=False) %}
+  {% set lid = "launch-" ~ card.project_id %}
+  {% set sm = card.handoff.suggested_model if card.handoff else None %}
+  {% set se = card.handoff.suggested_effort if card.handoff else None %}
+  {# `card.launch_models` already has an off-catalog suggestion prepended --
+     `cards.model_options` does it, because building a ModelChoice here would
+     mean exposing the class to the template environment. Effort has no
+     versions to name, so it stays a bare list and keeps its inline prepend. #}
+  {% set effort_options = ([se] if se and se not in card.launch_efforts else []) + card.launch_efforts %}
+  <p class="launch" data-launch="{{ lid }}" data-launch-path="{{ card.path }}"
+     {%- if card.handoff %} data-launch-handoff="{{ card.handoff.id }}"
+     data-launch-prompt="{{ "handoff-" ~ card.handoff.id }}"{% endif %}>
+    {% if collapse_options %}<details class="launch__options"><summary>Change options</summary>{% endif %}
+    <span class="launch__field">
+      <label class="launch__label" for="{{ lid }}-model">Model</label>
+      <select class="launch__select" id="{{ lid }}-model" data-launch-model="{{ lid }}">
+        {%- for m in card.launch_models %}
+        <option value="{{ m.value }}"{% if m.value == sm or (not sm and loop.first) %} selected{% endif %}>{{ m.label }}</option>
+        {%- endfor %}
+      </select>
+    </span>
+    <span class="launch__field">
+      <label class="launch__label" for="{{ lid }}-effort">Effort</label>
+      <select class="launch__select" id="{{ lid }}-effort" data-launch-effort="{{ lid }}">
+        {%- for e in effort_options %}
+        <option value="{{ e }}"{% if e == se or (not se and loop.first) %} selected{% endif %}>{{ e }}</option>
+        {%- endfor %}
+      </select>
+    </span>
+    {# Always renders with the no-flag option selected. Deliberately NOT driven
+       by any handoff suggestion: no authored brief may arm a permission mode,
+       and nothing here is remembered between launches. #}
+    <span class="launch__field launch__field--perm">
+      <label class="launch__label" for="{{ lid }}-perm">Permissions</label>
+      <select class="launch__select" id="{{ lid }}-perm" data-launch-perm="{{ lid }}">
+        {%- for p in card.launch_permission_modes %}
+        <option value="{{ p.value }}"{% if p.danger %} class="launch__option--danger"{% endif %}{% if loop.first %} selected{% endif %}>{{ p.label }}</option>
+        {%- endfor %}
+      </select>
+    </span>
+    {% if collapse_options %}</details>{% endif %}
+    {% if primary %}
+    <button type="button" class="btn btn--primary" data-launch-button="{{ lid }}"
+            aria-label="{{ 'Continue' if card.handoff else 'Start' }} a session for {{ card.name }} in Terminal">{{ "Continue in Terminal" if card.handoff else "Start session" }}</button>
+    {% else %}
+    <button type="button" class="btn btn--icon" data-launch-button="{{ lid }}"
+            aria-label="Launch a session for {{ card.name }}"
+            title="Launch a session in Terminal"><span aria-hidden="true">▶</span></button>
+    {% endif %}
+    {# Distinct from `data-copy-status`: the two would otherwise overwrite each
+       other. A failure says so in words as well as its glyph. #}
+    <span class="launch__status" role="status" aria-live="polite"
+          data-launch-status="{{ lid }}"></span>
+  </p>
+{% endmacro %}

@@ -1,10 +1,11 @@
 {# The Current tab: what is running or queued for this project right now.
-   Task 3.2 lands the tab shell with the project's live/git state, carried
-   over from the pre-redesign `project.html` rather than duplicated --
-   `detail-page.json`'s two git-log mutation anchors point here now, unchanged
-   from what they guarded before. Task 3.3 rehomes the full continuation
-   surface (compose/handoff/launch/schedule) here via the shared macros in
-   `_launch.html`. #}
+   Task 3.2 landed the tab shell with the project's live/git state. Task 3.3
+   rehomes the full continuation surface (compose/handoff/launch/schedule)
+   here via the shared macros in `_launch.html` -- the SAME macros
+   `_card.html` calls for the dashboard, so every hook and id scheme (keyed
+   off `card.project_id`, never a handoff id) is identical in both places. #}
+{% from "_launch.html" import compose_box, handoff_block, launch_band %}
+{% from "_components.html" import live_status, token_burn %}
 {% set card = model.card %}
 {% set git = model.git %}
 
@@ -18,7 +19,11 @@
     {% if git.last_commit_summary %}
     <span class="detail-git__commit">last commit: {{ git.last_commit_summary }}{% if git.last_commit_at %} · {{ git.last_commit_at | ago_epoch }} ago{% endif %}</span>
     {% endif %}
+    {# Freshness: the same "as of ... ago" cache age the dashboard card
+       shows, plus the same staleness risk flag -- both read off `model.git`
+       / `card.is_stale`, never a fresh probe. #}
     {% if git.cached_at %}<span class="card__meta">git checked {{ git.cached_at | ago_epoch }} ago</span>{% endif %}
+    {% if card.is_stale %}<span class="risk" title="Uncommitted work exceeds the staleness threshold">⚠ uncommitted for {{ git.oldest_uncommitted_at | ago_epoch }}</span>{% endif %}
   </section>
   {% endif %}
   {% if card.session %}
@@ -28,10 +33,21 @@
     {% if card.session.interrupted %}<span class="card__note">interrupted</span>{% endif %}
   </p>
   {% endif %}
+  {{ live_status(card) }}
+  {{ token_burn(card) }}
 </section>
 
-{% if card.handoff %}
-<p class="card__note">Next step queued: {{ card.handoff.summary or "see the saved prompt" }}</p>
-{% else %}
-<p class="empty">No session in progress for this project.</p>
-{% endif %}
+{# Always rendered, `hidden` toggled by which state applies -- the same
+   "shell rendered either way, `hidden` flips it" pattern `dashboard.html`
+   already uses for its own scheduled/hidden-projects sections. `launch.js`'s
+   dismiss handler reveals this and hides the handoff section below it,
+   without a reload and without ever replacing either node's markup. #}
+<p class="empty" data-handoff-empty="{{ card.project_id }}" {% if card.handoff %}hidden{% endif %}>
+  No session in progress for this project.
+</p>
+
+{{ handoff_block(card, totals, collapse_prompt=True, show_dismiss=True, show_span_line=True) }}
+
+{{ launch_band(card, primary=True, collapse_options=(card.handoff is not none)) }}
+
+{{ compose_box(card, totals, collapsed=(card.handoff is not none)) }}

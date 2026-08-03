@@ -10,7 +10,7 @@
   },
   {
     "name": "mark the prompt safe in the template (render it as live markup)",
-    "file": "src/bridge/templates/_card.html",
+    "file": "src/bridge/templates/_launch.html",
     "old": "data-prompt-handoff=\"{{ card.handoff.id }}\">{{ card.handoff.next_prompt }}</textarea>",
     "new": "data-prompt-handoff=\"{{ card.handoff.id }}\">{{ card.handoff.next_prompt | safe }}</textarea>",
     "tests": [
@@ -19,7 +19,7 @@
   },
   {
     "name": "render the handoff block even with no handoff",
-    "file": "src/bridge/templates/_card.html",
+    "file": "src/bridge/templates/_launch.html",
     "old": "  {% if card.handoff %}\n    {% set hid = \"handoff-\" ~ card.handoff.id %}",
     "new": "  {% if True %}\n    {% set hid = \"handoff-\" ~ card.handoff.id %}",
     "tests": [
@@ -38,7 +38,7 @@
   },
   {
     "name": "remove the live region from the copy confirmation",
-    "file": "src/bridge/templates/_card.html",
+    "file": "src/bridge/templates/_launch.html",
     "old": "        <span class=\"handoff__status\" role=\"status\" aria-live=\"polite\"\n              data-copy-status=\"{{ hid }}\"></span>",
     "new": "        <span class=\"handoff__status\" data-copy-status=\"{{ hid }}\"></span>",
     "tests": [

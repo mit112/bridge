@@ -84,7 +84,7 @@
   },
   {
     "name": "pre-select the dangerous option in the template, arming a bypass on every card",
-    "file": "src/bridge/templates/_card.html",
+    "file": "src/bridge/templates/_launch.html",
     "old": "        <option value=\"{{ p.value }}\"{% if p.danger %} class=\"launch__option--danger\"{% endif %}{% if loop.first %} selected{% endif %}>{{ p.label }}</option>",
     "new": "        <option value=\"{{ p.value }}\"{% if p.danger %} class=\"launch__option--danger\"{% endif %}{% if p.danger %} selected{% endif %}>{{ p.label }}</option>",
     "tests": [

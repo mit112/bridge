@@ -97,7 +97,13 @@ LAUNCH_JS = Path(__file__).resolve().parent.parent / "src" / "bridge" / "static"
 # test reports SURVIVED for a mutation it would actually catch.
 LAUNCH_HARNESS = """
 globalThis.window = globalThis;
-let clickHandler = null;
+// `launch.js` registers more than one delegated "click" listener (the launch
+// button, and Task 3.3's handoff-dismiss button) -- a single `clickHandler`
+// slot would let the second registration silently replace the first. An
+// array plus `Promise.all` mirrors how the real DOM dispatches one event to
+// every listener: each async handler that does not match its own selector
+// returns immediately, so only the matching one does any real work.
+let clickHandlers = [];
 const controls = {
   '[data-launch-model="launch-1"]': { value: "claude-opus-4-8" },
   '[data-launch-effort="launch-1"]': { value: "xhigh" },
@@ -108,7 +114,7 @@ const controls = {
   },
 };
 globalThis.document = {
-  addEventListener(type, fn) { if (type === "click") clickHandler = fn; },
+  addEventListener(type, fn) { if (type === "click") clickHandlers.push(fn); },
   getElementById: () => null,
   querySelector: (sel) => controls[sel] ?? null,
   createRange: () => ({}),
@@ -128,8 +134,9 @@ const button = {
   disabled: false,
   setAttribute() {}, removeAttribute() {},
 };
-clickHandler({ target: { closest: (sel) =>
-  sel === "[data-launch-button]" ? button : null } }).then(() => {
+const event = { target: { closest: (sel) =>
+  sel === "[data-launch-button]" ? button : null } };
+Promise.all(clickHandlers.map((fn) => fn(event))).then(() => {
   console.log(JSON.stringify(sentBody));
 });
 """

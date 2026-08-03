@@ -2749,9 +2749,12 @@ def test_a_queued_handoff_offers_its_own_schedule_affordance(client):
 
 
 def test_card_schedule_form_markup_has_one_template_authority():
+    """The macro itself moved to `_launch.html` (Task 3.3's extraction), the
+    one place `_card.html` and `_workspace_current.html` both call into --
+    the authority this test guards is unchanged, only its address is."""
     template = (
         Path(__file__).resolve().parent.parent
-        / "src" / "bridge" / "templates" / "_card.html"
+        / "src" / "bridge" / "templates" / "_launch.html"
     ).read_text()
     assert template.count('<div class="schedule-form"') == 1
 

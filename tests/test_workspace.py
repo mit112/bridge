@@ -408,3 +408,126 @@ def test_history_tabs_never_carry_the_current_tabs_workspace_state_panel(tmp_pat
         html = c.get(f"/project/{pid}?tab={tab}").text
         assert 'class="workspace-state"' not in html
     store.close()
+
+
+# --- Task 3.3: the Current tab's continuation surface -----------------------
+
+
+def _client_with_handoff(tmp_path, with_session=True):
+    cfg = load({"db_path": tmp_path / "current.db", "spool_dir": tmp_path / "spool"})
+    store = Store(cfg.db_path)
+    pid = store.upsert_project("/p/current-ui", "current-ui-project")
+    if with_session:
+        store.upsert_session(SessionRecord(
+            session_id="s1", transcript_path="/t/s1", title="Did the work",
+            ended_at=_ended(5),
+        ), pid)
+    store.create_handoff(Handoff(
+        id="h1", project_path="/p/current-ui", next_prompt="keep going " * 30,
+        summary="finish the thing", created_at=1,
+    ), pid)
+    return TestClient(create_app(store, cfg)), store, pid
+
+
+def test_current_tab_exposes_interactive_hooks_keyed_off_the_project_id(tmp_path):
+    c, store, pid = _client_with_handoff(tmp_path)
+    html = c.get(f"/project/{pid}?tab=current").text
+    lid = f"launch-{pid}"
+    assert f'data-launch="{lid}"' in html
+    assert f'data-launch-model="{lid}"' in html
+    assert f'data-launch-perm="{lid}"' in html
+    assert f'data-launch-button="{lid}"' in html
+    assert 'data-prompt-handoff="h1"' in html
+    store.close()
+
+
+def test_permission_select_defaults_to_the_no_flag_option_not_a_suggestion(tmp_path):
+    c, store, pid = _client_with_handoff(tmp_path)
+    html = c.get(f"/project/{pid}?tab=current").text
+    lid = f"launch-{pid}"
+    perm_block = html.split(f'data-launch-perm="{lid}"', 1)[1].split("</select>", 1)[0]
+    first_option = perm_block.split("<option", 2)[1]
+    assert "selected" in first_option
+    assert "danger" not in first_option
+    store.close()
+
+
+def test_exactly_one_primary_button_when_a_handoff_is_queued(tmp_path):
+    c, store, pid = _client_with_handoff(tmp_path)
+    html = c.get(f"/project/{pid}?tab=current").text
+    assert html.count("btn--primary") == 1
+    assert "Continue in Terminal" in html
+    store.close()
+
+
+def test_exactly_one_primary_button_with_no_handoff(tmp_path):
+    c, store, pid = _client(tmp_path)
+    html = c.get(f"/project/{pid}?tab=current").text
+    assert html.count("btn--primary") == 1
+    assert "Start session" in html
+    store.close()
+
+
+def test_span_line_renders_only_when_session_and_handoff_both_exist(tmp_path):
+    c, store, pid = _client_with_handoff(tmp_path / "with-session", with_session=True)
+    assert "workspace-span" in c.get(f"/project/{pid}?tab=current").text
+    store.close()
+
+    c2, store2, pid2 = _client_with_handoff(
+        tmp_path / "no-session", with_session=False
+    )
+    assert "workspace-span" not in c2.get(f"/project/{pid2}?tab=current").text
+    store2.close()
+
+    c3, store3, pid3 = _client(tmp_path / "no-handoff")
+    assert "workspace-span" not in c3.get(f"/project/{pid3}?tab=current").text
+    store3.close()
+
+
+def test_current_tab_textareas_are_balanced(tmp_path):
+    c, store, pid = _client_with_handoff(tmp_path)
+    html = c.get(f"/project/{pid}?tab=current").text
+    assert html.count("<textarea") == html.count("</textarea>")
+    store.close()
+
+
+def test_dismiss_handoff_hook_present_when_queued(tmp_path):
+    c, store, pid = _client_with_handoff(tmp_path)
+    html = c.get(f"/project/{pid}?tab=current").text
+    assert 'data-handoff-dismiss="h1"' in html
+    store.close()
+
+
+def test_starting_a_different_session_does_not_touch_the_queued_handoff_field(tmp_path):
+    """The compose box's own prompt field is a SEPARATE element from the
+    handoff's -- a distinct id, so typing into one can never clear or
+    replace the other."""
+    c, store, pid = _client_with_handoff(tmp_path)
+    html = c.get(f"/project/{pid}?tab=current").text
+    compose_id = f"compose-{pid}"
+    assert f'data-compose-prompt="{compose_id}"' in html
+    assert 'data-prompt-handoff="h1"' in html
+    assert compose_id != "h1"
+    # The compose textarea starts empty; only the handoff's carries the
+    # queued prompt text.
+    assert "keep going" not in html.split(f'id="{compose_id}"', 1)[1].split(
+        "</textarea>", 1
+    )[0]
+    store.close()
+
+
+def test_empty_state_when_no_handoff_offers_start_session(tmp_path):
+    c, store, pid = _client(tmp_path)
+    html = c.get(f"/project/{pid}?tab=current").text
+    assert "No session in progress for this project." in html
+    tag = html.split(f'data-handoff-empty="{pid}"', 1)[1].split(">", 1)[0]
+    assert "hidden" not in tag
+    assert "Start session" in html
+    store.close()
+
+
+def test_handoff_empty_state_is_hidden_when_a_handoff_is_queued(tmp_path):
+    c, store, pid = _client_with_handoff(tmp_path)
+    html = c.get(f"/project/{pid}?tab=current").text
+    assert "hidden" in html.split(f'data-handoff-empty="{pid}"', 1)[1].split(">", 1)[0]
+    store.close()

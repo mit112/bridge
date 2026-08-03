@@ -1,0 +1,33 @@
+[
+  {
+    "name": "arm the dangerous permission mode by default on the workspace Current tab",
+    "file": "src/bridge/templates/_launch.html",
+    "old": "        <option value=\"{{ p.value }}\"{% if p.danger %} class=\"launch__option--danger\"{% endif %}{% if loop.first %} selected{% endif %}>{{ p.label }}</option>",
+    "new": "        <option value=\"{{ p.value }}\"{% if p.danger %} class=\"launch__option--danger\"{% endif %}{% if p.danger %} selected{% endif %}>{{ p.label }}</option>",
+    "tests": [
+      "tests/test_workspace.py::test_permission_select_defaults_to_the_no_flag_option_not_a_suggestion"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "make the compose box's Run now button a second primary action on the Current tab",
+    "file": "src/bridge/templates/_launch.html",
+    "old": "      <button type=\"button\" class=\"btn\" data-compose-run=\"{{ cid }}\"",
+    "new": "      <button type=\"button\" class=\"btn btn--primary\" data-compose-run=\"{{ cid }}\"",
+    "tests": [
+      "tests/test_workspace.py::test_exactly_one_primary_button_when_a_handoff_is_queued",
+      "tests/test_workspace.py::test_exactly_one_primary_button_with_no_handoff"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "drop the real-state guard, so the session -> handoff -> next line renders decoratively with no session on record",
+    "file": "src/bridge/templates/_launch.html",
+    "old": "{% if show_span_line and card.session %}",
+    "new": "{% if show_span_line %}",
+    "tests": [
+      "tests/test_workspace.py::test_span_line_renders_only_when_session_and_handoff_both_exist"
+    ],
+    "expect_count": 1
+  }
+]

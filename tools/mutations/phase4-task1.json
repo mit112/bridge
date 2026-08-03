@@ -32,7 +32,7 @@
   },
   {
     "name": "emit the label as the option value, so `--model \"Opus 4.8\"` reaches the CLI and the launch fails",
-    "file": "src/bridge/templates/_card.html",
+    "file": "src/bridge/templates/_launch.html",
     "old": "        <option value=\"{{ m.value }}\"{% if m.value == sm or (not sm and loop.first) %} selected{% endif %}>{{ m.label }}</option>",
     "new": "        <option value=\"{{ m.label }}\"{% if m.value == sm or (not sm and loop.first) %} selected{% endif %}>{{ m.label }}</option>",
     "tests": [
@@ -43,7 +43,7 @@
   },
   {
     "name": "drop `loop.first`, so nothing is selected and the browser's implicit first-option choice becomes invisible",
-    "file": "src/bridge/templates/_card.html",
+    "file": "src/bridge/templates/_launch.html",
     "old": "        <option value=\"{{ m.value }}\"{% if m.value == sm or (not sm and loop.first) %} selected{% endif %}>{{ m.label }}</option>",
     "new": "        <option value=\"{{ m.value }}\"{% if m.value == sm %} selected{% endif %}>{{ m.label }}</option>",
     "tests": [
@@ -53,7 +53,7 @@
   },
   {
     "name": "emit the value as the option text, so the selector stops naming versions and reads as raw ids",
-    "file": "src/bridge/templates/_card.html",
+    "file": "src/bridge/templates/_launch.html",
     "old": "        <option value=\"{{ m.value }}\"{% if m.value == sm or (not sm and loop.first) %} selected{% endif %}>{{ m.label }}</option>",
     "new": "        <option value=\"{{ m.value }}\"{% if m.value == sm or (not sm and loop.first) %} selected{% endif %}>{{ m.value }}</option>",
     "tests": [
@@ -64,8 +64,8 @@
   {
     "name": "default the catalog to a pinned version, freezing every ad-hoc launch on a model that ages out",
     "file": "src/bridge/config.py",
-    "old": "    ModelChoice(\"opus\", \"opus — latest (Opus 5)\"),\n    ModelChoice(\"claude-opus-5\", \"Opus 5\"),",
-    "new": "    ModelChoice(\"claude-opus-5\", \"Opus 5\"),\n    ModelChoice(\"opus\", \"opus — latest (Opus 5)\"),",
+    "old": "    ModelChoice(\"opus\", \"opus \u2014 latest (Opus 5)\"),\n    ModelChoice(\"claude-opus-5\", \"Opus 5\"),",
+    "new": "    ModelChoice(\"claude-opus-5\", \"Opus 5\"),\n    ModelChoice(\"opus\", \"opus \u2014 latest (Opus 5)\"),",
     "tests": [
       "tests/test_config.py::test_the_catalog_default_is_an_alias_not_a_pin"
     ],
@@ -84,7 +84,7 @@
   {
     "name": "drop the alias's version gloss, so \"opus\" no longer says what it currently means",
     "file": "src/bridge/config.py",
-    "old": "    ModelChoice(\"opus\", \"opus — latest (Opus 5)\"),",
+    "old": "    ModelChoice(\"opus\", \"opus \u2014 latest (Opus 5)\"),",
     "new": "    ModelChoice(\"opus\", \"opus\"),",
     "tests": [
       "tests/test_config.py::test_the_model_catalog_offers_pinned_versions_and_latest_aliases"
