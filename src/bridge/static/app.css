@@ -683,6 +683,20 @@ main { width: min(100%, 68rem); margin-inline: auto; padding: var(--space-6); }
 .history .table-scroll { margin-top: var(--space-2); }
 .sessions__tokens-detail { display: block; color: var(--muted); font-size: .78rem; }
 
+/* --- Milestone 4: the Schedule page (`/schedule`) --------------------------
+   Groups reuse `.history`'s own heading/spacing, and their rows reuse
+   `.scheduled`'s own descendant-selector layout (`.scheduled ul`/`li`) via the
+   wrapping `[data-scheduled]` container in schedule.html -- neither needs a
+   rule of its own here. Only the row's project label and the history pager
+   are new. */
+.schedule-row__project { font-weight: 650; }
+.schedule-pager {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+
 /* Session-meta enrichment (Phase 7): color is decorative only -- the `+`/`-`
    prefixes and the badge text carry the meaning, so nothing here relies on
    color alone (WCAG 2.2). */

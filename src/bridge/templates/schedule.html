@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% from "_components.html" import schedule_row, empty_state %}
+{% block page_title %}Schedule{% endblock %}
+{% block page_summary %}
+{# Full page loads, not client routing -- same `?tab=` pattern `project.html`'s
+   `workspace-tabs` already uses, so Back/Forward stay predictable and the URL
+   stays shareable. #}
+<nav class="workspace-tabs" aria-label="Schedule views">
+  <a class="workspace-tabs__link" href="/schedule?view=upcoming"
+     {% if model.view == "upcoming" %}aria-current="page"{% endif %}>Upcoming</a>
+  <a class="workspace-tabs__link" href="/schedule?view=history"
+     {% if model.view == "history" %}aria-current="page"{% endif %}>History</a>
+</nav>
+{% endblock %}
+{% block content %}
+{# Reuses dashboard.html's own `.scheduled` container class: its descendant
+   selectors (`.scheduled ul`, `.scheduled li`) style any list/row underneath
+   regardless of how many groups sit between them, so three labelled groups
+   need no new layout CSS of their own. `data-scheduled` is the container hook
+   `schedule.js`'s cancel/run-now/settle paths already query for the section's
+   own status paragraph and (on the dashboard) its `<summary>`; this page has
+   no `<summary>`, so `data-scheduled-section-status` below is also the focus
+   fallback `schedule.js` now tries second (see schedule.js's own comment). #}
+<div class="scheduled" data-scheduled>
+  <p class="scheduled__section-status" role="status" aria-live="polite" tabindex="-1"
+     data-scheduled-section-status></p>
+
+  {% if model.view == "history" %}
+    {# Terminal rows only (including cancelled) -- `schedule_row`'s own status
+       gating means a terminal row interactive=True can only ever show a Retry
+       control (and only when `retryable`), never run-now/edit/cancel. #}
+    <section class="history" aria-labelledby="schedule-history-title">
+      <h2 id="schedule-history-title">History</h2>
+      {% if not model.history %}
+        {{ empty_state("No finished scheduled runs yet.") }}
+      {% else %}
+      <ul data-scheduled-list>
+        {% for row in model.history %}{{ schedule_row(row, interactive=True) }}{% endfor %}
+      </ul>
+      {% endif %}
+      {% set page_start = model.page * model.page_size %}
+      {% set page_end = [page_start + (model.history | length), model.history_total] | min %}
+      <nav class="schedule-pager" aria-label="History pages">
+        {% if model.page > 0 %}
+        <a class="btn" href="/schedule?view=history&page={{ model.page - 1 }}">Previous</a>
+        {% endif %}
+        <span class="card__note" data-schedule-pager-status>
+          {% if model.history_total %}{{ page_start + 1 }}–{{ page_end }} of {{ model.history_total }}{% else %}0 of 0{% endif %}
+        </span>
+        {% if page_end < model.history_total %}
+        <a class="btn" href="/schedule?view=history&page={{ model.page + 1 }}">Next</a>
+        {% endif %}
+      </nav>
+    </section>
+  {% else %}
+    <section class="history" aria-labelledby="schedule-attention-title">
+      <h2 id="schedule-attention-title">Attention</h2>
+      {% if not model.attention %}
+        {{ empty_state("Nothing needs attention.") }}
+      {% else %}
+      <ul data-scheduled-list>
+        {% for row in model.attention %}{{ schedule_row(row, interactive=True) }}{% endfor %}
+      </ul>
+      {% endif %}
+    </section>
+    <section class="history" aria-labelledby="schedule-pending-title">
+      <h2 id="schedule-pending-title">Pending</h2>
+      {% if not model.pending %}
+        {{ empty_state("Nothing scheduled.") }}
+      {% else %}
+      <ul data-scheduled-list>
+        {% for row in model.pending %}{{ schedule_row(row, interactive=True) }}{% endfor %}
+      </ul>
+      {% endif %}
+    </section>
+    <section class="history" aria-labelledby="schedule-launching-title">
+      <h2 id="schedule-launching-title">Launching</h2>
+      {% if not model.launching %}
+        {{ empty_state("Nothing launching right now.") }}
+      {% else %}
+      <ul data-scheduled-list>
+        {% for row in model.launching %}{{ schedule_row(row, interactive=True) }}{% endfor %}
+      </ul>
+      {% endif %}
+    </section>
+  {% endif %}
+</div>
+{% endblock %}

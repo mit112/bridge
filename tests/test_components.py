@@ -176,7 +176,7 @@ def test_schedule_row_renders_error_when_present():
     assert "failed" in html
 
 
-def test_schedule_row_interactive_flag_leaves_no_action_controls_yet():
+def test_schedule_row_interactive_pending_shows_run_now_edit_cancel():
     row = ScheduleRow(
         id="s3",
         project_id=7,
@@ -187,8 +187,77 @@ def test_schedule_row_interactive_flag_leaves_no_action_controls_yet():
         error=None,
         scheduled_for_utc="2025-01-01 00:00 UTC",
         scheduled_for_iso="2025-01-01T00:00:00+00:00",
+        mode="terminal",
     )
-    # Task 2.2 only builds the non-interactive core; the interactive=True
-    # extension point is a documented no-op until a later milestone fills it.
+    html = _module().schedule_row(row, interactive=True)
+    assert 'data-scheduled-job="s3"' in html
+    assert 'data-scheduled-run-now="s3"' in html
+    assert 'data-scheduled-edit-toggle="s3"' in html
+    assert 'aria-expanded="false"' in html
+    assert 'aria-controls="scheduled-edit-s3"' in html
+    assert 'data-scheduled-cancel="s3"' in html
+    assert 'data-scheduled-edit-panel="s3"' in html
+    assert 'data-scheduled-edit-when="s3"' in html
+    assert 'data-scheduled-edit-save="s3"' in html
+    assert 'data-scheduled-state' in html
+    assert 'data-scheduled-status="s3"' in html
+    assert "terminal" in html
+    # A `pending` row is never retryable, regardless of what a caller sets.
+    assert "data-scheduled-retry=" not in html
+
+
+def test_schedule_row_interactive_launching_omits_run_now_but_keeps_edit_cancel():
+    row = ScheduleRow(
+        id="s4",
+        project_id=7,
+        project_name="Demo",
+        prompt_preview="go",
+        scheduled_for=1735700000,
+        status="launching",
+        error=None,
+        scheduled_for_utc="2025-01-01 00:00 UTC",
+        scheduled_for_iso="2025-01-01T00:00:00+00:00",
+    )
     html = _module().schedule_row(row, interactive=True)
     assert "data-scheduled-run-now" not in html
+    assert 'data-scheduled-edit-toggle="s4"' in html
+    assert 'data-scheduled-cancel="s4"' in html
+
+
+def test_schedule_row_interactive_terminal_retryable_shows_retry_with_label():
+    row = ScheduleRow(
+        id="s5",
+        project_id=7,
+        project_name="Demo",
+        prompt_preview="go",
+        scheduled_for=1735700000,
+        status="failed",
+        error="boom",
+        scheduled_for_utc="2025-01-01 00:00 UTC",
+        scheduled_for_iso="2025-01-01T00:00:00+00:00",
+        retryable=True,
+    )
+    html = _module().schedule_row(row, interactive=True)
+    assert 'data-scheduled-retry="s5"' in html
+    assert 'aria-label="Retry Demo run scheduled for 2025-01-01 00:00 UTC"' in html
+    assert 'data-scheduled-retry-label="Retry Demo run scheduled for 2025-01-01 00:00 UTC"' in html
+    assert 'data-scheduled-error' in html
+    assert "data-scheduled-run-now" not in html
+    assert "data-scheduled-cancel" not in html
+
+
+def test_schedule_row_interactive_terminal_non_retryable_omits_retry():
+    row = ScheduleRow(
+        id="s6",
+        project_id=7,
+        project_name="Demo",
+        prompt_preview="go",
+        scheduled_for=1735700000,
+        status="cancelled",
+        error=None,
+        scheduled_for_utc="2025-01-01 00:00 UTC",
+        scheduled_for_iso="2025-01-01T00:00:00+00:00",
+        retryable=False,
+    )
+    html = _module().schedule_row(row, interactive=True)
+    assert "data-scheduled-retry=" not in html

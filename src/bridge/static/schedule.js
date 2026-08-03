@@ -176,8 +176,12 @@ function settleRow(id, status, error) {
   }
   // Nothing replaced the removed button, so focus falls back to the section's
   // own <summary> -- the same target the cancel path uses, and the one node
-  // here that outlives every row.
-  const summary = document.querySelector("[data-scheduled] summary");
+  // here that outlives every row. The dashboard's `<details>` always has one;
+  // `/schedule` has no disclosure at all, so its own section-status paragraph
+  // (rendered `tabindex="-1"` there for exactly this) is the fallback when no
+  // <summary> exists.
+  const summary = document.querySelector("[data-scheduled] summary")
+    || document.querySelector("[data-scheduled-section-status]");
   if (summary) summary.focus();
 }
 
@@ -369,8 +373,10 @@ document.addEventListener("click", async (event) => {
       // Both the focus target and the announcement move to the section
       // itself, which outlives every row in it -- `row` (and the cancel
       // button's own status span inside it) is about to be removed, so
-      // neither can hold either one (WCAG 2.4.3, 4.1.3).
-      const summary = document.querySelector("[data-scheduled] summary");
+      // neither can hold either one (WCAG 2.4.3, 4.1.3). Same dashboard
+      // <summary> vs. `/schedule` section-status fallback as `settleRow`.
+      const summary = document.querySelector("[data-scheduled] summary")
+        || document.querySelector("[data-scheduled-section-status]");
       if (summary) summary.focus();
       announce("[data-scheduled-section-status]", "✓ Cancelled");
       if (row) row.remove();

@@ -31,6 +31,7 @@ from bridge.models import AgentsState, Handoff, ScheduledRun
 from bridge.projects_view import build_projects
 from bridge.refresh import RefreshCoordinator
 from bridge.registry import display_name, resolve_project
+from bridge.schedule_view import build_schedule
 from bridge.store import Store, now_epoch
 from bridge.workspace import build_workspace
 
@@ -866,6 +867,19 @@ def create_app(
                     ),
                 },
             },
+        )
+
+    @app.get("/schedule", response_class=HTMLResponse)
+    def schedule_view_route(
+        request: Request, view: str = "upcoming", page: int = Query(0, ge=0),
+    ):
+        # An unrecognized `view` never 400s or blanks the page --
+        # `build_schedule` itself normalizes it to "upcoming", the same
+        # "unknown tab/view -> destination default" contract every other
+        # route in the redesign follows.
+        model = build_schedule(store, view=view, page=page)
+        return templates.TemplateResponse(
+            request, "schedule.html", {"model": model, "active": "schedule"},
         )
 
     @app.get("/api/projects")

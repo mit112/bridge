@@ -1,0 +1,33 @@
+[
+  {
+    "name": "stop normalizing an unknown view, so ?view=zzz falls through instead of defaulting to upcoming",
+    "file": "src/bridge/schedule_view.py",
+    "old": "    normalized_view = view if view in VALID_VIEWS else \"upcoming\"",
+    "new": "    normalized_view = view",
+    "tests": [
+      "tests/test_schedule_route.py::test_schedule_route_unknown_view_defaults_to_upcoming"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "drop the page multiplier from history's offset, so page 1 re-slices from row 1 instead of row page_size",
+    "file": "src/bridge/schedule_view.py",
+    "old": "        start = page * page_size",
+    "new": "        start = page",
+    "tests": [
+      "tests/test_schedule_route.py::test_schedule_route_history_paginates_with_prev_next_reflecting_total"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "offer Retry on every terminal row regardless of retryable, so a cancelled or already-retried run gets a control that can only 409",
+    "file": "src/bridge/templates/_components.html",
+    "old": "    {% elif row.retryable %}",
+    "new": "    {% elif True %}",
+    "tests": [
+      "tests/test_schedule_route.py::test_schedule_route_terminal_non_retryable_row_omits_retry",
+      "tests/test_schedule_route.py::test_schedule_route_terminal_retryable_row_exposes_retry"
+    ],
+    "expect_count": 1
+  }
+]

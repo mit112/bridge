@@ -79,30 +79,70 @@
 {% endmacro %}
 
 {# The shared schedule row: Overview's "Up next" preview calls this with
-   `interactive=False` (the default); a later milestone builds the full
-   Schedule page and passes `interactive=True` to light up the action
-   controls below. `data-scheduled-for` is the exact hook name
-   `schedule.js`'s `paintScheduledTimes` already looks for on the dashboard's
-   own scheduled rows -- keep it unchanged so that wiring keeps working once
-   this macro replaces the hand-written markup there. The visible text and
-   `datetime` attribute mirror dashboard.html's own scheduled `<time>`: a
-   readable UTC string plus a machine-readable `datetime`, both computed once
-   server-side by `bridge.api._schedule_time_fields` and carried on
-   `ScheduleRow` -- never the bare epoch int -- so a screen reader or a
-   JS-disabled load never sees "1735700000". #}
+   `interactive=False` (the default); the `/schedule` route (Task 4.2) passes
+   `interactive=True` to light up the action controls below. `data-scheduled-for`
+   is the exact hook name `schedule.js`'s `paintScheduledTimes` already looks
+   for on the dashboard's own scheduled rows -- keep it unchanged so that
+   wiring keeps working once this macro replaces the hand-written markup there.
+   The visible text and `datetime` attribute mirror dashboard.html's own
+   scheduled `<time>`: a readable UTC string plus a machine-readable `datetime`,
+   both computed once server-side by `bridge.api._schedule_time_fields` and
+   carried on `ScheduleRow` -- never the bare epoch int -- so a screen reader or
+   a JS-disabled load never sees "1735700000".
+
+   Interactive controls below are PORTED from dashboard.html's own scheduled
+   `<li>` (see its `data-scheduled-*` hooks) rather than reinvented, so
+   `schedule.js`'s existing delegated listeners -- written against that
+   markup -- work here unchanged. `data-scheduled-job` is the row-lookup hook
+   those listeners use (distinct from this macro's own `data-schedule-row`,
+   which nothing reads); `scheduled__job`/`scheduled__job--{status}` are the
+   exact classes `settleRow` rewrites onto a row it settles in place, so a
+   server-rendered row and a JS-settled one always agree on shape. #}
 {% macro schedule_row(row, interactive=False) %}
-<li class="schedule-row" data-schedule-row="{{ row.id }}">
+<li class="schedule-row{% if interactive %} scheduled__job scheduled__job--{{ row.status }}{% endif %}"
+    data-schedule-row="{{ row.id }}"{% if interactive %}
+    data-scheduled-job="{{ row.id }}"
+    data-scheduled-retry-label="Retry {{ row.project_name }} run scheduled for {{ row.scheduled_for_utc }}"{% endif %}>
   <time{% if row.scheduled_for_iso %} datetime="{{ row.scheduled_for_iso }}"{% endif %} data-scheduled-for="{{ row.scheduled_for }}">{{ row.scheduled_for_utc }}</time>
   <span class="schedule-row__project">{{ row.project_name }}</span>
-  {{ status_pill(row.status) }}
-  {% if row.error %}<span class="schedule-row__error card__note">{{ row.error }}</span>{% endif %}
   {% if interactive %}
-    {# Extension point only -- deliberately left empty for Task 2.2. A later
-       milestone ports the existing dashboard.html scheduled-run action
-       controls here (`data-scheduled-run-now` / `-edit-toggle` / `-cancel` /
-       `-retry`), gated the same way dashboard.html gates them today
-       (run-now/edit/cancel for `pending`/`launching`, retry for a terminal
-       failure). Do not implement those controls in this task. #}
+  {# The pill macro has no way to carry a data attribute, and `settleRow`
+     needs a single element it can find by hook and overwrite in place --
+     so the interactive row renders its own status element (same look, same
+     word) instead of double-showing the status via both this and the shared
+     pill below. #}
+  <span class="pill pill--{{ row.status }}" data-scheduled-state>{{ row.status }}</span>
+  <span class="card__note">{{ row.mode }}</span>
+  {% else %}
+  {{ status_pill(row.status) }}
+  {% endif %}
+  {% if row.error %}<span class="schedule-row__error card__note"{% if interactive %} data-scheduled-error{% endif %}>{{ row.error }}</span>{% endif %}
+  {% if interactive %}
+    {% if row.status in ("pending", "launching") %}
+      {# `run-now` claims a `pending` row; a `launching` one is already
+         claimed, so clicking it there would only 409. #}
+      {% if row.status == "pending" %}
+      <button type="button" class="btn" data-scheduled-run-now="{{ row.id }}">Run now</button>
+      {% endif %}
+      <button type="button" class="btn" data-scheduled-edit-toggle="{{ row.id }}"
+              aria-expanded="false" aria-controls="scheduled-edit-{{ row.id }}">Edit</button>
+      <button type="button" class="btn" data-scheduled-cancel="{{ row.id }}">Cancel</button>
+      <span class="scheduled__edit" id="scheduled-edit-{{ row.id }}"
+            data-scheduled-edit-panel="{{ row.id }}" hidden>
+        <label class="compose__label" for="scheduled-edit-{{ row.id }}-when">Run at</label>
+        <input type="datetime-local" id="scheduled-edit-{{ row.id }}-when"
+               data-scheduled-edit-when="{{ row.id }}" data-scheduled-epoch="{{ row.scheduled_for }}">
+        <button type="button" class="btn" data-scheduled-edit-save="{{ row.id }}">Save</button>
+      </span>
+    {% elif row.retryable %}
+      {# A bare "Retry" is many identical entries in a screen reader's button
+         list once history fills up -- named the same way the row's own
+         `data-scheduled-retry-label` names the one `settleRow` builds. #}
+      <button type="button" class="btn" data-scheduled-retry="{{ row.id }}"
+              aria-label="Retry {{ row.project_name }} run scheduled for {{ row.scheduled_for_utc }}">Retry</button>
+    {% endif %}
+    <span class="scheduled__announce" role="status" aria-live="polite"
+          data-scheduled-status="{{ row.id }}"></span>
   {% endif %}
 </li>
 {% endmacro %}
