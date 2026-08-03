@@ -23,8 +23,8 @@
 </div>
 {% endblock %}
 {% block shell_status %}
-  <span class="shell-status__label">Project state</span>
-  <span class="shell-status__detail">{% if model.git and model.git.cached_at %}Git checked {{ model.git.cached_at | ago_epoch }} ago{% else %}Repository access · read only{% endif %}</span>
+  <span class="shell-status__label"><span class="shell-status__signal" aria-hidden="true"></span>Connected</span>
+  <span class="shell-status__detail">{% if model.git and model.git.cached_at %}Indexed {{ model.git.cached_at | ago_epoch }} ago{% else %}Repository access · read only{% endif %}</span>
 {% endblock %}
 {% block content %}
 <nav class="workspace-tabs" aria-label="Project sections">

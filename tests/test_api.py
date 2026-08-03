@@ -1257,7 +1257,8 @@ def test_a_stale_git_probe_renders_the_last_good_state_and_its_age(tmp_path):
     text = c.get(f"/project/{pid}").text
 
     assert "cached-branch" in text, "the last good branch was not shown"
-    assert "Git checked" in text
+    assert "Connected" in text
+    assert "Indexed" in text
     assert "ago" in text
     store.close()
 

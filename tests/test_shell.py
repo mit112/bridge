@@ -179,6 +179,18 @@ def test_narrow_touch_targets_reach_44px():
     assert narrow, "expected --control-min to be raised to 2.75rem (44px) under max-width: 1023px"
 
 
+def test_project_tabs_tighten_before_the_320px_reflow_boundary():
+    """Four full tab labels must fit the 288px content box at 320px."""
+    css = _app_css()
+    narrow = re.search(
+        r"@media \(max-width: 359px\)\s*\{[^}]*"
+        r"\.workspace-tabs\s*\{[^}]*gap:\s*var\(--space-3\)",
+        css,
+        re.DOTALL,
+    )
+    assert narrow, "expected narrow workspace tabs to use the 12px gap"
+
+
 def test_reduced_motion_disables_btn_transitions():
     """Task 5.4: prefers-reduced-motion only covered scroll-behavior and the
     skip-link before this; extend it to the .btn transitions too."""

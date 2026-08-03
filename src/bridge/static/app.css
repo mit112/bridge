@@ -1432,6 +1432,10 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
   .settings-layout { grid-template-columns: minmax(0, 1fr); gap: var(--space-8); }
 }
 
+@media (max-width: 359px) {
+  .workspace-tabs { gap: var(--space-3); }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto; }
   .skip-link { transition: none; }
