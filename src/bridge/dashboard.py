@@ -153,6 +153,7 @@ class DashboardBuilder:
                     1 for row in self.store.scheduled_runs()
                     if row["status"] in ("pending", "launching")
                 ),
+                "dirty": sum(1 for card in cards if card.git.dirty_count),
                 "today": sum(card.tokens_today for card in cards),
                 "last_5h": sum(card.tokens_5h for card in cards),
                 "burn_rate": sum(card.tokens_5h for card in cards) // (FIVE_HOURS // 3600),

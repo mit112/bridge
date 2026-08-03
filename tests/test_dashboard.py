@@ -26,7 +26,9 @@ def test_full_update_projects_absolute_totals_and_server_order(tmp_path):
     coordinator = RefreshCoordinator(store, cfg)
     builder = DashboardBuilder(
         store, cfg, coordinator,
-        probe_fn=lambda path: GitState(status="ok", branch="main", dirty_count=0),
+        probe_fn=lambda path: GitState(
+            status="ok", branch="main", dirty_count=1 if path == "/p/first" else 0,
+        ),
         agents_fn=lambda: AgentsState(status="ok", sessions=[]),
         now_fn=lambda: 130,
     )
@@ -38,6 +40,7 @@ def test_full_update_projects_absolute_totals_and_server_order(tmp_path):
     assert update["freshness"]["index_at"] == 100
     assert update["topbar"]["today"] == 1500
     assert update["topbar"]["last_5h"] == 1500
+    assert update["topbar"]["dirty"] == 1  # only /p/first has a dirty tree
     assert update["card_order"] == [first, second]
     assert update["cards"][str(second)]["burn"]["today"] == 0
     assert RANK_HANDOFF == -1
