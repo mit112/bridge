@@ -301,6 +301,174 @@ listeners.refresh({ data: "{}" });
     assert healthy["delays"] == [0], healthy["delays"]
 
 
+FRESHNESS_HARNESS = r'''
+globalThis.window = globalThis;
+globalThis.CSS = { escape: (s) => s };
+let now = 100;
+Date.now = () => now * 1000;
+let clickHandler = null;
+const listeners = {};
+const announcements = [];
+
+function classes() {
+  const values = new Set();
+  return {
+    add: (...names) => names.forEach((name) => values.add(name)),
+    remove: (...names) => names.forEach((name) => values.delete(name)),
+    values: () => [...values],
+  };
+}
+function node(attrs = {}) {
+  return {
+    attrs: { ...attrs }, hidden: false, textContent: "", children: [],
+    classList: classes(),
+    getAttribute(name) { return this.attrs[name] ?? null; },
+    setAttribute(name, value) { this.attrs[name] = String(value); },
+    removeAttribute(name) { delete this.attrs[name]; },
+    append(child) {
+      this.children = this.children.filter((item) => item !== child);
+      this.children.push(child); child.parentNode = this;
+    },
+    querySelector() { return null; },
+    closest() { return null; },
+  };
+}
+
+const strip = node({ "data-index-at": "100", "data-generation": "0", "data-server": "available" });
+const label = node();
+const age = node();
+const membership = node();
+const diagnostics = node();
+const totals = {};
+for (const name of ["projects", "running", "queued", "scheduled", "today", "last_5h", "burn_rate", "last_index"]) totals[name] = node();
+const refreshButton = node();
+const refreshStatus = node();
+
+function card(id) {
+  const root = node({ "data-project-card": String(id) });
+  const leaves = {
+    "[data-live-status]": node(), "[data-live-age]": node(),
+    "[data-live-model]": node(), "[data-live-effort]": node(),
+    "[data-git-branch]": node(), "[data-git-dirty]": node(),
+    "[data-git-ahead]": node(), "[data-git-stale]": node(),
+    "[data-git-cache]": node(), '[data-git-status="not_a_repo"]': node(),
+    '[data-git-status="unavailable"]': node(), "[data-burn-today]": node(),
+    "[data-burn-last-5h]": node(), "[data-sparkline]": node(),
+  };
+  const bandParent = node();
+  leaves["[data-live-status]"].closest = () => bandParent;
+  root.querySelector = (sel) => leaves[sel] || null;
+  root.textarea = { value: `typed ${id}` };
+  return root;
+}
+const cards = [card("1"), card("2")];
+const list = node();
+cards.forEach((item) => list.append(item));
+const cardMap = Object.fromEntries(cards.map((item) => [item.getAttribute("data-project-card"), item]));
+
+const selectors = {
+  "[data-freshness-strip]": strip, "[data-freshness-label]": label,
+  "[data-freshness-age]": age, "[data-project-membership-status]": membership,
+  "[data-diagnostics-alert]": diagnostics, "[data-cards-list]": list,
+  "[data-dashboard-refresh]": refreshButton, "[data-refresh-status]": refreshStatus,
+};
+for (const [name, value] of Object.entries(totals)) selectors[`[data-dashboard-total="${name}"]`] = value;
+selectors['[data-dashboard-total="scheduled"]'] = node();
+selectors['[data-dashboard-total="scheduled"].dd'] = totals.scheduled;
+selectors['[data-topbar-scheduled]'] = totals.scheduled;
+selectors['[data-dashboard-total="scheduled"]'].querySelector = () => totals.scheduled;
+
+globalThis.document = {
+  addEventListener(type, fn) { if (type === "click") clickHandler = fn; },
+  querySelector(sel) {
+    if (selectors[sel]) return selectors[sel];
+    const cardMatch = /^\[data-project-card="(.*)"\]$/.exec(sel);
+    return cardMatch ? cardMap[cardMatch[1]] : null;
+  },
+  querySelectorAll(sel) { return sel === "[data-project-card]" ? cards : []; },
+};
+globalThis.EventSource = class {
+  constructor() { this.listeners = listeners; }
+  addEventListener(name, fn) { listeners[name] = fn; }
+  close() {}
+};
+globalThis.setTimeout = (fn) => { fn(); return 0; };
+window.setTimeout = globalThis.setTimeout;
+globalThis.fetch = async () => ({ ok: true, json: async () => REFRESH_BODY });
+const fs = require("fs");
+eval(fs.readFileSync(process.argv[2], "utf8"));
+
+const textareaIdentity = cards.map((item) => item.textarea);
+function frame(kind, generation, indexAt, order) {
+  return { schema: 1, kind, generated_at: 999999, generation,
+    freshness: { server: "available", index_at: indexAt, index_age_seconds: 0 },
+    topbar: { projects: 2, running: 1, queued: 1, scheduled: 0, today: 1200,
+      last_5h: 2400, burn_rate: 480, last_index: indexAt },
+    diagnostics: { alert: true }, card_order: order,
+    cards: { "1": { live: { available: true, status: "idle", started_at: 1 },
+      git: { status: "ok", branch: "main", dirty_count: 2, ahead: 1, stale: false },
+      burn: { today: 1200, last_5h: 2400, spark_points: "0,20 72,0" } } },
+    refresh: { attempted: false, completed: true, error: null }, unattributed: [] };
+}
+
+const full = frame("snapshot", 0, 100, ["2", "1"]);
+REFRESH_BODY = frame("snapshot", 2, 146, ["1", "2"]);
+window.bridgeApplyDashboardUpdate(full);
+now = 146;
+window.bridgeApplyDashboardUpdate({ schema: 1, kind: "patch", generated_at: 146,
+  generation: 0, freshness: { server: "available", index_at: 100, index_age_seconds: 46 },
+  cards: { "1": { live: { available: true, status: "busy", started_at: 2 } } } });
+const stale = label.textContent;
+window.bridgeApplyDashboardUpdate(REFRESH_BODY);
+const changedIds = list.children.map((item) => item.getAttribute("data-project-card"));
+window.bridgeApplyDashboardUpdate({ schema: 1, kind: "patch", generated_at: 147,
+  generation: 2, freshness: { server: "available", index_at: 146, index_age_seconds: 1 },
+  card_order: ["1", "3"], cards: {} });
+const membershipText = membership.textContent;
+const beforeRefresh = refreshStatus.textContent;
+clickHandler({ target: { closest: (sel) => sel === "[data-dashboard-refresh]" ? refreshButton : null } });
+setImmediate(() => console.log(JSON.stringify({
+  stale, fresh: label.textContent, changedIds, membershipText,
+  textareaSame: textareaIdentity.every((item, index) => item === cards[index].textarea),
+  textareaValues: textareaIdentity.map((item) => item.value),
+  refresh: refreshStatus.textContent, totals: totals.today.textContent,
+  beforeRefresh,
+})));
+'''
+
+
+def _run_freshness(tmp_path, refresh_body):
+    harness = tmp_path / "freshness_harness.js"
+    harness.write_text("let REFRESH_BODY = " + json.dumps(refresh_body) + ";\n" + FRESHNESS_HARNESS)
+    proc = subprocess.run(
+        [_node(), str(harness), str(LIVE_JS)], capture_output=True, text=True
+    )
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout)
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_dashboard_updates_keep_index_freshness_separate_from_liveness(tmp_path):
+    body = {"schema": 1, "kind": "snapshot", "generated_at": 1, "generation": 2,
+            "freshness": {"server": "available", "index_at": 146, "index_age_seconds": 0},
+            "topbar": {}, "diagnostics": {"alert": False}, "card_order": [], "cards": {},
+            "refresh": {"attempted": False, "completed": True, "error": None}, "unattributed": []}
+    got = _run_freshness(tmp_path, body)
+    assert got["stale"] == "stale"
+    assert got["fresh"] == "connected"
+    assert got["totals"] == "1k"
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_dashboard_refresh_reorders_existing_nodes_and_preserves_user_text(tmp_path):
+    got = _run_freshness(tmp_path, {})
+    assert got["changedIds"] == ["1", "2"]
+    assert got["textareaSame"] is True
+    assert got["textareaValues"] == ["typed 1", "typed 2"]
+    assert got["membershipText"] == "Project list changed - reopen the panel to update cards."
+    assert got["refresh"] == "Updated"
+
+
 # --- Hide and restore: projects.js -------------------------------------------
 
 PROJECTS_JS = Path(__file__).resolve().parent.parent / "src" / "bridge" / "static" / "projects.js"

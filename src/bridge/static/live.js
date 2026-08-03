@@ -1,42 +1,64 @@
-// Live updates, patched into specific leaf nodes.
-//
-// This file deliberately cannot see the handoff <textarea>. A reload, or an
-// innerHTML swap over a card, would discard an in-progress prompt edit -- the
-// one piece of state Bridge cannot rebuild from transcripts. So: textContent on
-// leaf nodes, nothing structural, no reload, ever.
-//
-// The wire has three named events. `snapshot` is the full picture and arrives
-// on every connect (which is why there is no Last-Event-ID replay to write:
-// a reconnect is already complete). `delta` carries only what changed, plus
-// `removed` -- the tombstone that lets a card stop claiming a session that has
-// ended. `refresh` means resync over REST.
+// Live dashboard updates. Only existing leaves are patched: cards and handoff
+// textareas are server-rendered identity boundaries and are never replaced.
 
-const LIVE_BAND = "[data-live-path]";
 const LIVE_STATES = ["busy", "working", "idle", "waiting", "unknown", "ended"];
+const CONNECTION_STATES = ["connected", "reconnecting", "stale", "unavailable"];
+const INDEX_STALE_SECONDS = 45;
 
-// A connection is only "healthy" once it has proved itself. Resetting the
-// backoff the moment onopen fires turns an accept-then-close server into a hot
-// reconnect loop, so the counter is cleared on evidence, not on optimism.
-const HEALTHY_FRAMES = 2;
-const HEALTHY_MS = 1000;
+function cssValue(value) {
+  return typeof CSS !== "undefined" && CSS.escape ? CSS.escape(String(value)) : String(value);
+}
+
+function query(selector) {
+  return document.querySelector(selector);
+}
+
+function setText(node, value) {
+  if (node) node.textContent = value == null ? "" : String(value);
+}
+
+function setHidden(node, hidden) {
+  if (!node) return;
+  node.hidden = Boolean(hidden);
+  if (hidden) node.setAttribute("hidden", "");
+  else node.removeAttribute("hidden");
+}
+
+function formatKilo(value) {
+  const number = Number(value || 0);
+  if (number < 1000) return String(number);
+  if (number < 1000000) return `${Math.round(number / 1000)}k`;
+  return `${(number / 1000000).toFixed(1)}M`;
+}
+
+function totalNode(name) {
+  const node = query(`[data-dashboard-total="${cssValue(name)}"]`);
+  if (!node) return null;
+  // The scheduled total retains its older hook on the <dd> for schedule.js.
+  return node.querySelector ? (node.querySelector("[data-topbar-scheduled]") || node) : node;
+}
 
 function bandFor(path) {
-  // CSS.escape: project paths contain slashes, dots and spaces.
-  return document.querySelector(`[data-live-path="${CSS.escape(path)}"]`);
+  return query(`[data-live-path="${cssValue(path)}"]`);
 }
 
 function setBandState(band, status) {
+  if (!band) return;
   const state = LIVE_STATES.includes(status) ? status : "unknown";
-  band.classList.remove(...LIVE_STATES.map((name) => `live--${name}`));
-  band.classList.add(`live--${state}`);
+  const parent = band.closest ? band.closest("[data-live-parent]") : band.parentNode;
+  const target = parent && parent.classList ? parent : band;
+  if (target.classList && target.classList.remove) {
+    target.classList.remove(...LIVE_STATES.map((name) => `live--${name}`));
+    target.classList.add(`live--${state}`);
+  }
 }
 
-function applyLive(live) {
+function applyLegacyLive(live) {
   for (const [path, state] of Object.entries(live || {})) {
     const band = bandFor(path);
-    // Update only the existing leaf and its state class. The surrounding card,
-    // including any in-progress handoff textarea, retains its identity.
-    if (band) setBandState(band, state.status);
+    setBandState(band, state.status);
+    // Kept as a leaf-only compatibility path for the pre-schema tombstone
+    // tests. It cannot reach a card subtree or a handoff textarea.
     if (band) band.textContent = state.status;
   }
 }
@@ -44,65 +66,264 @@ function applyLive(live) {
 function applyRemoved(removed) {
   for (const path of removed || []) {
     const band = bandFor(path);
-    // The session is gone. Without this the card keeps its live band until the
-    // page is reloaded, which is the thing the tombstone exists to prevent.
-    if (band) setBandState(band, "ended");
+    setBandState(band, "ended");
     if (band) band.textContent = "ended";
   }
 }
 
-// Backoff for OUR reconnects (the ones after a capped stream). EventSource's
-// own reconnect handles the rest.
+function cardFor(projectId) {
+  return query(`[data-project-card="${cssValue(projectId)}"]`);
+}
+
+function patchLive(card, live) {
+  if (!card || !live) return;
+  const status = live.status || (live.available ? "unknown" : "ended");
+  const band = card.querySelector ? card.querySelector("[data-live-status]") : null;
+  setBandState(band, status);
+  setText(band, status);
+  const age = card.querySelector ? card.querySelector("[data-live-age]") : null;
+  setText(age, live.started_at == null ? "" : `· ${live.started_at}`);
+  setText(card.querySelector ? card.querySelector("[data-live-model]") : null,
+    live.model ? `· ${live.model}` : "");
+  setText(card.querySelector ? card.querySelector("[data-live-effort]") : null,
+    live.effort ? `/${live.effort}` : "");
+}
+
+function patchGit(card, git) {
+  if (!card || !git) return;
+  const branch = card.querySelector("[data-git-branch]");
+  const dirty = card.querySelector("[data-git-dirty]");
+  const ahead = card.querySelector("[data-git-ahead]");
+  const stale = card.querySelector("[data-git-stale]");
+  const cache = card.querySelector("[data-git-cache]");
+  const notRepo = card.querySelector("[data-git-status=\"not_a_repo\"]");
+  const unavailable = card.querySelector("[data-git-status=\"unavailable\"]");
+  const ok = git.status === "ok";
+  setText(branch, ok ? git.branch : "");
+  setHidden(branch, !ok);
+  setText(dirty, git.dirty_count ? ` · ${git.dirty_count} dirty` : "");
+  setHidden(dirty, !ok || !git.dirty_count);
+  setText(ahead, git.ahead ? ` · ${git.ahead} ahead` : "");
+  setHidden(ahead, !ok || !git.ahead);
+  setText(stale, git.stale ? `⚠ uncommitted for ${git.oldest_uncommitted_at || ""}` : "");
+  setHidden(stale, !git.stale);
+  setText(cache, git.cached_at ? ` · as of ${git.cached_at}` : "");
+  setHidden(cache, !git.cached_at);
+  setHidden(notRepo, git.status !== "not_a_repo");
+  setHidden(unavailable, git.status !== "unavailable");
+}
+
+function patchBurn(card, burn) {
+  if (!card || !burn) return;
+  setText(card.querySelector("[data-burn-today]"), `${formatKilo(burn.today)} today`);
+  setText(card.querySelector("[data-burn-last-5h]"), `${formatKilo(burn.last_5h)} last 5h`);
+  setText(card.querySelector("[data-sparkline]"), "");
+  const line = card.querySelector("[data-sparkline]");
+  if (line) line.setAttribute("points", burn.spark_points || "");
+}
+
+function applyCardUpdates(cards) {
+  for (const [projectId, update] of Object.entries(cards || {})) {
+    const card = cardFor(projectId);
+    if (!card) continue;
+    patchLive(card, update.live);
+    patchGit(card, update.git);
+    patchBurn(card, update.burn);
+  }
+}
+
+function applyCardOrder(order) {
+  if (!Array.isArray(order) || !document.querySelectorAll) return;
+  const list = query("[data-cards-list]");
+  if (!list) return;
+  const nodes = [...document.querySelectorAll("[data-project-card]")];
+  const byId = new Map(nodes.map((node) => [String(node.getAttribute("data-project-card")), node]));
+  const incoming = order.map(String);
+  const existing = nodes.map((node) => String(node.getAttribute("data-project-card")));
+  const sameSet = incoming.length === existing.length
+    && incoming.every((id) => byId.has(id));
+  const status = query("[data-project-membership-status]");
+  setHidden(status, sameSet);
+  if (!sameSet) setText(status, "Project list changed - reopen the panel to update cards.");
+  // append() moves an existing node; it does not clone, create, or replace it.
+  for (const id of incoming) {
+    const node = byId.get(id);
+    if (node) list.append(node);
+  }
+}
+
+let lastGeneration = null;
+let lastIndexAt = null;
+let lastConnectionState = null;
+let transportReconnecting = false;
+
+function initialIndexAt() {
+  const strip = query("[data-freshness-strip]");
+  if (!strip) return null;
+  const value = Number(strip.getAttribute("data-index-at"));
+  return Number.isFinite(value) && value > 0 ? value : null;
+}
+
+function indexedAge(nowSeconds) {
+  if (lastIndexAt == null) return null;
+  return Math.max(0, nowSeconds - lastIndexAt);
+}
+
+function connectionState(server, nowSeconds) {
+  if (server === "unavailable" || lastIndexAt == null) return "unavailable";
+  if (indexedAge(nowSeconds) >= INDEX_STALE_SECONDS) return "stale";
+  if (transportReconnecting) return "reconnecting";
+  return "connected";
+}
+
+function announceConnectionState(state) {
+  if (state === lastConnectionState) return;
+  lastConnectionState = state;
+  const strip = query("[data-freshness-strip]");
+  const label = query("[data-freshness-label]");
+  if (strip) {
+    strip.setAttribute("data-freshness-state", state);
+    strip.setAttribute("data-server", state === "unavailable" ? "unavailable" : "available");
+  }
+  setText(label, state);
+}
+
+function patchFreshness(update) {
+  const freshness = update.freshness;
+  if (!freshness) return;
+  const generation = Number(update.generation);
+  const successfulGeneration = update.kind === "snapshot"
+    || (Number.isFinite(generation) && lastGeneration != null && generation > lastGeneration);
+  if (successfulGeneration && freshness.index_at != null) {
+    lastIndexAt = Number(freshness.index_at);
+    lastGeneration = Number.isFinite(generation) ? generation : lastGeneration;
+  } else if (lastGeneration == null && update.kind === "snapshot") {
+    lastGeneration = Number.isFinite(generation) ? generation : 0;
+  }
+  const strip = query("[data-freshness-strip]");
+  if (strip) {
+    if (update.generated_at != null) strip.setAttribute("data-generated-at", update.generated_at);
+    if (Number.isFinite(generation)) strip.setAttribute("data-generation", generation);
+    if (freshness.index_at != null) strip.setAttribute("data-index-at", freshness.index_at);
+    strip.setAttribute("data-server", freshness.server || "unavailable");
+  }
+  const age = indexedAge(Math.floor(Date.now() / 1000));
+  setText(query("[data-freshness-age]"), age == null ? "never indexed" : `${age}s ago`);
+  announceConnectionState(connectionState(freshness.server, Math.floor(Date.now() / 1000)));
+}
+
+function applyDashboardUpdate(update) {
+  if (!update || update.schema !== 1 || (update.kind !== "snapshot" && update.kind !== "patch")) return false;
+  const topbar = update.topbar || {};
+  for (const name of ["projects", "running", "queued", "scheduled"]) {
+    if (topbar[name] != null) setText(totalNode(name), topbar[name]);
+  }
+  if (topbar.today != null) setText(totalNode("today"), formatKilo(topbar.today));
+  if (topbar.last_5h != null) setText(totalNode("last_5h"), formatKilo(topbar.last_5h));
+  if (topbar.burn_rate != null) setText(totalNode("burn_rate"), `${formatKilo(topbar.burn_rate)}/h`);
+  if (topbar.last_index != null) setText(totalNode("last_index"), topbar.last_index);
+  if (update.cards) applyCardUpdates(update.cards);
+  if (update.card_order) applyCardOrder(update.card_order);
+  if (update.diagnostics && update.diagnostics.alert != null) {
+    setHidden(query("[data-diagnostics-alert]"), !update.diagnostics.alert);
+  }
+  patchFreshness(update);
+  return true;
+}
+
+// Connection/backoff handling remains transport-only. Heartbeat comments never
+// reach this function and therefore never announce or reset indexed freshness.
 const BACKOFF_MIN_MS = 1000;
 const BACKOFF_MAX_MS = 30000;
 let backoffMs = BACKOFF_MIN_MS;
+const HEALTHY_FRAMES = 2;
+const HEALTHY_MS = 1000;
 
 function healthy(frames, openedAt) {
-  // Conductor's gate: two good frames, or one and a second of uptime. Proof,
-  // not optimism -- resetting on `onopen` alone turns an accept-then-close
-  // server into a hot reconnect loop.
-  return frames >= HEALTHY_FRAMES
-    || (frames >= 1 && Date.now() - openedAt >= HEALTHY_MS);
+  return frames >= HEALTHY_FRAMES || (frames >= 1 && Date.now() - openedAt >= HEALTHY_MS);
+}
+
+function refreshDashboard(button) {
+  const status = query("[data-refresh-status]");
+  if (button) button.disabled = true;
+  setText(status, "Refreshing...");
+  return fetch("/api/refresh", { method: "POST" })
+    .then((response) => response.json().then((body) => ({ response, body })))
+    .then(({ response, body }) => {
+      if (!response.ok || !applyDashboardUpdate(body)) throw new Error("refresh failed");
+      setText(status, "Updated");
+    })
+    .catch(() => setText(status, "Refresh failed; existing data kept."))
+    .finally(() => { if (button) button.disabled = false; });
+}
+
+if (document.addEventListener) {
+  document.addEventListener("click", (event) => {
+    const button = event.target && event.target.closest
+      ? event.target.closest("[data-dashboard-refresh]") : null;
+    if (button) refreshDashboard(button);
+  });
+}
+
+lastIndexAt = initialIndexAt();
+const initialStrip = query("[data-freshness-strip]");
+if (initialStrip) {
+  const initialGeneration = Number(initialStrip.getAttribute("data-generation"));
+  lastGeneration = Number.isFinite(initialGeneration) ? initialGeneration : null;
+  announceConnectionState(connectionState(initialStrip.getAttribute("data-server"), Math.floor(Date.now() / 1000)));
 }
 
 function connect() {
   const source = new EventSource("/events");
   const openedAt = Date.now();
   let frames = 0;
+  source.onopen = () => { transportReconnecting = false; };
+  source.onerror = () => {
+    transportReconnecting = true;
+    announceConnectionState(connectionState("available", Math.floor(Date.now() / 1000)));
+  };
 
   const handle = (event) => {
     let payload;
     try {
       payload = JSON.parse(event.data);
     } catch (error) {
-      // A bad frame is skipped; the stream keeps going. Letting it throw would
-      // kill live updates for the rest of the session over one bad payload.
       console.error("bridge: malformed live payload", error);
       return;
     }
     frames += 1;
     if (healthy(frames, openedAt)) backoffMs = BACKOFF_MIN_MS;
-    applyLive(payload.live);
-    applyRemoved(payload.removed);
+    if (payload.schema === 1) applyDashboardUpdate(payload);
+    else {
+      // Compatibility with the pre-schema event shape. New server frames never
+      // take this branch, but retaining it makes old clients/tests fail safe.
+      applyLegacyLive(payload.live);
+      applyRemoved(payload.removed);
+    }
   };
 
   source.addEventListener("snapshot", handle);
+  source.addEventListener("update", handle);
   source.addEventListener("delta", handle);
   source.addEventListener("refresh", () => {
-    // The server capped the stream. Reconnecting gets a complete snapshot, so
-    // there is nothing to replay and nothing to reload. The delay is zero when
-    // the connection had proved itself, and backs off when it had not.
     source.close();
     const delay = healthy(frames, openedAt) ? 0 : backoffMs;
-    if (!healthy(frames, openedAt)) {
-      backoffMs = Math.min(backoffMs * 2, BACKOFF_MAX_MS);
-    }
+    if (!healthy(frames, openedAt)) backoffMs = Math.min(backoffMs * 2, BACKOFF_MAX_MS);
     window.setTimeout(connect, delay);
   });
-
   return source;
 }
 
 const liveSource = connect();
+if (typeof setInterval === "function") {
+  const ageTimer = setInterval(() => {
+    const age = indexedAge(Math.floor(Date.now() / 1000));
+    setText(query("[data-freshness-age]"), age == null ? "never indexed" : `${age}s ago`);
+    const strip = query("[data-freshness-strip]");
+    if (strip) announceConnectionState(connectionState(strip.getAttribute("data-server"), Math.floor(Date.now() / 1000)));
+  }, 1000);
+  if (ageTimer && ageTimer.unref) ageTimer.unref();
+}
 
+window.bridgeApplyDashboardUpdate = applyDashboardUpdate;
 window.bridgeLiveSource = liveSource;
