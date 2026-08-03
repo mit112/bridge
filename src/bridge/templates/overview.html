@@ -145,7 +145,7 @@
               ghost has to be the project page itself or it is a second button to
               the identical URL. Every other kind's primary is the project page,
               so for them the session tab is the distinct destination. -#}
-          {% if primary.kind == "handoff" %}
+          {% if primary.kind == "handoff" and primary.project_id %}
             <a class="btn" href="/project/{{ primary.project_id }}">Open project</a>
           {% elif primary.project_id %}
             <a class="btn" href="/project/{{ primary.project_id }}?tab=current">View session</a>

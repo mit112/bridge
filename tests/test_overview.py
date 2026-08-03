@@ -1,8 +1,11 @@
 import re
 from datetime import datetime, timedelta, timezone
 
+import pytest
 from fastapi.testclient import TestClient
 
+import bridge.cards as cards_mod
+from bridge import agents
 from bridge.agents import AgentsState
 from bridge.api import create_app
 from bridge.config import load
@@ -471,6 +474,64 @@ def _hero_actions(html: str) -> str:
     return actions[:actions.index("</div>")]
 
 
+def _seed_hero(store, monkeypatch, kind: str) -> None:
+    """Make `kind` the hero by seeding only what that kind needs.
+
+    The ladder is handoff -> running -> stale -> schedule_failure, so seeding a
+    single project in exactly one of those states puts that kind first. Both
+    sensors are pinned for every case, so a real live session or a real git
+    tree on the machine running the suite cannot promote a different kind.
+    """
+    live = [LiveSession(session_id="live-1", cwd="/p/hero", kind="interactive",
+                        status="busy")] if kind == "running" else []
+    monkeypatch.setattr(agents, "probe",
+                        lambda *a, **k: AgentsState(status="ok", sessions=live))
+    git = (GitState(status="ok", branch="main", dirty_count=3,
+                    oldest_uncommitted_at=1) if kind == "stale"
+           else GitState(status="ok", branch="main", dirty_count=0))
+    monkeypatch.setattr(cards_mod.gitprobe, "probe", lambda p: git)
+
+    pid = store.upsert_project("/p/hero", "hero-project")
+    if kind == "handoff":
+        store.create_handoff(Handoff(
+            id="h1", project_path="/p/hero", next_prompt="keep going",
+            created_at=1,
+        ), pid)
+    elif kind == "schedule_failure":
+        store.restore_scheduled_run(ScheduledRun(
+            id="run-failed", project_path="/p/hero", prompt="do the thing",
+            mode="interactive", scheduled_for=1, created_at=1, status="failed",
+            completed_at=2, error="boom",
+        ))
+
+
+@pytest.mark.parametrize("kind,cls,label,slug", [
+    ("handoff", "st-attention", "Ready to continue", "queued"),
+    ("running", "st-run", "Working now", "running"),
+    ("stale", "st-review", "Needs review", "stale"),
+    ("schedule_failure", "st-risk", "Failed", "failed"),
+])
+def test_every_attention_kind_carries_all_three_status_cues(tmp_path, monkeypatch,
+                                                            kind, cls, label, slug):
+    """Status is never colour-only (WCAG 1.4.1), so each kind must render all
+    three cues: the top-border colour class, the pill's words, and the mono
+    slug. Nothing else in the suite reads `overview.html`'s `status_map`
+    literal, so a one-character typo in a class value (`st-reviw`) would fall
+    through every `.attention-primary--st-*` rule and paint no status colour at
+    all -- silently dropping a cue while the suite stayed green. Each cue is a
+    separate assertion so the failure names which one was lost.
+    """
+    c, store, _ = _route_client(tmp_path, name=f"cues-{kind}")
+    _seed_hero(store, monkeypatch, kind)
+
+    hero = _hero(c.get("/").text)
+
+    assert f'attention-primary--{cls}"' in hero, f"{kind}: no colour cue (card class)"
+    assert f'class="pill pill--{cls}">{label}<' in hero, f"{kind}: no text cue (pill)"
+    assert f'class="attention-kicker__slug">{slug}<' in hero, f"{kind}: no slug cue"
+    store.close()
+
+
 def test_handoff_hero_ghost_action_is_not_a_duplicate_of_the_primary(tmp_path):
     """One primary action per view, and the ghost beside it must go somewhere
     else. A handoff's own `primary_action` is already `?tab=current`
@@ -505,9 +566,6 @@ def test_running_hero_keeps_its_working_tree_without_a_last_activity_row(tmp_pat
     showed. They belong to their own labelled row: calling a branch name "Last
     activity" would be a lie, and a live session has no ended-at to report.
     """
-    from bridge import agents
-    import bridge.cards as cards_mod
-
     monkeypatch.setattr(agents, "probe", lambda *a, **k: AgentsState(
         status="ok", sessions=[LiveSession(
             session_id="live-1", cwd="/p/running", kind="interactive",
@@ -536,9 +594,6 @@ def test_working_tree_row_separates_branch_and_dirty_only_when_it_has_both(tmp_p
     has to belong to the pair rather than to either half. A stray leading or
     trailing ` · ` -- or a literal `None` from an unguarded null branch, which
     `GitState.branch` permits -- is the failure mode."""
-    from bridge import agents
-    import bridge.cards as cards_mod
-
     monkeypatch.setattr(agents, "probe", lambda *a, **k: AgentsState(
         status="ok", sessions=[LiveSession(
             session_id="live-1", cwd="/p/running", kind="interactive",

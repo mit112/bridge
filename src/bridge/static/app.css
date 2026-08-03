@@ -1050,9 +1050,9 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
    three-item model cap maps directly to one dominant card and two compact
    secondaries; Projects and Schedule carry the complete lists. */
 /* The Almanac section label: small-caps Atkinson, not the display serif -- at
-   14px it sits well under the spec's >=19px serif threshold. The numeral above
-   it and the italic hint below it are the two halves of the "01 Needs
-   Attention" editorial header. */
+   13px (`--text-sm`) it sits well under the spec's >=19px serif threshold. The
+   numeral above it and the italic hint below it are the two halves of the
+   "01 Needs Attention" editorial header. */
 .overview-attention h2,
 .overview-panel h2 {
   margin: 0;
