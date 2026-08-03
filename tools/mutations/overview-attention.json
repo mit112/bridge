@@ -2,8 +2,8 @@
   {
     "name": "reverse the attention ladder, putting schedule failures ahead of everything a project itself needs",
     "file": "src/bridge/overview.py",
-    "old": "    attention = _attention_from_cards(cards) + _schedule_failures(store, by_path)",
-    "new": "    attention = _schedule_failures(store, by_path) + _attention_from_cards(cards)",
+    "old": "    all_attention = _attention_from_cards(cards) + _schedule_failures(store, by_path)",
+    "new": "    all_attention = _schedule_failures(store, by_path) + _attention_from_cards(cards)",
     "tests": [
       "tests/test_overview.py::test_attention_ladder_orders_kinds_and_pins_correct_hrefs"
     ],

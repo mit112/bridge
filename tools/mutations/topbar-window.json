@@ -52,8 +52,8 @@
   {
     "name": "leave the index cell blank when there has never been a run, so it reads as a fault",
     "file": "src/bridge/templates/overview.html",
-    "old": "<div class=\"total\" data-dashboard-total=\"last_index\"><dt>indexed</dt><dd>{{ (model.totals.last_index | ago_epoch) or \"never\" }}</dd></div>",
-    "new": "<div class=\"total\" data-dashboard-total=\"last_index\"><dt>indexed</dt><dd>{{ model.totals.last_index | ago_epoch }}</dd></div>",
+    "old": "<div class=\"total\"><dt>indexed</dt><dd data-dashboard-total=\"last_index\">{{ (model.totals.last_index | ago_epoch) or \"never\" }}</dd></div>",
+    "new": "<div class=\"total\"><dt>indexed</dt><dd data-dashboard-total=\"last_index\">{{ model.totals.last_index | ago_epoch }}</dd></div>",
     "tests": [
       "tests/test_api.py::test_the_topbar_says_never_rather_than_leaving_the_index_time_blank"
     ],
@@ -62,8 +62,8 @@
   {
     "name": "drop the per-hour unit, leaving a bare number that reads as another total",
     "file": "src/bridge/templates/overview.html",
-    "old": "<div class=\"total\" data-dashboard-total=\"burn_rate\"><dt>burn</dt><dd>{{ model.totals.burn_rate | kilo }}/h</dd></div>",
-    "new": "<div class=\"total\" data-dashboard-total=\"burn_rate\"><dt>burn</dt><dd>{{ model.totals.burn_rate | kilo }}</dd></div>",
+    "old": "<div class=\"total\"><dt>burn</dt><dd data-dashboard-total=\"burn_rate\">{{ model.totals.burn_rate | kilo }}/h</dd></div>",
+    "new": "<div class=\"total\"><dt>burn</dt><dd data-dashboard-total=\"burn_rate\">{{ model.totals.burn_rate | kilo }}</dd></div>",
     "tests": [
       "tests/test_api.py::test_the_topbar_reports_a_burn_rate_over_the_measured_window"
     ],
@@ -72,8 +72,8 @@
   {
     "name": "render the burn rate as a gauge, inventing the denominator the plan does not publish",
     "file": "src/bridge/templates/overview.html",
-    "old": "<div class=\"total\" data-dashboard-total=\"burn_rate\"><dt>burn</dt><dd>{{ model.totals.burn_rate | kilo }}/h</dd></div>",
-    "new": "<div class=\"total\" data-dashboard-total=\"burn_rate\"><dt>burn</dt><dd><meter max=\"100000\" value=\"{{ model.totals.burn_rate }}\"></meter>{{ model.totals.burn_rate | kilo }}/h</dd></div>",
+    "old": "<div class=\"total\"><dt>burn</dt><dd data-dashboard-total=\"burn_rate\">{{ model.totals.burn_rate | kilo }}/h</dd></div>",
+    "new": "<div class=\"total\"><dt>burn</dt><dd data-dashboard-total=\"burn_rate\"><meter max=\"100000\" value=\"{{ model.totals.burn_rate }}\"></meter>{{ model.totals.burn_rate | kilo }}/h</dd></div>",
     "tests": [
       "tests/test_api.py::test_the_topbar_reports_a_burn_rate_over_the_measured_window"
     ],
