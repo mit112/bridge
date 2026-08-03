@@ -6,19 +6,23 @@
 
   /* Primitive tokens, light (default). Six-digit lowercase hex only --
      tests/test_contrast.py's parser can see nothing else. */
-  --p-nav: #152125;
-  --p-canvas: #f4f6f5;
-  --p-surface: #ffffff;
-  --p-text: #182427;
-  --p-text-2: #657378;
-  --p-rule: #d9e1df;
-  --p-work: #176579;
-  --p-work-soft: #dcecef;
-  --p-risk: #a64f2f;
-  --p-risk-soft: #f6e6df;
+  --p-nav: #1e1a14;
+  --p-canvas: #f5efe3;
+  --p-surface: #fcf8f0;
+  --p-text: #211d17;
+  --p-text-2: #6b6152;
+  --p-rule: #dcd2bf;
+  --p-work: #a23c17;
+  --p-work-soft: #f0e0d5;
+  --p-run: #2f6b46;
+  --p-run-soft: #e1ece3;
+  --p-review: #7e5a10;
+  --p-review-soft: #f0e6cf;
+  --p-risk: #99301a;
+  --p-risk-soft: #f2ddd2;
   /* Form-control boundaries only, held to WCAG 1.4.11's 3:1. Measured 4.66:1
      against --p-surface and 4.29:1 against --p-canvas. */
-  --p-field-line: #6b767c;
+  --p-field-line: #867a64;
   /* The sidebar rail (--p-nav) is dark in BOTH themes, so its own text/accent/
      focus primitives are theme-invariant -- the same values are repeated in
      the dark @media block and both [data-theme] blocks below rather than
@@ -26,10 +30,10 @@
      under the light theme. Measured against --p-nav: text 14.68:1 light /
      15.93:1 dark, text-2 7.96:1 / 8.63:1, accent 7.11:1 / 7.72:1, focus
      9.92:1 / 10.76:1. */
-  --p-nav-text: #eef3f2;
-  --p-nav-text-2: #a9b7b8;
-  --p-nav-accent: #77b4c0;
-  --p-nav-focus: #a9d0d4;
+  --p-nav-text: #f7efe0;
+  --p-nav-text-2: #b7ab95;
+  --p-nav-accent: #d8a07f;
+  --p-nav-focus: #e6b89b;
 
   /* Semantic layer: names components should reach for. */
   --canvas: var(--p-canvas);
@@ -42,6 +46,13 @@
   --work-soft: var(--p-work-soft);
   --risk: var(--p-risk);
   --risk-soft: var(--p-risk-soft);
+  --run: var(--p-run);
+  --run-soft: var(--p-run-soft);
+  --review: var(--p-review);
+  --review-soft: var(--p-review-soft);
+  --status-running: var(--p-run);
+  --status-review: var(--p-review);
+  --status-attention: var(--p-work);
   --field-line: var(--p-field-line);
   --focus: var(--p-work);
   --nav: var(--p-nav);
@@ -81,6 +92,8 @@
   --field-bg: var(--surface); --field-border: var(--field-line);
   --pill-work-bg: var(--work-soft); --pill-work-fg: var(--work);
   --pill-risk-bg: var(--risk-soft); --pill-risk-fg: var(--risk);
+  --pill-run-bg: var(--run-soft); --pill-run-fg: var(--run);
+  --pill-review-bg: var(--review-soft); --pill-review-fg: var(--review);
   --nav-item-fg: var(--nav-text-secondary); --nav-item-fg-active: var(--nav-text);
   --row-border: var(--rule); --table-header-bg: var(--surface);
   --handoff-bg: var(--work-soft); --handoff-border: var(--work); --handoff-fg: var(--work);
@@ -90,69 +103,81 @@
    this). Same values as the blocks below -- the attribute selector's higher
    specificity is what lets it win over `prefers-color-scheme`. */
 :root[data-theme="light"] {
-  --p-nav: #152125;
-  --p-canvas: #f4f6f5;
-  --p-surface: #ffffff;
-  --p-text: #182427;
-  --p-text-2: #657378;
-  --p-rule: #d9e1df;
-  --p-work: #176579;
-  --p-work-soft: #dcecef;
-  --p-risk: #a64f2f;
-  --p-risk-soft: #f6e6df;
-  --p-field-line: #6b767c;
-  --p-nav-text: #eef3f2;
-  --p-nav-text-2: #a9b7b8;
-  --p-nav-accent: #77b4c0;
-  --p-nav-focus: #a9d0d4;
+  --p-nav: #1e1a14;
+  --p-canvas: #f5efe3;
+  --p-surface: #fcf8f0;
+  --p-text: #211d17;
+  --p-text-2: #6b6152;
+  --p-rule: #dcd2bf;
+  --p-work: #a23c17;
+  --p-work-soft: #f0e0d5;
+  --p-run: #2f6b46;
+  --p-run-soft: #e1ece3;
+  --p-review: #7e5a10;
+  --p-review-soft: #f0e6cf;
+  --p-risk: #99301a;
+  --p-risk-soft: #f2ddd2;
+  --p-field-line: #867a64;
+  --p-nav-text: #f7efe0;
+  --p-nav-text-2: #b7ab95;
+  --p-nav-accent: #d8a07f;
+  --p-nav-focus: #e6b89b;
   --surface-raised: var(--p-surface);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --p-nav: #0f191c;
-    --p-canvas: #12191b;
-    --p-surface: #192326;
-    --p-raised: #202d30;
-    --p-text: #eef3f2;
-    --p-text-2: #a9b7b8;
-    --p-rule: #38474a;
-    --p-work: #77b4c0;
-    --p-work-soft: #213e44;
+    --p-nav: #1e1a14;
+    --p-canvas: #1b1714;
+    --p-surface: #241f1a;
+    --p-raised: #2c261f;
+    --p-text: #efe6d6;
+    --p-text-2: #b3a691;
+    --p-rule: #3a332a;
+    --p-work: #db7048;
+    --p-work-soft: #301f16;
+    --p-run: #74b98d;
+    --p-run-soft: #22322a;
+    --p-review: #cf9a3f;
+    --p-review-soft: #322a18;
     --p-risk: #e19a7e;
     /* Desaturated and lightened for the dark surface, not inverted. */
     --p-risk-soft: #402820;
     /* Lightened rather than inverted, and desaturated for the dark surface.
        Measured 3.72:1 against --p-surface. */
-    --p-field-line: #6f7c80;
+    --p-field-line: #7a6f5e;
     /* Theme-invariant nav primitives, same values as the light block --
        the rail is dark regardless of theme. */
-    --p-nav-text: #eef3f2;
-    --p-nav-text-2: #a9b7b8;
-    --p-nav-accent: #77b4c0;
-    --p-nav-focus: #a9d0d4;
+    --p-nav-text: #f7efe0;
+    --p-nav-text-2: #b7ab95;
+    --p-nav-accent: #d8a07f;
+    --p-nav-focus: #e6b89b;
 
     --surface-raised: var(--p-raised);
   }
 }
 
 :root[data-theme="dark"] {
-  --p-nav: #0f191c;
-  --p-canvas: #12191b;
-  --p-surface: #192326;
-  --p-raised: #202d30;
-  --p-text: #eef3f2;
-  --p-text-2: #a9b7b8;
-  --p-rule: #38474a;
-  --p-work: #77b4c0;
-  --p-work-soft: #213e44;
+  --p-nav: #1e1a14;
+  --p-canvas: #1b1714;
+  --p-surface: #241f1a;
+  --p-raised: #2c261f;
+  --p-text: #efe6d6;
+  --p-text-2: #b3a691;
+  --p-rule: #3a332a;
+  --p-work: #db7048;
+  --p-work-soft: #301f16;
+  --p-run: #74b98d;
+  --p-run-soft: #22322a;
+  --p-review: #cf9a3f;
+  --p-review-soft: #322a18;
   --p-risk: #e19a7e;
   --p-risk-soft: #402820;
-  --p-field-line: #6f7c80;
-  --p-nav-text: #eef3f2;
-  --p-nav-text-2: #a9b7b8;
-  --p-nav-accent: #77b4c0;
-  --p-nav-focus: #a9d0d4;
+  --p-field-line: #7a6f5e;
+  --p-nav-text: #f7efe0;
+  --p-nav-text-2: #b7ab95;
+  --p-nav-accent: #d8a07f;
+  --p-nav-focus: #e6b89b;
   --surface-raised: var(--p-raised);
 }
 

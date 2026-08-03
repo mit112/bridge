@@ -32,6 +32,12 @@ PAIRS = [
     ("--p-work", "--p-surface", 3.0, "focus ring against a surface"),
     ("--p-field-line", "--p-surface", 3.0, "form control border on a surface"),
     ("--p-field-line", "--p-canvas", 3.0, "form control border on canvas"),
+    ("--p-run", "--p-surface", 4.5, "running status text on a surface"),
+    ("--p-run", "--p-canvas", 4.5, "running status text on canvas"),
+    ("--p-run", "--p-run-soft", 4.5, "running tag text on its soft pill"),
+    ("--p-review", "--p-surface", 4.5, "review status text on a surface"),
+    ("--p-review", "--p-canvas", 4.5, "review status text on canvas"),
+    ("--p-review", "--p-review-soft", 4.5, "review tag text on its soft pill"),
     # The sidebar rail (--p-nav) is dark in BOTH themes, so these pairs are
     # expected to read identically under "light" and "dark" -- that sameness
     # is the point, not a coincidence to fix.

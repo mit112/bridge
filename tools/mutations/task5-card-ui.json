@@ -29,8 +29,8 @@
   {
     "name": "weaken the work-soft surface so work-blue foreground drops below AA",
     "file": "src/bridge/static/app.css",
-    "old": "  --p-work-soft: #dcecef;",
-    "new": "  --p-work-soft: #176579;",
+    "old": "  --p-work-soft: #f0e0d5;",
+    "new": "  --p-work-soft: #a23c17;",
     "tests": [
       "tests/test_contrast.py"
     ],

@@ -13,8 +13,8 @@
   {
     "name": "reuse --line for form-control borders, dropping below WCAG 1.4.11's 3:1",
     "file": "src/bridge/static/app.css",
-    "old": "  --p-field-line: #6b767c;",
-    "new": "  --p-field-line: #d9e1df;",
+    "old": "  --p-field-line: #867a64;",
+    "new": "  --p-field-line: #dcd2bf;",
     "tests": [
       "tests/test_contrast.py::test_contrast_meets_wcag_aa"
     ],
@@ -23,7 +23,7 @@
   {
     "name": "define --field-line as a 3-digit hex, making it invisible to the contrast suite",
     "file": "src/bridge/static/app.css",
-    "old": "  --p-field-line: #6b767c;",
+    "old": "  --p-field-line: #867a64;",
     "new": "  --p-field-line: #888;",
     "tests": [
       "tests/test_contrast.py::test_contrast_meets_wcag_aa"
