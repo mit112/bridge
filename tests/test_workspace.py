@@ -476,6 +476,50 @@ def test_exactly_one_primary_button_with_no_handoff(tmp_path):
     store.close()
 
 
+def test_empty_state_primary_button_drives_the_compose_prompt_and_starts_disabled(
+    tmp_path,
+):
+    """With no queued handoff the primary action IS the compose box: the band
+    points `data-launch-prompt` at the ad hoc textarea and the button renders
+    `disabled` (compose starts empty), so "Start session" can never post an
+    empty body that would 422."""
+    c, store, pid = _client(tmp_path)
+    html = c.get(f"/project/{pid}?tab=current").text
+    lid = f"launch-{pid}"
+    band = html.split(f'data-launch="{lid}"', 1)[1].split(">", 1)[0]
+    assert f'data-launch-prompt="compose-{pid}"' in band
+    assert "data-launch-handoff" not in band
+    # The primary button in this band renders disabled until there is text.
+    button = html.split(f'data-launch-button="{lid}"', 1)[1].split(">", 1)[0]
+    assert "disabled" in button
+    store.close()
+
+
+def test_handoff_primary_button_is_never_disabled(tmp_path):
+    """A queued handoff already has a prompt, so its "Continue in Terminal"
+    button is launchable immediately -- never disabled like the empty state."""
+    c, store, pid = _client_with_handoff(tmp_path)
+    html = c.get(f"/project/{pid}?tab=current").text
+    lid = f"launch-{pid}"
+    button = html.split(f'data-launch-button="{lid}"', 1)[1].split(">", 1)[0]
+    assert "disabled" not in button
+    store.close()
+
+
+def test_current_tab_headings_are_sequential_with_no_skipped_level(tmp_path):
+    """The page `h1` is followed by the compose/handoff section titles at `h2`
+    -- not `h3`, which would skip a level below the project heading (WCAG 2.2
+    heading-order). The history tabs already use `h2`."""
+    c, store, pid = _client_with_handoff(tmp_path)
+    html = c.get(f"/project/{pid}?tab=current").text
+    assert '<h2 class="handoff__title"' in html
+    assert '<h2 class="compose__title"' in html
+    # No level is skipped: the section titles are not h3 under the project h1.
+    assert '<h3 class="compose__title"' not in html
+    assert '<h3 class="handoff__title"' not in html
+    store.close()
+
+
 def test_span_line_renders_only_when_session_and_handoff_both_exist(tmp_path):
     c, store, pid = _client_with_handoff(tmp_path / "with-session", with_session=True)
     assert "workspace-span" in c.get(f"/project/{pid}?tab=current").text
@@ -490,6 +534,18 @@ def test_span_line_renders_only_when_session_and_handoff_both_exist(tmp_path):
     c3, store3, pid3 = _client(tmp_path / "no-handoff")
     assert "workspace-span" not in c3.get(f"/project/{pid3}?tab=current").text
     store3.close()
+
+
+def test_queued_handoff_shows_its_age_beside_the_summary(tmp_path):
+    """Spec line 180: the queued handoff shows its summary AND its age, so a
+    stale next step reads as stale. `created_at` is on every handoff row."""
+    c, store, pid = _client_with_handoff(tmp_path)
+    html = c.get(f"/project/{pid}?tab=current").text
+    summary = html.split('class="handoff__summary"', 1)[1].split("</p>", 1)[0]
+    assert "finish the thing" in summary, "the summary still renders"
+    assert 'class="handoff__age' in summary, "the age sits beside the summary"
+    assert "queued" in summary and "ago" in summary
+    store.close()
 
 
 def test_current_tab_textareas_are_balanced(tmp_path):

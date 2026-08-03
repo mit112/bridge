@@ -42,7 +42,7 @@
   {% set panel = "schedule-" ~ cid %}
   {% if collapsed %}<details class="compose__disclosure"><summary>Start a different session</summary>{% endif %}
   <section class="compose" aria-labelledby="{{ cid }}-title" data-compose="{{ cid }}">
-    <h3 class="compose__title" id="{{ cid }}-title">New session</h3>
+    <h2 class="compose__title" id="{{ cid }}-title">New session</h2>
     <label class="compose__label" for="{{ cid }}">Prompt for {{ card.name }}</label>
     <textarea class="compose__prompt" id="{{ cid }}" data-compose-prompt="{{ cid }}"></textarea>
     <p class="compose__actions">
@@ -88,10 +88,15 @@
     {% set hid = "handoff-" ~ card.handoff.id %}
     <section class="handoff" aria-labelledby="{{ hid }}-title"
              {%- if show_dismiss %} data-handoff-section="{{ card.handoff.id }}"{% endif %}>
-      <h3 class="handoff__title" id="{{ hid }}-title">Next step queued</h3>
-      {% if card.handoff.summary %}
-        <p class="handoff__summary">{{ card.handoff.summary }}</p>
-      {% endif %}
+      <h2 class="handoff__title" id="{{ hid }}-title">Next step queued</h2>
+      {# Summary AND age (spec line 180): a queued next step is worth less if it
+         is a week stale, so its age sits beside the summary. `created_at` is
+         NOT NULL on every handoff row (`SELECT *` carries it through), so the
+         age always renders even when no summary was authored. #}
+      <p class="handoff__summary">
+        {%- if card.handoff.summary %}{{ card.handoff.summary }} {% endif -%}
+        <span class="handoff__age card__note">queued {{ card.handoff.created_at | ago_epoch }} ago</span>
+      </p>
       {% if show_span_line and card.session %}
       <p class="workspace-span">{{ card.session.title or "Untitled session" }} → next: {{ card.handoff.summary or "see the saved prompt" }}</p>
       {% endif %}
@@ -163,9 +168,16 @@
      mean exposing the class to the template environment. Effort has no
      versions to name, so it stays a bare list and keeps its inline prepend. #}
   {% set effort_options = ([se] if se and se not in card.launch_efforts else []) + card.launch_efforts %}
+  {# With a handoff, the band launches the queued prompt (`handoff-<id>`). With
+     none, the workspace's primary action IS the compose box: `data-launch-prompt`
+     points at that ad hoc textarea (`compose-<project_id>`) so "Start session"
+     posts its text rather than an empty body that would 422. The button below
+     renders `disabled` until there is text (launch.js toggles it on input). The
+     dashboard's own band (`primary=False`) passes neither and is unchanged. #}
   <p class="launch" data-launch="{{ lid }}" data-launch-path="{{ card.path }}"
      {%- if card.handoff %} data-launch-handoff="{{ card.handoff.id }}"
-     data-launch-prompt="{{ "handoff-" ~ card.handoff.id }}"{% endif %}>
+     data-launch-prompt="{{ "handoff-" ~ card.handoff.id }}"
+     {%- elif primary %} data-launch-prompt="{{ "compose-" ~ card.project_id }}"{% endif %}>
     {% if collapse_options %}<details class="launch__options"><summary>Change options</summary>{% endif %}
     <span class="launch__field">
       <label class="launch__label" for="{{ lid }}-model">Model</label>
@@ -197,6 +209,7 @@
     {% if collapse_options %}</details>{% endif %}
     {% if primary %}
     <button type="button" class="btn btn--primary" data-launch-button="{{ lid }}"
+            {%- if not card.handoff %} disabled{% endif %}
             aria-label="{{ 'Continue' if card.handoff else 'Start' }} a session for {{ card.name }} in Terminal">{{ "Continue in Terminal" if card.handoff else "Start session" }}</button>
     {% else %}
     <button type="button" class="btn btn--icon" data-launch-button="{{ lid }}"
