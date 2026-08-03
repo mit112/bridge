@@ -698,6 +698,43 @@ def create_app(
         return bool(diag["parse_errors"] or diag["spool_depth"]
                     or diag["live"] == "unavailable")
 
+    def _attention_items(diag: dict) -> list[dict]:
+        """Turns each failing/degraded check `_needs_attention` cares about
+        into plain language: what it means and what to do about it. Presented
+        under "Needs attention" so a fresh install is not led anywhere -- this
+        is display-only grouping of the same `_diagnostics()` dict, never a
+        new probe.
+        """
+        items = []
+        if diag["parse_errors"]:
+            items.append({
+                "label": "Parse errors during indexing",
+                "cause": f"{diag['parse_errors']} line(s) in session files "
+                         "failed to parse during the last index run.",
+                "next_action": "Re-run indexing (POST /api/refresh) and check "
+                         "the Bridge server log for the file and line that "
+                         "failed; malformed JSONL lines are skipped, not fatal.",
+            })
+        if diag["spool_depth"]:
+            items.append({
+                "label": "Handoffs stuck in the spool",
+                "cause": f"{diag['spool_depth']} handoff file(s) are queued "
+                         "in the spool directory and have not been drained.",
+                "next_action": "Confirm the spool drain process is running; "
+                         "files remain in spool_dir until Bridge successfully "
+                         "drains them.",
+            })
+        if diag["live"] == "unavailable":
+            items.append({
+                "label": "Liveness sensor unavailable",
+                "cause": f"The {diag['live_source']} sensor could not "
+                         "determine which Claude sessions are running.",
+                "next_action": "Check that Claude Code's session registry "
+                         "(or subprocess probe) is reachable on this machine, "
+                         "then reload Diagnostics.",
+            })
+        return items
+
     @app.get("/api/diagnostics")
     def api_diagnostics():
         return _diagnostics()
@@ -707,7 +744,12 @@ def create_app(
         diag = _diagnostics()
         return templates.TemplateResponse(
             request, "diagnostics.html",
-            {"diag": diag, "alert": _needs_attention(diag), "active": "diagnostics"},
+            {
+                "diag": diag,
+                "alert": _needs_attention(diag),
+                "attention": _attention_items(diag),
+                "active": "diagnostics",
+            },
         )
 
     @app.get("/", response_class=HTMLResponse)

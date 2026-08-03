@@ -3,63 +3,84 @@
 {% block content %}
 {# Status is never colour alone: each row says what it is in words. #}
 <p class="{{ 'risk' if alert else 'muted' }}">
-  {% if alert %}⚠ Something needs attention{% else %}Nothing is wrong{% endif %}
+  {% if alert %}⚠ Bridge needs attention{% else %}Bridge is healthy{% endif %}
 </p>
 
-<div class="table-scroll" tabindex="0" role="region" aria-label="Bridge diagnostics table">
-<table class="diag">
-  <caption class="muted">What Bridge last observed. Every probe here is
-    best-effort, so "unavailable" means the probe failed, not that nothing is
-    running.</caption>
-  <tbody>
-    <tr>
-      <th scope="row">Parse errors (last index)</th>
-      <td>{{ diag.parse_errors }}</td>
-    </tr>
-    <tr>
-      <th scope="row">Spool depth</th>
-      {# Undrained files only. `spool/drained/` is history, not backlog. #}
-      <td>{{ diag.spool_depth }}</td>
-    </tr>
-    <tr>
-      <th scope="row">Queued handoffs</th>
-      <td>{{ diag.queued_handoffs }}</td>
-    </tr>
-    <tr>
-      <th scope="row">Liveness sensor</th>
-      <td>{{ diag.live }} · via {{ diag.live_source }}</td>
-    </tr>
-    <tr>
-      <th scope="row">Running sessions</th>
-      <td>{{ diag.running_sessions }}</td>
-    </tr>
-    <tr>
-      <th scope="row">claude version seen</th>
-      {# Recorded because when the schema next drifts this is the difference
-         between a diagnosis and a bisect. #}
-      <td>{{ diag.claude_version or "unknown" }}</td>
-    </tr>
-  </tbody>
-</table>
-</div>
+{# Same facts as before, regrouped for reading, not a new probe: `attention`
+   is built from the very dict `Runtime`/`Indexing`/`Storage` read below. #}
+<section class="history" aria-labelledby="diag-attention-title">
+  <h2 id="diag-attention-title">Needs attention</h2>
+  {% if not attention %}
+    <p class="empty">Nothing needs attention.</p>
+  {% else %}
+  <ul class="cards" data-diagnostics-attention>
+    {% for item in attention %}
+    <li class="card card--risk">
+      <div class="card__head"><h3>{{ item.label }}</h3></div>
+      <p class="card__note">{{ item.cause }}</p>
+      <p class="card__note"><strong>Next:</strong> {{ item.next_action }}</p>
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</section>
 
-<h2>Last index run</h2>
-{% if diag.last_index %}
-  <div class="table-scroll" tabindex="0" role="region" aria-label="Last index run table">
+<section class="history" aria-labelledby="diag-runtime-title">
+  <h2 id="diag-runtime-title">Runtime</h2>
+  <div class="table-scroll" tabindex="0" role="region" aria-label="Runtime table">
   <table class="diag">
+    <caption class="muted">Best-effort: "unavailable" means the probe
+      failed, not that nothing is running.</caption>
     <tbody>
-      <tr><th scope="row">Ran</th><td>{{ diag.last_index.ran_at | ago_epoch }} ago</td></tr>
-      <tr><th scope="row">Files seen</th><td>{{ diag.last_index.files_seen }}</td></tr>
-      <tr><th scope="row">Files scanned</th><td>{{ diag.last_index.files_scanned }}</td></tr>
-      <tr><th scope="row">Lines parsed</th><td>{{ diag.last_index.lines_parsed }}</td></tr>
-      <tr><th scope="row">Sessions upserted</th><td>{{ diag.last_index.sessions_upserted }}</td></tr>
-      <tr><th scope="row">Duration</th><td>{{ diag.last_index.duration_ms }} ms</td></tr>
+      <tr>
+        <th scope="row">Liveness sensor</th>
+        <td>{{ diag.live }} · via {{ diag.live_source }}</td>
+      </tr>
+      <tr>
+        <th scope="row">Running sessions</th>
+        <td>{{ diag.running_sessions }}</td>
+      </tr>
+      <tr>
+        <th scope="row">claude version seen</th>
+        <td>{{ diag.claude_version or "unknown" }}</td>
+      </tr>
     </tbody>
   </table>
   </div>
-{% else %}
-  <p class="card__note">Nothing indexed yet.</p>
-{% endif %}
+</section>
+
+<section class="history" aria-labelledby="diag-indexing-title">
+  <h2 id="diag-indexing-title">Indexing</h2>
+  {% if diag.last_index %}
+  <div class="table-scroll" tabindex="0" role="region" aria-label="Indexing table">
+  <table class="diag">
+    <tbody>
+      <tr><th scope="row">Last run</th><td>{{ diag.last_index.ran_at | ago_epoch }} ago</td></tr>
+      <tr><th scope="row">Files seen</th><td>{{ diag.last_index.files_seen }}</td></tr>
+      <tr><th scope="row">Files scanned</th><td>{{ diag.last_index.files_scanned }}</td></tr>
+      <tr><th scope="row">Lines parsed</th><td>{{ diag.last_index.lines_parsed }}</td></tr>
+      <tr><th scope="row">Duration</th><td>{{ diag.last_index.duration_ms }} ms</td></tr>
+      <tr><th scope="row">Parse errors</th><td>{{ diag.parse_errors }}</td></tr>
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+    <p class="card__note">Nothing indexed yet.</p>
+  {% endif %}
+</section>
+
+<section class="history" aria-labelledby="diag-storage-title">
+  <h2 id="diag-storage-title">Storage</h2>
+  <div class="table-scroll" tabindex="0" role="region" aria-label="Storage table">
+  <table class="diag">
+    <tbody>
+      <tr><th scope="row">Queued handoffs</th><td>{{ diag.queued_handoffs }}</td></tr>
+      {# Undrained files only. `spool/drained/` is history, not backlog. #}
+      <tr><th scope="row">Spool depth</th><td>{{ diag.spool_depth }}</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
 
 <p><a href="/">Back to the panel</a></p>
 {% endblock %}

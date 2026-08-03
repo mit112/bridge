@@ -113,13 +113,17 @@ def test_html_pages_have_one_page_heading_home_navigation_and_metadata(client):
 
 
 def test_project_and_diagnostics_tables_are_keyboard_scroll_regions(client):
-    c, _, pid = client
+    c, store, pid = client
+    store.record_index_run({"parse_errors": 0, "files_seen": 1},
+                           ran_at=1, duration_ms=1)
     project = c.get(f"/project/{pid}?tab=sessions").text
     diagnostics = c.get("/diagnostics").text
     assert 'class="table-scroll" tabindex="0" role="region"' in project
     assert 'aria-label="Indexed sessions table"' in project
-    assert 'class="table-scroll" tabindex="0" role="region"' in diagnostics
-    assert 'aria-label="Bridge diagnostics table"' in diagnostics
+    assert diagnostics.count('class="table-scroll" tabindex="0" role="region"') == 3
+    assert 'aria-label="Runtime table"' in diagnostics
+    assert 'aria-label="Indexing table"' in diagnostics
+    assert 'aria-label="Storage table"' in diagnostics
 
 
 def test_pin_control_has_a_persistent_visible_label(client):
@@ -1337,6 +1341,76 @@ def test_diagnostics_reports_terminal_agents_as_not_running(tmp_path, monkeypatc
     store = Store(cfg.db_path)
     c = TestClient(create_app(store, cfg))
     assert c.get("/api/diagnostics").json()["running_sessions"] == 1
+    store.close()
+
+
+# --- Task 4.3: Diagnostics recomposition -------------------------------------
+
+
+def test_diagnostics_groups_the_same_facts_into_four_sections(client):
+    """Presentation-only regroup: the JSON shape is untouched (asserted
+    elsewhere), but the HTML page must show the four named groups from the
+    design spec, in a page that still has exactly one page heading."""
+    c, _, _ = client
+    html = c.get("/diagnostics").text
+    assert len(re.findall(r"<h1\b", html)) == 1
+    for heading in ("Needs attention", "Runtime", "Indexing", "Storage"):
+        assert f">{heading}<" in html
+
+
+def test_diagnostics_healthy_state_says_so_and_keeps_facts_quiet(client):
+    """Nothing is wrong in the default fixture (no index run, no spool
+    backlog, live sensor answering) -- the page must say so in words and must
+    not render any risk-styled attention cards."""
+    c, _, _ = client
+    html = c.get("/diagnostics").text
+    assert "Bridge is healthy" in html
+    assert "card--risk" not in html
+    assert "Nothing needs attention" in html
+
+
+def test_diagnostics_parse_errors_surface_under_needs_attention_with_cause_and_action(client):
+    c, store, _ = client
+    store.record_index_run({"parse_errors": 3, "files_seen": 9},
+                           ran_at=100, duration_ms=5)
+    html = c.get("/diagnostics").text
+    assert "Bridge needs attention" in html
+    assert "needs attention" in html  # status is never colour alone
+    attention_at = html.index(">Needs attention<")
+    cause_at = html.index("3 line(s) in session files failed to parse")
+    action_at = html.index("Re-run indexing")
+    assert attention_at < cause_at < action_at
+    assert 'card--risk' in html
+
+
+def test_diagnostics_spool_backlog_surfaces_under_needs_attention(tmp_path):
+    cfg = load({"db_path": tmp_path / "d3.db", "spool_dir": tmp_path / "spool"})
+    store = Store(cfg.db_path)
+    c = TestClient(create_app(store, cfg))
+    # After app creation: `create_app` drains any spool files present at boot,
+    # so a file written first would already be gone by request time.
+    cfg.spool_dir.mkdir(parents=True, exist_ok=True)
+    (cfg.spool_dir / "x.json").write_text("{}")
+    html = c.get("/diagnostics").text
+    assert "1 handoff file(s) are queued in the spool" in html
+    assert "Confirm the spool drain process is running" in html
+    store.close()
+
+
+def test_diagnostics_unavailable_liveness_surfaces_under_needs_attention(tmp_path, monkeypatch):
+    from bridge import agents
+    from bridge.models import AgentsState
+
+    def fake_probe(*a, **k):
+        return AgentsState(status="unavailable", source="registry", sessions=[])
+
+    monkeypatch.setattr(agents, "probe", fake_probe)
+    cfg = load({"db_path": tmp_path / "d4.db", "spool_dir": tmp_path / "spool"})
+    store = Store(cfg.db_path)
+    c = TestClient(create_app(store, cfg))
+    html = c.get("/diagnostics").text
+    assert "registry sensor could not determine" in html
+    assert "Check that Claude Code" in html
     store.close()
 
 
