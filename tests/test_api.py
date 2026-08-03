@@ -50,6 +50,26 @@ def test_dashboard_renders_project_and_title(client):
     assert "Did the work" in r.text
 
 
+def test_dashboard_renders_stable_freshness_and_leaf_patch_hooks(client):
+    c, _, _ = client
+    html = c.get("/").text
+    assert 'data-freshness-strip' in html
+    assert 'data-dashboard-refresh>Refresh</button>' in html
+    assert 'data-project-membership-status' in html
+    assert 'data-cards-list' in html
+    assert html.count('data-dashboard-total=') == 8
+    for hook in (
+        "data-live-status", "data-git-branch", "data-git-dirty",
+        "data-git-ahead", "data-git-stale", "data-git-cache",
+        "data-burn-today", "data-burn-last-5h", "data-sparkline",
+    ):
+        assert hook in html
+    assert 'data-generated-at=' in html
+    assert 'data-generation=' in html
+    assert 'data-index-at=' in html
+    assert 'data-server=' in html
+
+
 def test_dashboard_renders_with_zero_projects(tmp_path):
     cfg = load({"db_path": tmp_path / "empty.db", "spool_dir": tmp_path / "spool"})
     store = Store(cfg.db_path)
@@ -1260,7 +1280,9 @@ def test_the_header_links_to_diagnostics_only_when_something_is_wrong(client):
     """A permanent link would train the eye to ignore it."""
     c, store, _ = client
     store.record_index_run({"parse_errors": 0}, ran_at=1, duration_ms=1)
-    assert "data-diagnostics-alert" not in c.get("/").text
+    body = c.get("/").text
+    assert "data-diagnostics-alert" in body
+    assert re.search(r'data-diagnostics-alert\s+hidden', body)
     store.record_index_run({"parse_errors": 2}, ran_at=2, duration_ms=1)
     assert "data-diagnostics-alert" in c.get("/").text
 
@@ -1667,10 +1689,10 @@ def test_live_js_never_touches_the_prompt_textarea():
     assert "lastEventId" not in source
 
 
-def test_live_js_handles_all_three_named_events():
+def test_live_js_handles_snapshot_update_and_refresh_events():
     source = (Path(__file__).resolve().parent.parent / "src" / "bridge"
               / "static" / "live.js").read_text()
-    for name in ("snapshot", "delta", "refresh"):
+    for name in ("snapshot", "update", "refresh"):
         assert f'"{name}"' in source
     assert "removed" in source               # the tombstone is applied
 

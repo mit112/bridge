@@ -1,33 +1,46 @@
 {% extends "base.html" %}
 {% block topbar %}
 <dl class="totals">
-  <div class="total"><dt>projects</dt><dd>{{ totals.projects }}</dd></div>
-  <div class="total"><dt>running</dt><dd>{{ totals.running }}</dd></div>
-  <div class="total"><dt>queued</dt><dd>{{ totals.queued }}</dd></div>
+  <div class="total"><dt>projects</dt><dd data-dashboard-total="projects">{{ totals.projects }}</dd></div>
+  <div class="total"><dt>running</dt><dd data-dashboard-total="running">{{ totals.running }}</dd></div>
+  <div class="total"><dt>queued</dt><dd data-dashboard-total="queued">{{ totals.queued }}</dd></div>
   {# `data-topbar-scheduled` is the one hook `schedule.js` has to keep this
      number honest after a create/cancel/run-now in the same session -- the
      server only ever renders it once, on load. #}
-  <div class="total"><dt>scheduled</dt><dd data-topbar-scheduled>{{ totals.scheduled }}</dd></div>
-  <div class="total"><dt>tokens today</dt><dd>{{ totals.today | kilo }}</dd></div>
-  <div class="total"><dt>last 5h</dt><dd>{{ totals.last_5h | kilo }}</dd></div>
+  <div class="total" data-dashboard-total="scheduled"><dt>scheduled</dt><dd data-topbar-scheduled>{{ totals.scheduled }}</dd></div>
+  <div class="total"><dt>tokens today</dt><dd data-dashboard-total="today">{{ totals.today | kilo }}</dd></div>
+  <div class="total"><dt>last 5h</dt><dd data-dashboard-total="last_5h">{{ totals.last_5h | kilo }}</dd></div>
   {# A rate over the measured window, never a share of a cap: the plan
      publishes no total, so a percentage would have no denominator and a gauge
      would be inventing one. The unit is written out for the same reason. #}
-  <div class="total"><dt>burn</dt><dd>{{ totals.burn_rate | kilo }}/h</dd></div>
+  <div class="total"><dt>burn</dt><dd data-dashboard-total="burn_rate">{{ totals.burn_rate | kilo }}/h</dd></div>
   {# "never" rather than a blank: an empty cell reads as a rendering fault,
      and a fresh install genuinely has not indexed yet. #}
-  <div class="total"><dt>indexed</dt><dd>{{ (totals.last_index | ago_epoch) or "never" }}</dd></div>
+  <div class="total"><dt>indexed</dt><dd data-dashboard-total="last_index">{{ (totals.last_index | ago_epoch) or "never" }}</dd></div>
 </dl>
+{% set freshness = dashboard_update.freshness %}
+{% set freshness_state = "unavailable" if freshness.server == "unavailable" or freshness.index_at is none else ("stale" if freshness.index_age_seconds >= 45 else "connected") %}
+<section class="freshness-strip" data-freshness-strip
+         data-generated-at="{{ dashboard_update.generated_at }}"
+         data-generation="{{ dashboard_update.generation }}"
+         data-index-at="{{ freshness.index_at or '' }}"
+         data-server="{{ freshness.server }}"
+         data-freshness-state="{{ freshness_state }}">
+  <span class="freshness-strip__label" data-freshness-label role="status" aria-live="polite">{{ freshness_state }}</span>
+  <span class="card__note" data-freshness-age>{{ freshness.index_age_seconds if freshness.index_age_seconds is not none else "never indexed" }}</span>
+  <button type="button" class="btn" data-dashboard-refresh>Refresh</button>
+  <span class="card__note" data-refresh-status role="status" aria-live="polite"></span>
+</section>
 {% endblock %}
 {% block content %}
 <h1 class="visually-hidden">Bridge project control panel</h1>
 {% if not cards %}
   <p class="empty">No projects indexed yet. Run <code>uv run python -m bridge index</code>.</p>
-{% else %}
-  <ul class="cards">
-    {% for card in cards %}<li data-project-card="{{ card.project_id }}">{% include "_card.html" %}</li>{% endfor %}
-  </ul>
 {% endif %}
+<ul class="cards" data-cards-list>
+  {% for card in cards %}<li data-project-card="{{ card.project_id }}">{% include "_card.html" %}</li>{% endfor %}
+</ul>
+<p class="card__note" data-project-membership-status role="status" aria-live="polite"></p>
 
 {# Live sessions whose cwd matches no project row. The topbar's `running` count
    already includes them, so without this the count and the cards disagree and

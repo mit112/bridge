@@ -87,44 +87,34 @@
     <p class="card__note">No indexed sessions.</p>
   {% endif %}
 
-  {% if card.live %}
-    {# Colour plus a word, never colour alone. `data-live-path` is the node the
-       SSE client patches; it deliberately contains only the status word, so a
-       live tick never has to touch anything structural. #}
-    <p class="live live--{{ card.live.status }}">
-      <span class="live__dot" aria-hidden="true">●</span>
-      <span data-live-path="{{ card.path }}">{{ card.live.status }}</span>
-      <span>· {{ card.live.started_at | ago_epoch }}</span>
-      {# model/effort come from OUR tables: the liveness sensor has neither. #}
-      {% if card.session and card.session.model %}
-        <span>· {{ card.session.model }}{% if card.session.effort %}/{{ card.session.effort }}{% endif %}</span>
-      {% endif %}
-    </p>
-  {% elif card.live_unavailable %}
-    <p class="live live--unknown"><span>live status unavailable</span></p>
-  {% endif %}
+  {# Colour plus a word, never colour alone. These leaves are always present so
+     a live tick can patch an ended or unavailable state without building a
+     subtree and without disturbing an in-progress handoff edit. #}
+  {% set live_status = card.live.status if card.live else ("unknown" if card.live_unavailable else "ended") %}
+  <p class="live live--{{ live_status }}" data-live-parent="{{ card.path }}">
+    <span class="live__dot" aria-hidden="true">●</span>
+    <span data-live-path="{{ card.path }}" data-live-status>{{ live_status }}</span>
+    <span data-live-age>{% if card.live %}· {{ card.live.started_at | ago_epoch }}{% endif %}</span>
+    {# model/effort come from OUR tables: the liveness sensor has neither. #}
+    <span data-live-model>{% if card.session and card.session.model %}· {{ card.session.model }}{% endif %}</span>
+    <span data-live-effort>{% if card.session and card.session.effort %}/{{ card.session.effort }}{% endif %}</span>
+  </p>
 
   <p class="card__git">
-    {% if card.git.status == "ok" %}
-      <span>{{ card.git.branch }}</span>
-      {% if card.git.dirty_count %}<span> · {{ card.git.dirty_count }} dirty</span>{% endif %}
-      {% if card.git.ahead %}<span> · {{ card.git.ahead }} ahead</span>{% endif %}
-      {% if card.is_stale %}
-        <span class="risk" title="Uncommitted work is older than the staleness threshold">⚠ uncommitted for {{ card.git.oldest_uncommitted_at | ago_epoch }}</span>
-      {% endif %}
-      {# `ago_epoch`, not `ago`: `cached_at` is an epoch int, and `ago` takes an
-         ISO-8601 string. Both emit a bare duration, so the word comes from here
-         exactly as at every other call site. #}
-      {% if card.git.cached_at %}
-        <span class="muted" title="The git probe timed out; this is the last state Bridge saw">
-          · as of {{ card.git.cached_at | ago_epoch }} ago
-        </span>
-      {% endif %}
-    {% elif card.git.status == "not_a_repo" %}
-      <span class="card__note">not a git repo</span>
-    {% else %}
-      <span class="card__note">git unavailable</span>
-    {% endif %}
+    <span data-git-branch {% if card.git.status != "ok" %}hidden{% endif %}>{{ card.git.branch if card.git.status == "ok" else "" }}</span>
+    <span data-git-dirty {% if card.git.status != "ok" or not card.git.dirty_count %}hidden{% endif %}> · {{ card.git.dirty_count }} dirty</span>
+    <span data-git-ahead {% if card.git.status != "ok" or not card.git.ahead %}hidden{% endif %}> · {{ card.git.ahead }} ahead</span>
+    <span class="risk" data-git-stale {% if not card.is_stale %}hidden{% endif %}
+          title="Uncommitted work exceeds the staleness threshold">⚠ uncommitted for {{ card.git.oldest_uncommitted_at | ago_epoch }}</span>
+    {# `ago_epoch`, not `ago`: `cached_at` is an epoch int, and `ago` takes an
+       ISO-8601 string. Both emit a bare duration, so the word comes from here
+       exactly as at every other call site. #}
+    <span class="muted" data-git-cache {% if not card.git.cached_at %}hidden{% endif %}
+          title="The git probe timed out; this is the last state Bridge saw">
+      · as of {{ card.git.cached_at | ago_epoch }} ago
+    </span>
+    <span class="card__note" data-git-status="not_a_repo" {% if card.git.status != "not_a_repo" %}hidden{% endif %}>not a git repo</span>
+    <span class="card__note" data-git-status="unavailable" {% if card.git.status != "unavailable" %}hidden{% endif %}>git unavailable</span>
   </p>
 
   {% if card.handoff %}
@@ -216,18 +206,16 @@
   </p>
 
   <p class="card__burn">
-    <span>{{ card.tokens_today | kilo }} today</span>
-    <span>{{ card.tokens_5h | kilo }} last 5h</span>
-    {% if card.spark %}
-      {# aria-hidden: the `23k today / 20k last 5h` text beside it is the
-         accessible representation, and a 7-point line adds no detail a screen
-         reader user would not already have heard. #}
-      <svg class="spark" viewBox="0 0 72 20" width="72" height="20"
-           aria-hidden="true" focusable="false">
-        <polyline points="{{ card.spark | spark_points }}" fill="none"
-                  stroke="currentColor" stroke-width="1.5"
-                  stroke-linejoin="round" stroke-linecap="round"/>
-      </svg>
-    {% endif %}
+    <span data-burn-today>{{ card.tokens_today | kilo }} today</span>
+    <span data-burn-last-5h>{{ card.tokens_5h | kilo }} last 5h</span>
+    {# aria-hidden: the `23k today / 20k last 5h` text beside it is the
+       accessible representation, and a 7-point line adds no detail a screen
+       reader user would not already have heard. #}
+    <svg class="spark" viewBox="0 0 72 20" width="72" height="20"
+         aria-hidden="true" focusable="false">
+      <polyline data-sparkline points="{{ card.spark | spark_points }}" fill="none"
+                stroke="currentColor" stroke-width="1.5"
+                stroke-linejoin="round" stroke-linecap="round"/>
+    </svg>
   </p>
 </article>

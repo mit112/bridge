@@ -17,9 +17,8 @@
        train the eye to ignore it, which is exactly the signal it exists to
        carry. Undefined on pages that do not compute it, which Jinja treats as
        falsy -- so those pages simply omit it rather than erroring. #}
-    {% if diag_alert %}
-      <a class="risk" href="/diagnostics" data-diagnostics-alert>⚠ Diagnostics</a>
-    {% endif %}
+    <a class="risk" href="/diagnostics" data-diagnostics-alert
+       {% if not diag_alert %}hidden{% endif %}>⚠ Diagnostics</a>
     {% block topbar %}{% endblock %}
   </header>
   <main>{% block content %}{% endblock %}</main>
