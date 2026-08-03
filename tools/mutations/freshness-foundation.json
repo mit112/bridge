@@ -1,0 +1,108 @@
+{
+  "mutations": [
+    {
+      "name": "remove the coordinator run lock so explicit and periodic scans overlap",
+      "file": "src/bridge/refresh.py",
+      "old": "        with self._run_lock:\n            attempted_at = now_epoch()",
+      "new": "        attempted_at = now_epoch()",
+      "tests": ["tests/test_refresh.py::test_refresh_runs_do_not_overlap"],
+      "expect_count": 1
+    },
+    {
+      "name": "skip the periodic worker's immediate refresh",
+      "file": "src/bridge/refresh.py",
+      "old": "        self.run_once()\n        while not stop_event.wait(self.interval_s):",
+      "new": "        if False:\n            self.run_once()\n        while not stop_event.wait(self.interval_s):",
+      "tests": ["tests/test_refresh.py::test_periodic_refresh_runs_immediately_and_stops"],
+      "expect_count": 1
+    },
+    {
+      "name": "return only IndexStats from POST refresh instead of the shared snapshot",
+      "file": "src/bridge/api.py",
+      "old": "        return dashboard_builder.full_update(refresh=result)",
+      "new": "        return asdict(result.stats)",
+      "tests": ["tests/test_api.py::test_refresh_returns_full_dashboard_snapshot"],
+      "expect_count": 1
+    },
+    {
+      "name": "send a liveness patch after a successful generation instead of a full snapshot",
+      "file": "src/bridge/api.py",
+      "old": "                elif status.generation != previous_generation:\n                    payload = dashboard_builder.full_update()\n                    yield _frame(\"update\", payload)",
+      "new": "                elif status.generation != previous_generation:\n                    payload = dashboard_builder.live_patch()\n                    yield _frame(\"update\", payload)",
+      "tests": ["tests/test_api.py::test_sse_emits_full_update_after_periodic_generation"],
+      "expect_count": 1
+    },
+    {
+      "name": "drop server card order application so the client cannot preserve actionability order",
+      "file": "src/bridge/static/live.js",
+      "old": "  if (update.card_order) applyCardOrder(update.card_order);",
+      "new": "  if (false) applyCardOrder(update.card_order);",
+      "tests": ["tests/test_static_js.py::test_snapshot_reorders_existing_cards_by_server_order"],
+      "expect_count": 1
+    },
+    {
+      "name": "replace a live leaf by innerHTML and discard the existing card subtree",
+      "file": "src/bridge/static/live.js",
+      "old": "    if (band) band.textContent = state.status;",
+      "new": "    if (band) band.parentNode.innerHTML = state.status;",
+      "tests": ["tests/test_api.py::test_live_js_never_touches_the_prompt_textarea"],
+      "expect_count": 1
+    },
+    {
+      "name": "write a live update into a handoff textarea instead of preserving its user value",
+      "file": "src/bridge/static/live.js",
+      "old": "  setText(band, status);",
+      "new": "  card.textarea.value = status;",
+      "tests": ["tests/test_static_js.py::test_dashboard_patch_preserves_user_edited_textarea_value"],
+      "expect_count": 1
+    },
+    {
+      "name": "remove the POST refresh fetch path so the labeled action cannot update the page",
+      "file": "src/bridge/static/live.js",
+      "old": "  return fetch(\"/api/refresh\", { method: \"POST\" })",
+      "new": "  return Promise.resolve({ ok: false, json: async () => ({}) })",
+      "tests": ["tests/test_static_js.py::test_refresh_button_posts_and_applies_snapshot"],
+      "expect_count": 1
+    },
+    {
+      "name": "reset indexed freshness from every accepted patch frame",
+      "file": "src/bridge/static/live.js",
+      "old": "  const successfulGeneration = update.kind === \"snapshot\"\n    || (Number.isFinite(generation) && lastGeneration != null && generation > lastGeneration);",
+      "new": "  const successfulGeneration = true;",
+      "tests": ["tests/test_static_js.py::test_liveness_patch_does_not_reset_index_freshness"],
+      "expect_count": 1
+    },
+    {
+      "name": "use generated_at as the indexed-data clock instead of freshness.index_at",
+      "file": "src/bridge/static/live.js",
+      "old": "    lastIndexAt = Number(freshness.index_at);",
+      "new": "    lastIndexAt = Number(update.generated_at);",
+      "tests": ["tests/test_static_js.py::test_generated_at_is_not_index_freshness_clock"],
+      "expect_count": 1
+    },
+    {
+      "name": "announce every accepted frame instead of gating connection-state transitions",
+      "file": "src/bridge/static/live.js",
+      "old": "  if (state === lastConnectionState) return;",
+      "new": "  if (false) return;",
+      "tests": ["tests/test_static_js.py::test_connection_states_do_not_announce_heartbeats"],
+      "expect_count": 1
+    },
+    {
+      "name": "turn project membership drift into an alarm instead of a persistent non-alarm status",
+      "file": "src/bridge/static/live.js",
+      "old": "  if (!sameSet) setText(status, \"Project list changed - reopen the panel to update cards.\");",
+      "new": "  if (sameSet) setText(status, \"Project list changed - reopen the panel to update cards.\");",
+      "tests": ["tests/test_static_js.py::test_membership_drift_is_non_alarm_and_identity_safe"],
+      "expect_count": 1
+    },
+    {
+      "name": "collapse server unavailable into the stale project age state",
+      "file": "src/bridge/static/live.js",
+      "old": "  if (server === \"unavailable\" || lastIndexAt == null) return \"unavailable\";",
+      "new": "  if (lastIndexAt == null) return \"unavailable\";",
+      "tests": ["tests/test_static_js.py::test_unavailable_snapshot_is_distinct_from_stale_project"],
+      "expect_count": 1
+    }
+  ]
+}

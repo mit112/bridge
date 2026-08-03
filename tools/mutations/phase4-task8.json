@@ -42,8 +42,8 @@
   {
     "name": "send a delta instead of a snapshot on connect, so a reconnecting client never learns the full picture",
     "file": "src/bridge/api.py",
-    "old": "                if previous is None:\n                    yield _frame(\"snapshot\", payload)",
-    "new": "                if False:\n                    yield _frame(\"snapshot\", payload)",
+    "old": "                if previous is None:\n                    payload = dashboard_builder.full_update()\n                    yield _frame(\"snapshot\", payload)",
+    "new": "                if False:\n                    payload = dashboard_builder.full_update()\n                    yield _frame(\"snapshot\", payload)",
     "tests": [
       "tests/test_api.py::test_events_opens_with_a_full_snapshot_in_sse_frame_format",
       "tests/test_api.py::test_every_reconnect_begins_with_a_snapshot_so_no_replay_is_needed"
@@ -153,7 +153,7 @@
   {
     "name": "reset the reconnect backoff on connect rather than on proof, turning an accept-then-close server into a hot loop",
     "file": "src/bridge/static/live.js",
-    "old": "  return frames >= HEALTHY_FRAMES\n    || (frames >= 1 && Date.now() - openedAt >= HEALTHY_MS);",
+    "old": "  return frames >= HEALTHY_FRAMES || (frames >= 1 && Date.now() - openedAt >= HEALTHY_MS);",
     "new": "  return true;",
     "tests": [
       "tests/test_static_js.py::test_live_js_only_resets_its_backoff_once_a_connection_has_proved_healthy"
@@ -173,7 +173,7 @@
   {
     "name": "leave the live band's visual state stale when its status word changes",
     "file": "src/bridge/static/live.js",
-    "old": "    if (band) setBandState(band, state.status);",
+    "old": "    setBandState(band, state.status);",
     "new": "    if (false) setBandState(band, state.status);",
     "tests": [
       "tests/test_static_js.py::test_live_js_patches_a_band_from_a_snapshot"
@@ -183,7 +183,7 @@
   {
     "name": "leave a removed session styled as active after showing that it ended",
     "file": "src/bridge/static/live.js",
-    "old": "    if (band) setBandState(band, \"ended\");",
+    "old": "    setBandState(band, \"ended\");",
     "new": "    if (false) setBandState(band, \"ended\");",
     "tests": [
       "tests/test_static_js.py::test_live_js_clears_a_band_on_a_tombstone"

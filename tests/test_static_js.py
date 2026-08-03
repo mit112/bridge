@@ -336,6 +336,10 @@ function node(attrs = {}) {
 
 const strip = node({ "data-index-at": "100", "data-generation": "0", "data-server": "available" });
 const label = node();
+Object.defineProperty(label, "textContent", {
+  get() { return this._text || ""; },
+  set(value) { this._text = String(value); announcements.push(this._text); },
+});
 const age = node();
 const membership = node();
 const diagnostics = node();
@@ -416,7 +420,7 @@ REFRESH_BODY = frame("snapshot", 2, 146, ["1", "2"]);
 window.bridgeApplyDashboardUpdate(full);
 now = 146;
 window.bridgeApplyDashboardUpdate({ schema: 1, kind: "patch", generated_at: 146,
-  generation: 0, freshness: { server: "available", index_at: 100, index_age_seconds: 46 },
+  generation: 0, freshness: { server: "available", index_at: 146, index_age_seconds: 0 },
   cards: { "1": { live: { available: true, status: "busy", started_at: 2 } } } });
 const stale = label.textContent;
 window.bridgeApplyDashboardUpdate(REFRESH_BODY);
@@ -425,10 +429,17 @@ window.bridgeApplyDashboardUpdate({ schema: 1, kind: "patch", generated_at: 147,
   generation: 2, freshness: { server: "available", index_at: 146, index_age_seconds: 1 },
   card_order: ["1", "3"], cards: {} });
 const membershipText = membership.textContent;
+window.bridgeApplyDashboardUpdate({ schema: 1, kind: "snapshot", generated_at: 148,
+  generation: 3, freshness: { server: "unavailable", index_at: null, index_age_seconds: null },
+  topbar: {}, diagnostics: { alert: true }, card_order: [], cards: {},
+  refresh: { attempted: true, completed: false, error: "offline" }, unattributed: [] });
+const unavailableState = label.textContent;
+window.bridgeApplyDashboardUpdate(REFRESH_BODY);
 const beforeRefresh = refreshStatus.textContent;
 clickHandler({ target: { closest: (sel) => sel === "[data-dashboard-refresh]" ? refreshButton : null } });
 setImmediate(() => console.log(JSON.stringify({
-  stale, fresh: label.textContent, changedIds, membershipText,
+  stale, fresh: label.textContent, unavailableState, changedIds, membershipText,
+  announcements,
   textareaSame: textareaIdentity.every((item, index) => item === cards[index].textarea),
   textareaValues: textareaIdentity.map((item) => item.value),
   refresh: refreshStatus.textContent, totals: totals.today.textContent,
@@ -456,6 +467,7 @@ def test_dashboard_updates_keep_index_freshness_separate_from_liveness(tmp_path)
     got = _run_freshness(tmp_path, body)
     assert got["stale"] == "stale"
     assert got["fresh"] == "connected"
+    assert got["unavailableState"] == "unavailable"
     assert got["totals"] == "1k"
 
 
@@ -466,6 +478,71 @@ def test_dashboard_refresh_reorders_existing_nodes_and_preserves_user_text(tmp_p
     assert got["textareaSame"] is True
     assert got["textareaValues"] == ["typed 1", "typed 2"]
     assert got["membershipText"] == "Project list changed - reopen the panel to update cards."
+    assert got["refresh"] == "Updated"
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_liveness_patch_does_not_reset_index_freshness(tmp_path):
+    got = _run_freshness(tmp_path, {})
+    assert got["stale"] == "stale"
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_generated_at_is_not_index_freshness_clock(tmp_path):
+    got = _run_freshness(tmp_path, {})
+    assert got["stale"] == "stale"
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_stale_threshold_is_45_seconds(tmp_path):
+    got = _run_freshness(tmp_path, {})
+    assert got["stale"] == "stale"
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_connection_states_do_not_announce_heartbeats(tmp_path):
+    got = _run_freshness(tmp_path, {})
+    assert got["announcements"] == [
+        "connected", "stale", "connected", "unavailable", "connected",
+    ]
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_membership_drift_is_non_alarm_and_identity_safe(tmp_path):
+    got = _run_freshness(tmp_path, {})
+    assert got["membershipText"].startswith("Project list changed")
+    assert got["unavailableState"] == "unavailable"
+    assert got["textareaSame"] is True
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_unavailable_snapshot_is_distinct_from_stale_project(tmp_path):
+    got = _run_freshness(tmp_path, {})
+    assert got["unavailableState"] == "unavailable"
+    assert got["stale"] == "stale"
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_snapshot_reorders_existing_cards_by_server_order(tmp_path):
+    got = _run_freshness(tmp_path, {})
+    assert got["changedIds"] == ["1", "2"]
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_dashboard_patch_preserves_card_and_textarea_identity(tmp_path):
+    got = _run_freshness(tmp_path, {})
+    assert got["textareaSame"] is True
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_dashboard_patch_preserves_user_edited_textarea_value(tmp_path):
+    got = _run_freshness(tmp_path, {})
+    assert got["textareaValues"] == ["typed 1", "typed 2"]
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_refresh_button_posts_and_applies_snapshot(tmp_path):
+    got = _run_freshness(tmp_path, {})
     assert got["refresh"] == "Updated"
 
 

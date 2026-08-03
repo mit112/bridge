@@ -1679,6 +1679,7 @@ def test_live_js_never_touches_the_prompt_textarea():
     source = (Path(__file__).resolve().parent.parent / "src" / "bridge"
               / "static" / "live.js").read_text()
     assert "data-prompt-handoff" not in source
+    assert ".value" not in source
     assert ".innerHTML" not in source        # no subtree replacement
     assert "location.reload" not in source
     # No replay handling: `lastEventId` is the EventSource property a
