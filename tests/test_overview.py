@@ -232,6 +232,40 @@ def test_up_next_is_chronological_and_truncated(tmp_path):
         row.scheduled_for for row in model.up_next
     )
     assert model.up_next[0].scheduled_for == now + 100
+    # `<time>`'s pre-JS/no-JS fallback: a readable UTC string plus an ISO
+    # `datetime` attribute, not the bare epoch int a screen reader or a
+    # JS-disabled load would otherwise see.
+    assert model.up_next[0].scheduled_for_utc
+    assert "UTC" in model.up_next[0].scheduled_for_utc
+    assert model.up_next[0].scheduled_for_iso is not None
+
+    store.close()
+
+
+def test_last_session_age_floors_at_zero_under_clock_skew(tmp_path):
+    """A poll/write race or clock skew can put a session's `ended_at` at or
+    after the `now` Overview is built with; `last_session_age_seconds` must
+    floor at 0 rather than go negative (which would render as "-2m ago")."""
+    cfg = _cfg(tmp_path)
+    store = Store(cfg.db_path)
+    now = 10_000
+
+    project_id = store.upsert_project("/p/skewed", "skewed-project")
+    store.upsert_session(SessionRecord(
+        session_id="s-skewed", transcript_path="/t/skewed", ended_at=_ended(5),
+    ), project_id)
+
+    model = build_overview(
+        store, cfg, now=now,
+        probe_fn=lambda path: GitState(status="ok", branch="main"),
+        agents_fn=lambda: AgentsState(status="ok", sessions=[]),
+    )
+
+    # `_ended(5)` is five minutes before *real* wall-clock time, whose epoch
+    # is far larger than this test's artificial `now=10_000` -- exactly the
+    # "ended >= now" skew this guards against.
+    assert len(model.recent) == 1
+    assert model.recent[0].last_session_age_seconds == 0
 
     store.close()
 

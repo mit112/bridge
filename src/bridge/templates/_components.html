@@ -15,7 +15,7 @@
    `ProjectSummary.last_session_age_seconds` is already the elapsed duration,
    so reusing either filter here would double-subtract `now`. Kept as a
    private macro rather than a new registered filter. #}
-{% macro _duration_seconds(secs) %}{% if secs < 3600 %}{{ (secs // 60) | int }}m{% elif secs < 86400 %}{{ (secs // 3600) | int }}h{% else %}{{ (secs // 86400) | int }}d{% endif %}{% endmacro %}
+{% macro _duration_seconds(secs) %}{% set secs = [secs, 0] | max %}{% if secs < 3600 %}{{ (secs // 60) | int }}m{% elif secs < 86400 %}{{ (secs // 3600) | int }}h{% else %}{{ (secs // 86400) | int }}d{% endif %}{% endmacro %}
 
 {% macro project_summary_row(summary) %}
 <div class="project-row">
@@ -50,10 +50,15 @@
    controls below. `data-scheduled-for` is the exact hook name
    `schedule.js`'s `paintScheduledTimes` already looks for on the dashboard's
    own scheduled rows -- keep it unchanged so that wiring keeps working once
-   this macro replaces the hand-written markup there. #}
+   this macro replaces the hand-written markup there. The visible text and
+   `datetime` attribute mirror dashboard.html's own scheduled `<time>`: a
+   readable UTC string plus a machine-readable `datetime`, both computed once
+   server-side by `bridge.api._schedule_time_fields` and carried on
+   `ScheduleRow` -- never the bare epoch int -- so a screen reader or a
+   JS-disabled load never sees "1735700000". #}
 {% macro schedule_row(row, interactive=False) %}
 <li class="schedule-row" data-schedule-row="{{ row.id }}">
-  <time data-scheduled-for="{{ row.scheduled_for }}">{{ row.scheduled_for }}</time>
+  <time{% if row.scheduled_for_iso %} datetime="{{ row.scheduled_for_iso }}"{% endif %} data-scheduled-for="{{ row.scheduled_for }}">{{ row.scheduled_for_utc }}</time>
   <span class="schedule-row__project">{{ row.project_name }}</span>
   {{ status_pill(row.status) }}
   {% if row.error %}<span class="schedule-row__error card__note">{{ row.error }}</span>{% endif %}

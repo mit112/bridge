@@ -17,6 +17,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from bridge import agents
+from bridge.api import _schedule_time_fields
 from bridge.cards import build_cards
 from bridge.config import Config
 from bridge.dashboard import DashboardBuilder
@@ -71,7 +72,16 @@ class ProjectSummary:
 
 @dataclass(frozen=True)
 class ScheduleRow:
-    """One row of the Overview's "up next" list."""
+    """One row of the Overview's "up next" list.
+
+    `scheduled_for` stays the raw epoch int (the `data-scheduled-for` hook a
+    later JS repaints in local time), but a `<time>` needs a readable
+    pre-JS/no-JS fallback too -- `scheduled_for_utc`/`scheduled_for_iso` carry
+    exactly what `bridge.api._schedule_time_fields` already computes for
+    dashboard.html's own scheduled rows, so a Jinja macro rendering this row
+    never has to reformat an epoch itself. Defaulted so existing callers/tests
+    constructing a `ScheduleRow` without them keep working.
+    """
 
     id: str
     project_id: int | None
@@ -80,6 +90,8 @@ class ScheduleRow:
     scheduled_for: int
     status: str
     error: str | None = None
+    scheduled_for_utc: str = ""
+    scheduled_for_iso: str | None = None
 
 
 @dataclass(frozen=True)
@@ -284,7 +296,11 @@ def _project_summary(card: Card, now: int) -> ProjectSummary:
         branch=card.git.branch,
         dirty_count=card.git.dirty_count,
         last_session_title=card.session.title if card.session else None,
-        last_session_age_seconds=(now - ended) if ended is not None else None,
+        # Floored the same way bridge.api._ago/_ago_epoch floor their own
+        # `now - epoch`: a poll/write race or clock skew can put `ended` at or
+        # after `now`, and a negative age would render as "-2m ago" rather
+        # than "0m ago".
+        last_session_age_seconds=max(0, now - ended) if ended is not None else None,
         tokens_today=card.tokens_today,
         tokens_5h=card.tokens_5h,
         pinned=card.pinned,
@@ -314,6 +330,7 @@ def _schedule_row(row, by_path: dict[str, Card], store: Store) -> ScheduleRow:
         project = store.project_by_path(row["project_path"])
         project_id = project["id"] if project is not None else None
         project_name = project["name"] if project is not None else None
+    iso, utc = _schedule_time_fields(row["scheduled_for"])
     return ScheduleRow(
         id=row["id"],
         project_id=project_id,
@@ -322,4 +339,6 @@ def _schedule_row(row, by_path: dict[str, Card], store: Store) -> ScheduleRow:
         scheduled_for=row["scheduled_for"],
         status=row["status"],
         error=row["error"],
+        scheduled_for_utc=utc,
+        scheduled_for_iso=iso,
     )
