@@ -27,7 +27,7 @@
     ]
   },
   {
-    "name": "weaken the work-soft surface so work-blue foreground drops below AA",
+    "name": "weaken the work-soft surface so work-accent foreground drops below AA",
     "file": "src/bridge/static/app.css",
     "old": "  --p-work-soft: #f0e0d5;",
     "new": "  --p-work-soft: #a23c17;",

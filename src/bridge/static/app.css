@@ -20,16 +20,17 @@
   --p-review-soft: #f0e6cf;
   --p-risk: #99301a;
   --p-risk-soft: #f2ddd2;
-  /* Form-control boundaries only, held to WCAG 1.4.11's 3:1. Measured 4.66:1
-     against --p-surface and 4.29:1 against --p-canvas. */
+  /* Form-control boundaries only, held to WCAG 1.4.11's 3:1. Measured 3.98:1
+     against --p-surface and 3.68:1 against --p-canvas. */
   --p-field-line: #867a64;
   /* The sidebar rail (--p-nav) is dark in BOTH themes, so its own text/accent/
      focus primitives are theme-invariant -- the same values are repeated in
      the dark @media block and both [data-theme] blocks below rather than
      flipping with --p-text/--p-work/--focus, which would go dark-on-dark
-     under the light theme. Measured against --p-nav: text 14.68:1 light /
-     15.93:1 dark, text-2 7.96:1 / 8.63:1, accent 7.11:1 / 7.72:1, focus
-     9.92:1 / 10.76:1. */
+     under the light theme. --p-nav itself is now the same hex in all four
+     blocks too, so there is a single ratio per pair, identical in both
+     themes. Measured against --p-nav: text 15.15:1, text-2 7.64:1,
+     accent 7.63:1, focus 9.64:1. */
   --p-nav-text: #f7efe0;
   --p-nav-text-2: #b7ab95;
   --p-nav-accent: #d8a07f;
@@ -144,7 +145,7 @@
     /* Desaturated and lightened for the dark surface, not inverted. */
     --p-risk-soft: #402820;
     /* Lightened rather than inverted, and desaturated for the dark surface.
-       Measured 3.72:1 against --p-surface. */
+       Measured 3.32:1 against --p-surface. */
     --p-field-line: #7a6f5e;
     /* Theme-invariant nav primitives, same values as the light block --
        the rail is dark regardless of theme. */
