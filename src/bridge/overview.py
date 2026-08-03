@@ -91,6 +91,11 @@ class ScheduleRow:
     error: str | None = None
     scheduled_for_utc: str = ""
     scheduled_for_iso: str | None = None
+    # Added for the interactive Schedule page (bridge.schedule_view); the
+    # Overview preview never needs either, so `build_overview`'s own
+    # `_schedule_row` leaves both at their defaults.
+    mode: str = ""
+    retryable: bool = False
 
 
 @dataclass(frozen=True)
