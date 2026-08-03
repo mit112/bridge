@@ -253,6 +253,22 @@ def test_settings_route_never_reads_the_real_claude_settings_json(tmp_path, monk
     assert not touched, "GET /settings read the developer's real ~/.claude/settings.json"
 
 
+def test_settings_route_never_renders_the_live_launch_permission_hook(tmp_path):
+    """The Settings page's own permission-mode select is `data-settings-launch-
+    mode` -- a different hook than the live launch band's `data-launch-perm`
+    (`_launch.html`). If a future template edit ever reused that hook name
+    here, `settings.js`'s `bindSelect("[data-settings-launch-mode]", ...)`
+    would silently start writing into the LIVE control instead of this page's
+    own stand-in, and task 5.3's node-harness proof would no longer be
+    testing what actually ships."""
+    client, _ = _route_client(tmp_path)
+
+    resp = client.get("/settings")
+
+    assert "data-launch-perm" not in resp.text
+    assert "data-settings-launch-mode" in resp.text
+
+
 def test_settings_route_reflects_hook_status_from_the_guarded_default_path(
     tmp_path, guarded_claude_settings_path,
 ):

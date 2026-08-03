@@ -2148,3 +2148,136 @@ def test_settings_js_never_queries_the_live_launch_permission_control(tmp_path):
     never be able to arm the live launch band's permission control."""
     got = _run_settings_harness(tmp_path, {"bridge.launch.mode": "bypassPermissions"})
     assert not any("data-launch" in sel for sel in got["queried"])
+
+
+# --- Task 5.3: permission mode is never persisted or pre-armed -------------
+#
+# The test above proves settings.js never QUERIES a `data-launch-*` selector
+# in isolation. This harness goes one step further: it runs settings.js AND
+# launch.js in the SAME process against the SAME seeded localStorage -- a
+# HYPOTHETICAL dangerous permission value alongside safe model/effort
+# defaults -- and proves the storage path is real (it reaches the Settings
+# page's own model/effort/mode selects) while the live launch band's
+# permission control, and the request `bridgeLaunchBody` builds from it, are
+# completely unaffected. Making the storage path demonstrably real on the
+# SAME seeded store is what makes the exclusion meaningful, rather than
+# "nothing here reads storage at all".
+PERMISSION_NEVER_PERSISTED_HARNESS = """
+globalThis.window = globalThis;
+
+globalThis.matchMedia = () => ({ matches: false, addEventListener() {} });
+
+// A HYPOTHETICAL dangerous permission value alongside safe launch defaults
+// for model + effort -- exactly the shape Task 5.3's brief calls for.
+const store = {
+  "bridge.launch.mode": "bypassPermissions",
+  "bridge.launch.model": "claude-opus-4-8",
+  "bridge.launch.effort": "xhigh",
+};
+globalThis.localStorage = {
+  getItem(key) { return Object.prototype.hasOwnProperty.call(store, key) ? store[key] : null; },
+  setItem(key, value) { store[key] = value; },
+  removeItem(key) { delete store[key]; },
+};
+
+const documentElement = {
+  attrs: {},
+  setAttribute(name, value) { this.attrs[name] = value; },
+  removeAttribute(name) { delete this.attrs[name]; },
+  getAttribute(name) { return this.attrs[name] ?? null; },
+};
+
+function makeControl(initialValue) {
+  return { value: initialValue, addEventListener() {} };
+}
+
+// The Settings page's OWN "Safe launch defaults" selects -- a different
+// hook (`data-settings-launch-*`) than the live launch band's.
+const settingsModel = makeControl("opus");
+const settingsEffort = makeControl("low");
+const settingsMode = makeControl("");
+
+// The LIVE launch band's controls, stubbed at exactly what `_launch.html`
+// always renders: the permission select's selected option is the no-flag
+// one unconditionally (`_launch.html`'s perm loop selects `loop.first`,
+// never keyed off any suggestion or stored value), regardless of what is
+// sitting in storage.
+const launchModel = { value: "claude-opus-4-8" };
+const launchEffort = { value: "xhigh" };
+const launchPerm = { value: "" };
+const launchBand = {
+  getAttribute(name) { return name === "data-launch-path" ? "/Users/mitsheth/dev/demo" : null; },
+};
+
+const selectors = {
+  "[data-settings-launch-model]": settingsModel,
+  "[data-settings-launch-effort]": settingsEffort,
+  "[data-settings-launch-mode]": settingsMode,
+  '[data-launch-model="launch-1"]': launchModel,
+  '[data-launch-effort="launch-1"]': launchEffort,
+  '[data-launch-perm="launch-1"]': launchPerm,
+  '[data-launch="launch-1"]': launchBand,
+};
+
+globalThis.document = {
+  documentElement,
+  addEventListener() {},
+  getElementById: () => null,
+  querySelector(sel) { return selectors[sel] ?? null; },
+  createRange: () => ({}),
+};
+globalThis.navigator = { clipboard: { writeText: async () => {} } };
+
+const fs = require("fs");
+eval(fs.readFileSync(process.argv[2], "utf8"));  // settings.js
+eval(fs.readFileSync(process.argv[3], "utf8"));  // launch.js
+
+const body = window.bridgeLaunchBody("launch-1", "/Users/mitsheth/dev/demo");
+
+console.log(JSON.stringify({
+  settingsModelValue: settingsModel.value,
+  settingsEffortValue: settingsEffort.value,
+  settingsModeValue: settingsMode.value,
+  launchPermValue: launchPerm.value,
+  permissionModeSent: body.permission_mode,
+}));
+"""
+
+
+def _run_permission_never_persisted_harness(tmp_path) -> dict:
+    harness = tmp_path / "permission_never_persisted_harness.js"
+    harness.write_text(PERMISSION_NEVER_PERSISTED_HARNESS)
+    proc = subprocess.run(
+        [_node(), str(harness), str(SETTINGS_JS), str(LAUNCH_JS)],
+        capture_output=True, text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout)
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_stored_defaults_reach_settings_but_never_arm_the_live_permission_control(tmp_path):
+    """Regression proof for Task 5.3: seeds localStorage with a HYPOTHETICAL
+    dangerous `bridge.launch.mode` value alongside safe model/effort defaults,
+    then runs settings.js and launch.js against the same document. The
+    storage path is real -- it reaches the Settings page's own model/effort/
+    mode selects, which is what makes the exclusion below meaningful rather
+    than "nothing reads storage at all" -- but `bridgeLaunchBody` still sends
+    the no-flag permission mode, and the live launch band's permission
+    select's selected option is still the no-flag one."""
+    got = _run_permission_never_persisted_harness(tmp_path)
+
+    # The storage path is real: the SAME stored defaults land in the
+    # Settings page's own selects, including the dangerous mode value.
+    assert got["settingsModelValue"] == "claude-opus-4-8"
+    assert got["settingsEffortValue"] == "xhigh"
+    assert got["settingsModeValue"] == "bypassPermissions"
+
+    # But the live launch band's permission control is never pre-armed by it.
+    assert got["launchPermValue"] == "", (
+        "a stored permission mode leaked into the live launch band's select"
+    )
+    assert got["permissionModeSent"] == "", (
+        "bridgeLaunchBody sent a permission mode that came from storage "
+        "instead of the no-flag default the launch band always renders"
+    )
