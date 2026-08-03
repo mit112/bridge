@@ -39,15 +39,18 @@ class WorkspaceModel:
     # The queued handoff, or None. Reused off `card.handoff` rather than a
     # second `store.queued_handoff` call.
     handoff: dict | None
-    # The git panel's cache-with-`cached_at` view (mirrors the pre-redesign
-    # `detail` route), distinct from `card.git` which never carries
-    # `cached_at` set from a live probe.
+    # The git panel's cache-with-`cached_at` view, read explicitly via
+    # `store.get_git_cache` to mirror the pre-redesign `detail` route's "as of
+    # ... ago" rendering. In this module's call configuration `card.git`
+    # happens to carry the same cached value (both ultimately read the same
+    # cache row) -- this field exists so the git panel has its own named,
+    # obviously-cache-sourced read rather than reaching into the card for it.
     git: GitState | None
     tab: str
     sessions: list[sqlite3.Row]
     handoffs: list[sqlite3.Row]
     launches: list[sqlite3.Row]
-    session_metas: dict
+    session_metas: dict[str, sessionmeta.SessionMeta]
 
 
 def _normalize_tab(tab: str | None) -> str:
@@ -69,10 +72,10 @@ def build_workspace(
     `probe_fn` defaults to a cache-reading stand-in (`GitState(status=
     "unavailable")`), the same trick `DashboardBuilder.live_patch` uses, so a
     page view never spawns a live git probe for every project -- `build_cards`
-    falls back to each project's git cache instead. `agents_fn` follows
-    `live_state` when given (mirroring `DashboardBuilder.full_update`): a
-    caller that already polled liveness once passes it straight through
-    instead of paying for a second probe.
+    falls back to each project's git cache instead. `live_state`, when given,
+    takes precedence over `agents_fn` (mirroring `DashboardBuilder`, where an
+    injected `live_state` always wins): a caller that already polled liveness
+    once passes it straight through instead of paying for a second probe.
     """
     row = store.get_project(project_id)
     if row is None:
@@ -80,11 +83,16 @@ def build_workspace(
 
     tab = _normalize_tab(tab)
 
+    if live_state is not None:
+        agents_fn = lambda: live_state  # noqa: E731 - trivial, injected closure
+    # else: use the caller's `agents_fn` verbatim (None -> `build_cards`'
+    # own default, `agents.probe`).
+
     cards = build_cards(
         store,
         cfg,
         probe_fn=(probe_fn or (lambda _p: GitState(status="unavailable"))),
-        agents_fn=(agents_fn or (lambda: live_state) if live_state is not None else agents_fn),
+        agents_fn=agents_fn,
         debouncer=None,
         hook_state=None,
     )

@@ -114,12 +114,17 @@ def test_missing_tab_normalizes_to_current(tmp_path):
     store.close()
 
 
-def test_git_comes_from_the_cache_not_a_fresh_probe(tmp_path):
-    """No `probe_fn` is injected here, so if `build_workspace` ever spawned a
-    live probe (rather than relying on `build_cards`' cache fallback and this
-    module's own `store.get_git_cache` read) it would hit the real, unpatched
-    `gitprobe.probe` against a path that does not exist and fail outright
-    rather than quietly returning the cached state."""
+def test_workspace_never_live_probes_git(tmp_path, monkeypatch):
+    """No `probe_fn` is injected here. `build_workspace` must still never let
+    `build_cards` fall through to a LIVE git probe -- it always forces the
+    cache-reading `probe_fn` stand-in itself. Proven with a spy on the actual
+    name `build_cards` resolves at call time (`bridge.cards.gitprobe.probe`,
+    since `build_cards` does `if probe_fn is None: probe_fn = gitprobe.probe`)
+    rather than by an inference from whether the call happens to raise: a
+    plain non-existent path does NOT make `gitprobe.probe` raise (it
+    short-circuits to `GitState(status="unavailable")`), so a test that only
+    checked for an exception would pass whether or not the override was ever
+    actually wired in."""
     cfg = _cfg(tmp_path)
     store = Store(cfg.db_path)
     pid = store.upsert_project("/p/does-not-exist-on-disk", "cached-git")
@@ -130,11 +135,19 @@ def test_git_comes_from_the_cache_not_a_fresh_probe(tmp_path):
         probed_at=500,
     )
 
+    calls = []
+    import bridge.cards
+    monkeypatch.setattr(
+        bridge.cards.gitprobe, "probe",
+        lambda path: calls.append(path) or GitState(status="unavailable"),
+    )
+
     model = build_workspace(
         store, cfg, pid, "current",
         agents_fn=lambda: AgentsState(status="ok", sessions=[]),
     )
 
+    assert calls == []  # no live probe fired
     assert model is not None
     assert model.git is not None
     assert model.git.cached_at == 500
