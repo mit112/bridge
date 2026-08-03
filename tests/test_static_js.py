@@ -171,6 +171,117 @@ def test_launch_js_sends_the_empty_default_rather_than_omitting_it(tmp_path):
     assert body["permission_mode"] == ""
 
 
+# --- Task 3.3 fix round: the "Dismiss handoff" click handler -----------------
+#
+# `launch.js` registers a SECOND delegated "click" listener for
+# `[data-handoff-dismiss]` (Task 3.3). This harness mirrors `LAUNCH_HARNESS`'s
+# shape -- a stub DOM keyed by selector, a captured `fetch` call, the real
+# file evaluated under `node` -- but drives that second listener instead of
+# the launch-button one, and inspects the DOM nodes the handler is supposed to
+# patch directly (never `innerHTML`, never a reload).
+DISMISS_HARNESS = """
+globalThis.window = globalThis;
+let clickHandlers = [];
+const section = { hidden: false };
+const launchButton = { textContent: "Continue in Terminal" };
+const band = {
+  attrs: { "data-launch-handoff": "h1", "data-launch-prompt": "handoff-h1" },
+  getAttribute(name) { return Object.prototype.hasOwnProperty.call(this.attrs, name) ? this.attrs[name] : null; },
+  removeAttribute(name) { delete this.attrs[name]; },
+  querySelector(sel) { return sel === "[data-launch-button]" ? launchButton : null; },
+};
+const empty = { hidden: true };
+const status = { textContent: "" };
+const controls = {
+  '[data-handoff-section="h1"]': section,
+  '[data-launch-handoff="h1"]': band,
+  "[data-handoff-empty]": empty,
+  '[data-handoff-dismiss-status="h1"]': status,
+};
+globalThis.document = {
+  addEventListener(type, fn) { if (type === "click") clickHandlers.push(fn); },
+  querySelector: (sel) => controls[sel] ?? null,
+};
+// A reload or a `location.href` assignment would be the "no reload" contract
+// broken -- neither is ever referenced by the handler, but stubbing both as
+// spies is what lets the test say so affirmatively rather than by omission.
+let reloadCalled = false;
+let hrefAssigned = false;
+globalThis.location = {
+  reload() { reloadCalled = true; },
+  get href() { return "http://127.0.0.1:8787/project/1?tab=current"; },
+  set href(_v) { hrefAssigned = true; },
+};
+const fetchCalls = [];
+globalThis.fetch = async (url, init) => {
+  fetchCalls.push({ url, method: init.method, body: init.body });
+  return { ok: true, status: 200, json: async () => ({}) };
+};
+const fs = require("fs");
+eval(fs.readFileSync(process.argv[2], "utf8"));
+
+const button = {
+  getAttribute: () => "h1",
+  disabled: false,
+  closest: (sel) => (sel === "[data-handoff-dismiss]" ? button : null),
+};
+const event = { target: button };
+Promise.all(clickHandlers.map((fn) => fn(event))).then(() => {
+  console.log(JSON.stringify({
+    fetchCalls,
+    sectionHidden: section.hidden,
+    emptyHidden: empty.hidden,
+    bandStillHasHandoff: Object.prototype.hasOwnProperty.call(band.attrs, "data-launch-handoff"),
+    launchButtonText: launchButton.textContent,
+    statusText: status.textContent,
+    reloadCalled,
+    hrefAssigned,
+  }));
+});
+"""
+
+
+def _run_dismiss_harness(tmp_path) -> dict:
+    harness = tmp_path / "dismiss_harness.js"
+    harness.write_text(DISMISS_HARNESS)
+    proc = subprocess.run(
+        [_node(), str(harness), str(LAUNCH_JS)], capture_output=True, text=True
+    )
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout)
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_dismiss_handoff_patches_the_existing_endpoint_with_no_new_write_path(
+    tmp_path,
+):
+    result = _run_dismiss_harness(tmp_path)
+    assert len(result["fetchCalls"]) == 1
+    call = result["fetchCalls"][0]
+    assert call["url"] == "/api/handoff/h1"
+    assert call["method"] == "PATCH"
+    assert json.loads(call["body"]) == {"status": "dismissed"}
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_dismiss_handoff_updates_the_dom_in_place_on_success(tmp_path):
+    result = _run_dismiss_harness(tmp_path)
+    # The handoff section hides and the empty state reveals -- both by
+    # flipping `hidden` on already-rendered nodes, never by rebuilding either
+    # one's markup.
+    assert result["sectionHidden"] is True
+    assert result["emptyHidden"] is False
+    # The launch band that was driving the now-dismissed handoff is demoted:
+    # the attribute naming it is gone, and its primary button falls back to
+    # the empty-state label.
+    assert result["bandStillHasHandoff"] is False
+    assert result["launchButtonText"] == "Start session"
+    # A role=status announcement, not a reload.
+    assert "Dismissed" in result["statusText"]
+    assert result["reloadCalled"] is False
+    assert result["hrefAssigned"] is False
+
+
 # --- Phase 4 Task 8: live.js behaviour ---------------------------------------
 
 LIVE_JS = Path(__file__).resolve().parent.parent / "src" / "bridge" / "static" / "live.js"

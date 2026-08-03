@@ -541,6 +541,49 @@ def test_handoff_empty_state_is_hidden_when_a_handoff_is_queued(tmp_path):
     store.close()
 
 
+def test_change_options_disclosure_wraps_the_launch_selects(tmp_path):
+    """The advanced launch options (model/effort/permission) live behind the
+    ONE labeled "Change options" disclosure when a handoff is queued -- not
+    beside it, and not as a second, separately-toggled set of controls."""
+    c, store, pid = _client_with_handoff(tmp_path)
+    html = c.get(f"/project/{pid}?tab=current").text
+    lid = f"launch-{pid}"
+
+    assert 'class="launch__options"' in html
+    start = html.index('class="launch__options"')
+    end = html.index("</details>", start)
+    disclosure = html[start:end]
+
+    assert "Change options" in disclosure, "the disclosure's own label"
+    assert f'data-launch-model="{lid}"' in disclosure
+    assert f'data-launch-effort="{lid}"' in disclosure
+    assert f'data-launch-perm="{lid}"' in disclosure
+    store.close()
+
+
+def test_edit_prompt_reveals_the_editable_handoff_textarea_behind_a_preview(tmp_path):
+    """A short preview of the saved prompt is always visible; the full,
+    editable textarea -- same `data-prompt-handoff` hook, same text -- sits
+    behind the "Edit prompt" toggle rather than being dropped."""
+    c, store, pid = _client_with_handoff(tmp_path)
+    html = c.get(f"/project/{pid}?tab=current").text
+
+    assert 'class="handoff__preview"' in html
+    preview_start = html.index('class="handoff__preview"')
+    preview = html[preview_start:html.index("</p>", preview_start)]
+    assert "keep going" in preview, "the preview shows a slice of the saved prompt"
+
+    assert 'class="handoff__edit"' in html
+    edit_start = html.index('class="handoff__edit"')
+    edit_block = html[edit_start:html.index("</details>", edit_start)]
+    assert "Edit prompt" in edit_block, "the disclosure's own label"
+    assert 'data-prompt-handoff="h1"' in edit_block, (
+        "the editable textarea is INSIDE the disclosure, not dropped"
+    )
+    assert "keep going" in edit_block, "the textarea carries the full saved prompt"
+    store.close()
+
+
 # --- Task 3.4: Sessions / Handoffs / Launches history tabs -------------------
 
 
