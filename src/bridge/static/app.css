@@ -323,6 +323,18 @@ a { color: var(--accent); text-underline-offset: .16em; }
   outline-color: var(--p-nav-focus);
 }
 
+/* Task 5.4: raises the shared --control-min floor to 44px (WCAG touch-target
+   guidance) at every width where the sidebar is behind the Menu disclosure
+   instead of a persistent rail. Every control that sizes off --control-min --
+   .menu-toggle, .btn/.btn--primary/.btn--icon, .launch__select, the schedule
+   form's inputs/selects, .scheduled__edit input, .projects-search input --
+   clears 44px here in one place rather than needing its own override.
+   Density (:root[data-density="compact"]) only touches spacing tokens, never
+   --control-min, so this floor holds under compact density too. */
+@media (max-width: 1023px) {
+  :root { --control-min: 2.75rem; }
+}
+
 .page-head {
   display: flex;
   align-items: flex-start;
@@ -993,7 +1005,11 @@ main { width: min(100%, 68rem); margin-inline: auto; padding: var(--space-6); }
   padding: var(--space-2) 0; border-bottom: 1px solid var(--row-border);
 }
 
-@media (max-width: 720px) {
+/* Single-column phone layer. Was max-width: 720px; widened to 767px so the
+   boundary lands on the 768px checkpoint itself rather than just short of
+   it (768px now belongs to the tablet layer below instead of falling
+   through to desktop spacing). */
+@media (max-width: 767px) {
   .page-head { position: static; padding: var(--space-3) var(--space-4); }
   .totals { gap: var(--space-1) var(--space-4); }
   main { padding: var(--space-4); }
@@ -1008,7 +1024,20 @@ main { width: min(100%, 68rem); margin-inline: auto; padding: var(--space-6); }
   .projects-list__item { flex-direction: column; align-items: stretch; }
 }
 
+/* Tablet layer (Task 5.4): closes the 768-1023px dead zone flagged by recon --
+   the sidebar is already behind the Menu disclosure there (see the 1023px
+   buckets above) but nothing tuned content spacing down from the desktop
+   defaults. Keeps the sticky page-head off (matching the phone layer, and
+   keeping a focused control from landing under fixed chrome at 200% zoom)
+   and steps main's padding down partway between the phone and desktop
+   values, without collapsing to the phone layer's single-column rules. */
+@media (min-width: 768px) and (max-width: 1023px) {
+  .page-head { position: static; }
+  main { padding: var(--space-5); }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto; }
   .skip-link { transition: none; }
+  .btn { transition: none; }
 }

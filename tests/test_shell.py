@@ -78,7 +78,9 @@ def test_every_shell_page_has_exactly_one_h1_and_the_shared_landmarks(tmp_path):
     pid = store.upsert_project("/Users/mitsheth/dev/demo", "demo")
     store.close()
     client = TestClient(create_app(Store(cfg.db_path), cfg))
-    for path in ("/", "/diagnostics", "/projects", f"/project/{pid}", "/schedule"):
+    for path in (
+        "/", "/diagnostics", "/projects", f"/project/{pid}", "/schedule", "/settings",
+    ):
         html = client.get(path).text
         assert len(re.findall(r"<h1\b", html)) == 1, path
         assert '<nav aria-label="Primary"' in html, path
@@ -99,3 +101,53 @@ def test_stylesheet_defines_interaction_states():
     ):
         assert sel in css
     assert "prefers-reduced-motion" in css
+
+
+def _app_css():
+    return (
+        Path(__file__).resolve().parent.parent
+        / "src" / "bridge" / "static" / "app.css"
+    ).read_text()
+
+
+def test_responsive_layers_cover_every_breakpoint_with_no_dead_zone():
+    """Task 5.4: large sidebar at >=1024px, Menu disclosure below it, a
+    single-column phone layer below 768px, and a tablet layer bridging
+    768-1023px so nothing in that range is stuck with desktop spacing behind
+    a collapsed sidebar (the dead zone the recon flagged)."""
+    css = _app_css()
+    assert "@media (min-width: 1024px)" in css
+    assert "@media (max-width: 1023px)" in css
+    assert "@media (max-width: 767px)" in css
+    assert "@media (min-width: 768px) and (max-width: 1023px)" in css
+    # main stays bounded-width regardless of viewport.
+    assert "width: min(100%, 68rem)" in css
+
+
+def test_narrow_touch_targets_reach_44px():
+    """Task 5.4 (folding in the 5.2 review's --control-min/.launch__select
+    gap): every control sized off the shared --control-min token -- the
+    menu-toggle, .btn, .launch__select, form inputs/selects -- must clear the
+    44px touch-target floor at narrow widths, not just .sidebar__link."""
+    css = _app_css()
+    assert "min-height: 44px" in css or "2.75rem" in css
+    narrow = re.search(
+        r"@media \(max-width: 1023px\)\s*\{\s*:root\s*\{[^}]*--control-min:\s*2\.75rem",
+        css,
+    )
+    assert narrow, "expected --control-min to be raised to 2.75rem (44px) under max-width: 1023px"
+
+
+def test_reduced_motion_disables_btn_transitions():
+    """Task 5.4: prefers-reduced-motion only covered scroll-behavior and the
+    skip-link before this; extend it to the .btn transitions too."""
+    css = _app_css()
+    match = re.search(
+        r"@media \(prefers-reduced-motion: reduce\)\s*\{(.*?)\n\}",
+        css,
+        re.DOTALL,
+    )
+    assert match, "expected a prefers-reduced-motion block"
+    block = match.group(1)
+    assert ".btn" in block
+    assert "transition: none" in block
