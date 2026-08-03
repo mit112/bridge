@@ -32,6 +32,13 @@ PAIRS = [
     ("--p-work", "--p-surface", 3.0, "focus ring against a surface"),
     ("--p-field-line", "--p-surface", 3.0, "form control border on a surface"),
     ("--p-field-line", "--p-canvas", 3.0, "form control border on canvas"),
+    # The sidebar rail (--p-nav) is dark in BOTH themes, so these pairs are
+    # expected to read identically under "light" and "dark" -- that sameness
+    # is the point, not a coincidence to fix.
+    ("--p-nav-text", "--p-nav", 4.5, "sidebar primary text"),
+    ("--p-nav-text-2", "--p-nav", 4.5, "sidebar secondary text"),
+    ("--p-nav-accent", "--p-nav", 3.0, "sidebar accent / active indicator"),
+    ("--p-nav-focus", "--p-nav", 3.0, "sidebar focus ring"),
 ]
 
 

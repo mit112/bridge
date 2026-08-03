@@ -19,6 +19,17 @@
   /* Form-control boundaries only, held to WCAG 1.4.11's 3:1. Measured 4.66:1
      against --p-surface and 4.29:1 against --p-canvas. */
   --p-field-line: #6b767c;
+  /* The sidebar rail (--p-nav) is dark in BOTH themes, so its own text/accent/
+     focus primitives are theme-invariant -- the same values are repeated in
+     the dark @media block and both [data-theme] blocks below rather than
+     flipping with --p-text/--p-work/--focus, which would go dark-on-dark
+     under the light theme. Measured against --p-nav: text 14.68:1 light /
+     15.93:1 dark, text-2 7.96:1 / 8.63:1, accent 7.11:1 / 7.72:1, focus
+     9.92:1 / 10.76:1. */
+  --p-nav-text: #eef3f2;
+  --p-nav-text-2: #a9b7b8;
+  --p-nav-accent: #77b4c0;
+  --p-nav-focus: #a9d0d4;
 
   /* Semantic layer: names components should reach for. */
   --canvas: var(--p-canvas);
@@ -34,14 +45,11 @@
   --field-line: var(--p-field-line);
   --focus: var(--p-work);
   --nav: var(--p-nav);
-  /* The sidebar itself does not flip with the theme (--p-nav is a dark rail
-     in both), so its own text is fixed rather than aliased to --text/--work,
-     which would go dark-on-dark under the light theme. Same values the dark
-     theme already uses for --p-text/--p-text-2/--p-work, since a dark nav
-     rail is exactly the surface those were designed for. */
-  --nav-text: #eef3f2;
-  --nav-text-secondary: #a9b7b8;
-  --nav-accent: #77b4c0;
+  /* Aliased to the theme-invariant --p-nav-* primitives above, not the
+     flipping --text/--work -- see the comment on those primitives. */
+  --nav-text: var(--p-nav-text);
+  --nav-text-secondary: var(--p-nav-text-2);
+  --nav-accent: var(--p-nav-accent);
 
   /* Legacy semantic names, repointed at the primitives above so existing
      component CSS and templates keep working unchanged. */
@@ -93,6 +101,10 @@
   --p-risk: #a64f2f;
   --p-risk-soft: #f6e6df;
   --p-field-line: #6b767c;
+  --p-nav-text: #eef3f2;
+  --p-nav-text-2: #a9b7b8;
+  --p-nav-accent: #77b4c0;
+  --p-nav-focus: #a9d0d4;
   --surface-raised: var(--p-surface);
 }
 
@@ -113,6 +125,12 @@
     /* Lightened rather than inverted, and desaturated for the dark surface.
        Measured 3.72:1 against --p-surface. */
     --p-field-line: #6f7c80;
+    /* Theme-invariant nav primitives, same values as the light block --
+       the rail is dark regardless of theme. */
+    --p-nav-text: #eef3f2;
+    --p-nav-text-2: #a9b7b8;
+    --p-nav-accent: #77b4c0;
+    --p-nav-focus: #a9d0d4;
 
     --surface-raised: var(--p-raised);
   }
@@ -131,6 +149,10 @@
   --p-risk: #e19a7e;
   --p-risk-soft: #402820;
   --p-field-line: #6f7c80;
+  --p-nav-text: #eef3f2;
+  --p-nav-text-2: #a9b7b8;
+  --p-nav-accent: #77b4c0;
+  --p-nav-focus: #a9d0d4;
   --surface-raised: var(--p-raised);
 }
 
@@ -276,6 +298,18 @@ a { color: var(--accent); text-underline-offset: .16em; }
   box-shadow: inset 3px 0 0 var(--nav-accent);
 }
 .sidebar__icon { flex: 0 0 auto; }
+
+/* The global focus ring uses `--focus` (`--p-work`), which flips with the
+   theme -- on the always-dark nav rail that drops to 2.49:1 in light mode,
+   below WCAG 1.4.11's 3:1. These three are the only focusable elements
+   inside `.sidebar`, so their ring colour alone is repointed at the
+   theme-invariant `--p-nav-focus` (width/offset still come from the global
+   rule above). */
+.sidebar__link:focus-visible,
+.sidebar__brand:focus-visible,
+.menu-toggle:focus-visible {
+  outline-color: var(--p-nav-focus);
+}
 
 .page-head {
   display: flex;
