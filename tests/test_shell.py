@@ -38,6 +38,18 @@ def test_one_h1_and_landmarks(tmp_path):
     assert '<main id="main"' in html
 
 
+def test_shell_renders_structural_bridge_mark_and_status_slot(tmp_path):
+    """Removing Bridge's only product-specific shell signature must fail.
+
+    The mark is decorative because the adjacent wordmark already supplies the
+    accessible name; the status slot carries its own visible words.
+    """
+    html = _client(tmp_path).get("/").text
+    assert 'class="bridge-mark"' in html
+    assert 'class="shell-status"' in html
+    assert re.search(r'<svg[^>]*class="bridge-mark"[^>]*aria-hidden="true"', html)
+
+
 def test_active_nav_marks_aria_current(tmp_path):
     html = _client(tmp_path).get("/").text
     assert re.search(r'href="/"[^>]*aria-current="page"', html) or \
@@ -101,6 +113,17 @@ def test_stylesheet_defines_interaction_states():
     ):
         assert sel in css
     assert "prefers-reduced-motion" in css
+
+
+def test_visual_foundation_uses_approved_control_geometry():
+    """A regression to the cramped 32px/4px pre-fidelity scale must fail."""
+    css = _app_css()
+    assert re.search(r"--control-min:\s*2\.5rem", css)
+    assert re.search(r"--radius-sm:\s*6px", css)
+    button_rule = re.search(r"\.btn\s*\{([^}]*)\}", css, re.DOTALL)
+    assert button_rule
+    assert "display: inline-flex" in button_rule.group(1)
+    assert "text-decoration: none" in button_rule.group(1)
 
 
 def _app_css():

@@ -36,10 +36,22 @@
   <div class="shell">
     <aside class="sidebar">
       <div class="sidebar__head">
-        <a class="sidebar__brand" href="/">Bridge</a>
+        <div class="sidebar__identity">
+          <svg class="bridge-mark" aria-hidden="true" viewBox="0 0 36 22"
+               width="36" height="22" fill="none" focusable="false">
+            <path d="M2 18h5V8m22 10h5V8" />
+            <path d="M7 10c5-7 17-7 22 0" />
+            <path d="M7 14h22" />
+          </svg>
+          <a class="sidebar__brand" href="/">Bridge</a>
+        </div>
         <button type="button" class="menu-toggle" aria-expanded="true" aria-controls="primary-nav">Menu</button>
       </div>
       {{ app_nav(active) }}
+      <div class="shell-status">
+        <span class="shell-status__label">Local control plane</span>
+        <span class="shell-status__detail">Repository access · read only</span>
+      </div>
     </aside>
     <div class="shell__body">
       <header class="page-head">
