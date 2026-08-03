@@ -38,15 +38,17 @@
         {% for row in model.history %}{{ schedule_row(row, interactive=True) }}{% endfor %}
       </ul>
       {% endif %}
-      {% set page_start = model.page * model.page_size %}
+      {# `page_start` is clamped to the total so a hand-typed out-of-range page
+         (empty rows, e.g. `?page=99`) can never render a start beyond the
+         count. When the page is out of range the row slice is empty, and the
+         status reads "0 of N" rather than the nonsensical "2501–5 of 5". #}
+      {% set page_start = [model.page * model.page_size, model.history_total] | min %}
       {% set page_end = [page_start + (model.history | length), model.history_total] | min %}
       <nav class="schedule-pager" aria-label="History pages">
         {% if model.page > 0 %}
         <a class="btn" href="/schedule?view=history&page={{ model.page - 1 }}">Previous</a>
         {% endif %}
-        <span class="card__note" data-schedule-pager-status>
-          {% if model.history_total %}{{ page_start + 1 }}–{{ page_end }} of {{ model.history_total }}{% else %}0 of 0{% endif %}
-        </span>
+        <span class="card__note" data-schedule-pager-status>{% if not model.history_total %}0 of 0{% elif not model.history %}0 of {{ model.history_total }}{% else %}{{ page_start + 1 }}–{{ page_end }} of {{ model.history_total }}{% endif %}</span>
         {% if page_end < model.history_total %}
         <a class="btn" href="/schedule?view=history&page={{ model.page + 1 }}">Next</a>
         {% endif %}

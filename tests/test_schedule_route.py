@@ -370,6 +370,28 @@ def test_schedule_route_history_paginates_with_prev_next_reflecting_total(tmp_pa
     assert "of 30" in body1
 
 
+def test_history_out_of_range_page_renders_sensible_pager_text(tmp_path):
+    """A hand-typed out-of-range `?page=99` returns empty rows (the model
+    already clamps to nothing), and the pager must read sensibly rather than
+    the old nonsensical "2476-2 of 2": the start is clamped to the total and
+    an empty page reads "0 of N"."""
+    client, store = _client(tmp_path)
+    for i in range(2):
+        store.restore_scheduled_run(_run(
+            id=f"term-{i}", scheduled_for=1000 + i, created_at=10,
+            status="fired", completed_at=100 + i, fired_at=100 + i,
+        ))
+
+    resp = client.get("/schedule?view=history&page=99")
+
+    assert resp.status_code == 200
+    assert "0 of 2" in resp.text
+    # The unclamped start (99 * 25 = 2475, so "2476-") must not appear.
+    assert "2476" not in resp.text
+    # No Next link off the end, and no crash on the empty slice.
+    assert 'href="/schedule?view=history&page=100"' not in resp.text
+
+
 def test_shared_macro_contract_status_vocabulary_and_scheduled_for_hook_match():
     """Overview's preview (`interactive=False`) and `/schedule`'s own row
     (`interactive=True`) render the SAME `data-scheduled-for` hook and the
