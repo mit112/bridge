@@ -9,6 +9,7 @@ by their own milestones, so their absence here is deliberate, not an oversight.
 """
 
 import re
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
@@ -69,3 +70,18 @@ def test_every_shell_page_has_exactly_one_h1_and_the_shared_landmarks(tmp_path):
         assert '<nav aria-label="Primary"' in html, path
         assert '<main id="main"' in html, path
         assert html.index('href="#main"') < html.index("<nav"), path
+
+
+def test_stylesheet_defines_interaction_states():
+    """Task 1.4: buttons get a full default/hover/pressed/focus/disabled/
+    loading state set, and a visible focus ring exists globally."""
+    css = (
+        Path(__file__).resolve().parent.parent
+        / "src" / "bridge" / "static" / "app.css"
+    ).read_text()
+    for sel in (
+        ".btn:hover", ".btn:active", ".btn:focus-visible", ".btn:disabled",
+        '.btn[aria-busy="true"]', ":focus-visible",
+    ):
+        assert sel in css
+    assert "prefers-reduced-motion" in css
