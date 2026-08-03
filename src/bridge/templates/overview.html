@@ -2,6 +2,7 @@
 {% from "_shell.html" import freshness_status %}
 {% from "_components.html" import project_summary_row, schedule_row, empty_state %}
 {% block page_title %}Overview{% endblock %}
+{% block page_eyebrow %}<p class="page-eyebrow">Local control plane</p>{% endblock %}
 {% block page_summary %}
 <p class="page-lede">
   {% if model.attention_total %}
