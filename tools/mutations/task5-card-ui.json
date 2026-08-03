@@ -46,10 +46,10 @@
     ]
   },
   {
-    "name": "stop passing handoff history to the project page",
-    "file": "src/bridge/api.py",
-    "old": "                \"handoffs\": store.handoffs(project_id),",
-    "new": "                \"handoffs\": [],",
+    "name": "stop passing handoff history to the project workspace",
+    "file": "src/bridge/workspace.py",
+    "old": "        handoffs = store.handoffs(project_id, limit=50)",
+    "new": "        handoffs = []",
     "tests": [
       "tests/test_api.py::test_the_project_page_lists_past_handoffs_with_their_status"
     ]

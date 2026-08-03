@@ -1,0 +1,126 @@
+{# Sessions / Handoffs / Launches: the three history tabs, each showing only
+   ITS OWN capped list -- `model.sessions`/`model.handoffs`/`model.launches`
+   are populated for the selected tab alone, so exactly one of the three
+   blocks below ever has rows to show on a given request. Table markup here
+   is the pre-redesign `project.html`'s, moved rather than rewritten --
+   `detail-page.json`'s two sidechain/cache-subtotal anchors, every
+   `project-history-ui.json` anchor, and `ui-semantics.json`'s keyboard-scroll
+   anchor all point here now, unchanged from what they guarded before. #}
+
+{% if model.tab == "handoffs" %}
+<section class="history" aria-labelledby="handoffs-title">
+<h2 id="handoffs-title">Handoffs</h2>
+{% if model.handoffs %}
+<p class="history__scope">Showing up to 50 most recent records.</p>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Handoffs table">
+<table class="handoffs">
+  <caption>Handoffs, most recent first</caption>
+  <thead>
+    <tr><th scope="col">Status</th><th scope="col">Created</th><th scope="col">Summary</th></tr>
+  </thead>
+  <tbody>
+    {% for h in model.handoffs %}
+    <tr>
+      <td class="status--{{ h['status'] }}">{{ h["status"] }}</td>
+      <td><time datetime="{{ h['created_at'] }}">{{ h["created_at"] | ago_epoch }} ago</time></td>
+      <td>{{ h["summary"] or "(no summary)" }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<p class="empty">No handoffs recorded.</p>
+{% endif %}
+</section>
+
+{% elif model.tab == "launches" %}
+<section class="history" aria-labelledby="launches-title">
+<h2 id="launches-title">Launches</h2>
+{% if model.launches %}
+<p class="history__scope">Showing up to 50 most recent records.</p>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Launches table">
+<table class="launches">
+  <caption>Launches, most recent first</caption>
+  <thead>
+    <tr><th scope="col">Launched</th><th scope="col">Mode</th><th scope="col">Model</th><th scope="col">Outcome</th><th scope="col">Session</th></tr>
+  </thead>
+  <tbody>
+    {% for l in model.launches %}
+    <tr>
+      <td><time datetime="{{ l['launched_at'] }}">{{ l["launched_at"] | ago_epoch }} ago</time></td>
+      <td>{{ l["mode"] }}</td>
+      <td>{{ l["model"] or "—" }}{% if l["effort"] %}/{{ l["effort"] }}{% endif %}</td>
+      <td>{{ l["outcome"] }}</td>
+      {# The launch and its session are one thing once the indexer has linked
+         them: the session's own title, falling back to the id when the
+         session is older than this page's window. A launch with no session
+         at all -- a spawn that started nothing, or a session that never
+         wrote a transcript -- is not an error, so it says so and stays
+         visible. #}
+      {% set linked_session = model.launch_sessions.get(l["session_id"]) if l["session_id"] else none %}
+      {% if l["session_id"] %}
+      <td>{% if linked_session %}{{ linked_session["title"] or "Untitled" }}{% else %}{{ l["session_id"][:8] }}{% endif %}</td>
+      {% else %}
+      <td>no session yet{% if l["short_id"] %} ({{ l["short_id"] }}){% endif %}</td>
+      {% endif %}
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<p class="empty">No launches recorded.</p>
+{% endif %}
+</section>
+
+{% else %}
+<section class="history" aria-labelledby="sessions-title">
+<h2 id="sessions-title">Sessions</h2>
+{% if model.sessions %}<p class="history__scope">Showing up to 50 most recent records.</p>{% endif %}
+<div class="table-scroll" tabindex="0" role="region" aria-label="Indexed sessions table">
+<table class="sessions">
+  <caption>Indexed sessions, most recent first</caption>
+  <thead>
+    <tr><th scope="col">Session</th><th scope="col">Ended</th><th scope="col">Model</th><th scope="col">Turns</th><th scope="col">Tokens</th><th scope="col">Changes</th></tr>
+  </thead>
+  <tbody>
+    {% for s in model.sessions %}
+    <tr>
+      <td>{{ s["title"] or "Untitled" }}</td>
+      <td><time datetime="{{ s['ended_at'] }}">{{ s["ended_at"] | ago }} ago</time></td>
+      <td>{{ s["model"] or "—" }}{% if s["effort"] %}/{{ s["effort"] }}{% endif %}</td>
+      <td>{{ s["user_msgs"] }}/{{ s["assistant_msgs"] }}</td>
+      {# Total stays the in+out sum; cache and sidechain are tracked apart in
+         the parse and are shown as subtotals, not folded into it (spec:395). #}
+      <td>
+        {{ (s["tokens_in"] + s["tokens_out"]) | kilo }}
+        <span class="sessions__tokens-detail">{{ s["tokens_in"] | kilo }} in / {{ s["tokens_out"] | kilo }} out{% if s["tokens_cache_create"] or s["tokens_cache_read"] %} · cache {{ s["tokens_cache_create"] | kilo }}w/{{ s["tokens_cache_read"] | kilo }}r{% endif %}{% if s["sidechain_tokens"] %} · {{ s["sidechain_tokens"] | kilo }} sidechain{% endif %}</span>
+      </td>
+      {% set m = model.session_metas.get(s["id"]) %}
+      <td class="sessions__changes">
+        {% if m %}
+          {% if m.files_modified or m.lines_added or m.lines_removed %}
+          <span>{% if m.files_modified %}{{ m.files_modified }} files{% endif %}{% if m.lines_added or m.lines_removed %} <span class="sessions__add">+{{ m.lines_added }}</span>/<span class="sessions__del">-{{ m.lines_removed }}</span>{% endif %}</span>
+          {% endif %}
+          {% set ns = namespace(facts=[]) %}
+          {% if m.git_commits %}{% set ns.facts = ns.facts + [(m.git_commits | string) + (' commit' if m.git_commits == 1 else ' commits')] %}{% endif %}
+          {% if m.git_pushes %}{% set ns.facts = ns.facts + [(m.git_pushes | string) + (' push' if m.git_pushes == 1 else ' pushes')] %}{% endif %}
+          {% if m.duration_minutes %}{% set ns.facts = ns.facts + [(m.duration_minutes | string) + 'm'] %}{% endif %}
+          {% if m.tool_errors %}{% set ns.facts = ns.facts + [(m.tool_errors | string) + (' tool error' if m.tool_errors == 1 else ' tool errors')] %}{% endif %}
+          {% if m.user_interruptions %}{% set ns.facts = ns.facts + [(m.user_interruptions | string) + (' interruption' if m.user_interruptions == 1 else ' interruptions')] %}{% endif %}
+          {% if ns.facts %}<span class="sessions__meta-detail">{{ ns.facts | join(' · ') }}</span>{% endif %}
+          {% if m.uses_task_agent or m.uses_mcp or m.uses_web %}
+          <span class="sessions__flags">{% if m.uses_task_agent %}<span class="badge">agent</span>{% endif %}{% if m.uses_mcp %}<span class="badge">mcp</span>{% endif %}{% if m.uses_web %}<span class="badge">web</span>{% endif %}</span>
+          {% endif %}
+        {% else %}—{% endif %}
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="6" class="empty">No indexed sessions.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+</section>
+{% endif %}

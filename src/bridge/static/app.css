@@ -607,6 +607,54 @@ main { width: min(100%, 68rem); margin-inline: auto; padding: var(--space-6); }
    metadata, so it steps back up to `--fg` out of the muted strip. */
 .detail-git { margin: 0 0 1.2rem; }
 .detail-git__commit { color: var(--fg); }
+
+/* --- Milestone 3: the Project workspace (`/project/{id}`) ------------------ */
+
+.breadcrumb {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+.breadcrumb__sep { margin: 0 .3rem; }
+.breadcrumb [aria-current="page"] { color: var(--fg); font-weight: 600; }
+
+.workspace__actions { display: flex; align-items: center; gap: .6rem; margin: 0 0 var(--space-4); }
+
+.workspace-tabs {
+  display: flex;
+  gap: var(--space-4);
+  margin: 0 0 var(--space-6);
+  border-bottom: 1px solid var(--line);
+}
+.workspace-tabs__link {
+  display: inline-block;
+  padding: .5rem .1rem;
+  color: var(--muted);
+  text-decoration: none;
+  border-bottom: 2px solid transparent;
+}
+.workspace-tabs__link:hover { color: var(--fg); }
+.workspace-tabs__link[aria-current="page"] {
+  color: var(--fg);
+  font-weight: 600;
+  border-bottom-color: var(--accent);
+}
+
+/* Secondary, quiet -- never competing with the Current tab's primary action. */
+.workspace-state {
+  margin: 0 0 var(--space-6);
+  padding: .6rem .7rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  color: var(--muted);
+}
+.workspace-state .card__git { margin-top: 0; }
+.workspace-state__session {
+  margin: .35rem 0 0;
+  font-size: .85rem;
+  font-variant-numeric: tabular-nums;
+}
+
 .history { margin-top: var(--space-8); }
 .history h2 { margin: 0; font: 700 1rem/1.3 var(--font-sans); }
 .history__scope { margin: var(--space-1) 0 0; color: var(--muted); font-size: var(--text-sm); }

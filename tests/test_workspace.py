@@ -1,5 +1,9 @@
+import re
 from datetime import datetime, timedelta, timezone
 
+from fastapi.testclient import TestClient
+
+from bridge.api import create_app
 from bridge.cards import build_cards
 from bridge.config import load
 from bridge.models import AgentsState, GitState, Handoff, LiveSession, SessionRecord
@@ -301,4 +305,106 @@ def test_hidden_project_yields_none(tmp_path):
     )
 
     assert model is None
+    store.close()
+
+
+# --- Task 3.2: the tabbed `/project/{id}` route -----------------------------
+
+
+def _client(tmp_path):
+    cfg = load({"db_path": tmp_path / "route.db", "spool_dir": tmp_path / "spool"})
+    store = Store(cfg.db_path)
+    pid = store.upsert_project("/p/workspace", "workspace-project")
+    return TestClient(create_app(store, cfg)), store, pid
+
+
+def _active_tab(html, pid):
+    """The one `?tab=` value whose link carries `aria-current="page"`.
+
+    `aria-current="page"` legitimately appears more than once on the page --
+    the breadcrumb's own current-page span and the sidebar's "Projects"
+    section both carry it too -- so this only looks inside the tab links
+    themselves, not at the page-wide count.
+    """
+    matches = re.findall(
+        rf'href="/project/{pid}\?tab=(\w+)"\s*\n?\s*aria-current="page"', html,
+    )
+    assert len(matches) == 1, (matches, html.count('aria-current="page"'))
+    return matches[0]
+
+
+def _active_tab_count(html, pid):
+    return len(re.findall(
+        rf'href="/project/{pid}\?tab=\w+"\s*\n?\s*aria-current="page"', html,
+    ))
+
+
+def test_get_project_defaults_to_the_current_tab(tmp_path):
+    c, store, pid = _client(tmp_path)
+    r = c.get(f"/project/{pid}")
+    assert r.status_code == 200
+    assert _active_tab(r.text, pid) == "current"
+    store.close()
+
+
+def test_each_tab_query_value_selects_that_tab(tmp_path):
+    c, store, pid = _client(tmp_path)
+    for tab in ("sessions", "handoffs", "launches"):
+        html = c.get(f"/project/{pid}?tab={tab}").text
+        assert _active_tab(html, pid) == tab
+        # Only the matching tab link carries it, not the other three.
+        assert _active_tab_count(html, pid) == 1
+    store.close()
+
+
+def test_an_unknown_tab_falls_back_to_current_rather_than_blank(tmp_path):
+    c, store, pid = _client(tmp_path)
+    r = c.get(f"/project/{pid}?tab=zzz")
+    assert r.status_code == 200
+    assert _active_tab(r.text, pid) == "current"
+    assert "<table" not in r.text
+    store.close()
+
+
+def test_an_invalid_project_id_is_still_a_404(tmp_path):
+    c, store, _ = _client(tmp_path)
+    assert c.get("/project/999999").status_code == 404
+    store.close()
+
+
+def test_breadcrumb_links_to_the_projects_index(tmp_path):
+    c, store, pid = _client(tmp_path)
+    html = c.get(f"/project/{pid}").text
+    assert '<a href="/projects">Projects</a>' in html
+    store.close()
+
+
+def test_the_workspace_page_has_exactly_one_h1(tmp_path):
+    c, store, pid = _client(tmp_path)
+    html = c.get(f"/project/{pid}").text
+    assert len(re.findall(r"<h1\b", html)) == 1
+    store.close()
+
+
+def test_pin_and_hide_hooks_are_present_and_keyed_off_the_project_id(tmp_path):
+    c, store, pid = _client(tmp_path)
+    html = c.get(f"/project/{pid}").text
+    assert f'data-project-pin="{pid}"' in html
+    assert f'data-project-hide="{pid}"' in html
+    assert 'aria-pressed="false"' in html
+    store.close()
+
+
+def test_the_current_tab_never_carries_history_table_markup(tmp_path):
+    c, store, pid = _client(tmp_path)
+    html = c.get(f"/project/{pid}?tab=current").text
+    assert "<table" not in html
+    store.close()
+
+
+def test_history_tabs_never_carry_the_current_tabs_workspace_state_panel(tmp_path):
+    c, store, pid = _client(tmp_path)
+    for tab in ("sessions", "handoffs", "launches"):
+        html = c.get(f"/project/{pid}?tab={tab}").text
+        assert 'class="workspace-state"' not in html
     store.close()

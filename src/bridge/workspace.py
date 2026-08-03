@@ -51,6 +51,14 @@ class WorkspaceModel:
     handoffs: list[sqlite3.Row]
     launches: list[sqlite3.Row]
     session_metas: dict[str, sessionmeta.SessionMeta]
+    # The launches tab needs a linked launch's session TITLE, but `sessions`
+    # above stays empty unless `tab == "sessions"` -- fetching all 50 of a
+    # project's sessions just to resolve a handful of launch->session joins
+    # would be the "other tab's data, unfetched" rule broken for the sake of
+    # this one column. A per-id `store.session_row` read, one per DISTINCT
+    # linked session on this page (at most as many as there are launches),
+    # is the narrower read the join actually needs.
+    launch_sessions: dict[str, sqlite3.Row] = dataclasses.field(default_factory=dict)
 
 
 def _normalize_tab(tab: str | None) -> str:
@@ -112,12 +120,19 @@ def build_workspace(
     sessions: list[sqlite3.Row] = []
     handoffs: list[sqlite3.Row] = []
     launches: list[sqlite3.Row] = []
+    launch_sessions: dict[str, sqlite3.Row] = {}
     if tab == "sessions":
         sessions = store.sessions(project_id, limit=50)
     elif tab == "handoffs":
         handoffs = store.handoffs(project_id, limit=50)
     elif tab == "launches":
         launches = store.launches(project_id, limit=50)
+        for launch_row in launches:
+            session_id = launch_row["session_id"]
+            if session_id and session_id not in launch_sessions:
+                session = store.session_row(session_id)
+                if session is not None:
+                    launch_sessions[session_id] = session
 
     session_metas = sessionmeta.read_many(
         [s["id"] for s in sessions], cfg.session_meta_dir
@@ -133,4 +148,5 @@ def build_workspace(
         handoffs=handoffs,
         launches=launches,
         session_metas=session_metas,
+        launch_sessions=launch_sessions,
     )

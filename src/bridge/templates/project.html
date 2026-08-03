@@ -1,133 +1,53 @@
 {% extends "base.html" %}
-{% block title %}{{ project.name }} — Bridge{% endblock %}
-{% block page_title %}{{ project.name }}{% endblock %}
+{% block title %}{{ model.project.name }} — Bridge{% endblock %}
+{% block page_title %}{{ model.project.name }}{% endblock %}
 {% block content %}
-<p class="card__path">{{ project.path }}</p>
-{# Recent git, spec:394. Read from git_cache -- these fields were probed on
-   every card build and rendered nowhere. Only status=="ok" is ever cached, so
-   a `git` at all means a real repo state; each field still guards itself
-   because an upstream-less repo has no `behind` and a fresh clone no commit. #}
-{% if git and git.status == "ok" %}
-<section class="card__git detail-git" aria-label="Recent git state">
-  {% if git.branch %}<span>{{ git.branch }}</span>{% endif %}
-  {% if git.dirty_count %}<span>{{ git.dirty_count }} dirty</span>{% endif %}
-  {% if git.ahead %}<span>{{ git.ahead }} ahead</span>{% endif %}
-  {% if git.behind %}<span>{{ git.behind }} behind</span>{% endif %}
-  {% if git.last_commit_summary %}
-  <span class="detail-git__commit">last commit: {{ git.last_commit_summary }}{% if git.last_commit_at %} · {{ git.last_commit_at | ago_epoch }} ago{% endif %}</span>
-  {% endif %}
-  {% if git.cached_at %}<span class="card__meta">git checked {{ git.cached_at | ago_epoch }} ago</span>{% endif %}
-</section>
-{% endif %}
-<section class="history" aria-labelledby="handoffs-title">
-<h2 id="handoffs-title">Handoffs</h2>
-{% if handoffs %}
-<p class="history__scope">Showing up to 50 most recent records.</p>
-<div class="table-scroll" tabindex="0" role="region" aria-label="Handoffs table">
-<table class="handoffs">
-  <caption>Handoffs, most recent first</caption>
-  <thead>
-    <tr><th scope="col">Status</th><th scope="col">Created</th><th scope="col">Summary</th></tr>
-  </thead>
-  <tbody>
-    {% for h in handoffs %}
-    <tr>
-      <td class="status--{{ h['status'] }}">{{ h["status"] }}</td>
-      <td><time datetime="{{ h['created_at'] }}">{{ h["created_at"] | ago_epoch }} ago</time></td>
-      <td>{{ h["summary"] or "(no summary)" }}</td>
-    </tr>
-    {% endfor %}
-  </tbody>
-</table>
-</div>
-{% else %}
-<p class="empty">No handoffs recorded.</p>
-{% endif %}
-</section>
+{# "Projects" is a real link (spec:394's no-dead-end rule): the route it
+   points at already exists, so this is never a link to nowhere. #}
+<nav class="breadcrumb" aria-label="Breadcrumb">
+  <a href="/projects">Projects</a>
+  <span class="breadcrumb__sep" aria-hidden="true">/</span>
+  <span aria-current="page">{{ model.project.name }}</span>
+</nav>
+<p class="card__path"><code>{{ model.project.path }}</code></p>
 
-<section class="history" aria-labelledby="launches-title">
-<h2 id="launches-title">Launches</h2>
-{% if launches %}
-<p class="history__scope">Showing up to 50 most recent records.</p>
-<div class="table-scroll" tabindex="0" role="region" aria-label="Launches table">
-<table class="launches">
-  <caption>Launches, most recent first</caption>
-  <thead>
-    <tr><th scope="col">Launched</th><th scope="col">Mode</th><th scope="col">Model</th><th scope="col">Outcome</th><th scope="col">Session</th></tr>
-  </thead>
-  <tbody>
-    {% for l in launches %}
-    <tr>
-      <td><time datetime="{{ l['launched_at'] }}">{{ l["launched_at"] | ago_epoch }} ago</time></td>
-      <td>{{ l["mode"] }}</td>
-      <td>{{ l["model"] or "—" }}{% if l["effort"] %}/{{ l["effort"] }}{% endif %}</td>
-      <td>{{ l["outcome"] }}</td>
-      {# The launch and its session are one thing once the indexer has linked
-         them: the session's own title, falling back to the id when the session
-         is older than this page's window. A launch with no session at all —
-         a spawn that started nothing, or a session that never wrote a
-         transcript — is not an error, so it says so and stays visible. #}
-      {% if l["session_id"] %}
-      <td>{% for s in sessions if s["id"] == l["session_id"] %}{{ s["title"] or "Untitled" }}{% else %}{{ l["session_id"][:8] }}{% endfor %}</td>
-      {% else %}
-      <td>no session yet{% if l["short_id"] %} ({{ l["short_id"] }}){% endif %}</td>
-      {% endif %}
-    </tr>
-    {% endfor %}
-  </tbody>
-</table>
-</div>
-{% else %}
-<p class="empty">No launches recorded.</p>
-{% endif %}
-</section>
+{# Pin and Hide, spelled out as explicit actions rather than folded into a
+   menu -- the same hooks and wording `_card.html` uses on the dashboard, so
+   `projects.js`'s delegated listeners drive both without knowing which page
+   they are on. #}
+<p class="workspace__actions">
+  <button type="button" class="btn btn--pin" data-project-pin="{{ model.card.project_id }}"
+          aria-pressed="{{ 'true' if model.card.pinned else 'false' }}"
+          aria-label="Pin {{ model.project.name }} above every other project"
+          title="Pin to the top">Pin</button>
+  <button type="button" class="btn" data-project-hide="{{ model.card.project_id }}"
+          aria-label="Hide {{ model.project.name }} from the dashboard"
+          title="Hide from the dashboard">Hide</button>
+  <span class="card__hide-status" role="status" aria-live="polite"
+        data-project-status="{{ model.card.project_id }}"></span>
+</p>
 
-<section class="history" aria-labelledby="sessions-title">
-<h2 id="sessions-title">Sessions</h2>
-{% if sessions %}<p class="history__scope">Showing up to 50 most recent records.</p>{% endif %}
-<div class="table-scroll" tabindex="0" role="region" aria-label="Indexed sessions table">
-<table class="sessions">
-  <caption>Indexed sessions, most recent first</caption>
-  <thead>
-    <tr><th scope="col">Session</th><th scope="col">Ended</th><th scope="col">Model</th><th scope="col">Turns</th><th scope="col">Tokens</th><th scope="col">Changes</th></tr>
-  </thead>
-  <tbody>
-    {% for s in sessions %}
-    <tr>
-      <td>{{ s["title"] or "Untitled" }}</td>
-      <td><time datetime="{{ s['ended_at'] }}">{{ s["ended_at"] | ago }} ago</time></td>
-      <td>{{ s["model"] or "—" }}{% if s["effort"] %}/{{ s["effort"] }}{% endif %}</td>
-      <td>{{ s["user_msgs"] }}/{{ s["assistant_msgs"] }}</td>
-      {# Total stays the in+out sum; cache and sidechain are tracked apart in
-         the parse and are shown as subtotals, not folded into it (spec:395). #}
-      <td>
-        {{ (s["tokens_in"] + s["tokens_out"]) | kilo }}
-        <span class="sessions__tokens-detail">{{ s["tokens_in"] | kilo }} in / {{ s["tokens_out"] | kilo }} out{% if s["tokens_cache_create"] or s["tokens_cache_read"] %} · cache {{ s["tokens_cache_create"] | kilo }}w/{{ s["tokens_cache_read"] | kilo }}r{% endif %}{% if s["sidechain_tokens"] %} · {{ s["sidechain_tokens"] | kilo }} sidechain{% endif %}</span>
-      </td>
-      {% set m = session_metas.get(s["id"]) %}
-      <td class="sessions__changes">
-        {% if m %}
-          {% if m.files_modified or m.lines_added or m.lines_removed %}
-          <span>{% if m.files_modified %}{{ m.files_modified }} files{% endif %}{% if m.lines_added or m.lines_removed %} <span class="sessions__add">+{{ m.lines_added }}</span>/<span class="sessions__del">-{{ m.lines_removed }}</span>{% endif %}</span>
-          {% endif %}
-          {% set ns = namespace(facts=[]) %}
-          {% if m.git_commits %}{% set ns.facts = ns.facts + [(m.git_commits | string) + (' commit' if m.git_commits == 1 else ' commits')] %}{% endif %}
-          {% if m.git_pushes %}{% set ns.facts = ns.facts + [(m.git_pushes | string) + (' push' if m.git_pushes == 1 else ' pushes')] %}{% endif %}
-          {% if m.duration_minutes %}{% set ns.facts = ns.facts + [(m.duration_minutes | string) + 'm'] %}{% endif %}
-          {% if m.tool_errors %}{% set ns.facts = ns.facts + [(m.tool_errors | string) + (' tool error' if m.tool_errors == 1 else ' tool errors')] %}{% endif %}
-          {% if m.user_interruptions %}{% set ns.facts = ns.facts + [(m.user_interruptions | string) + (' interruption' if m.user_interruptions == 1 else ' interruptions')] %}{% endif %}
-          {% if ns.facts %}<span class="sessions__meta-detail">{{ ns.facts | join(' · ') }}</span>{% endif %}
-          {% if m.uses_task_agent or m.uses_mcp or m.uses_web %}
-          <span class="sessions__flags">{% if m.uses_task_agent %}<span class="badge">agent</span>{% endif %}{% if m.uses_mcp %}<span class="badge">mcp</span>{% endif %}{% if m.uses_web %}<span class="badge">web</span>{% endif %}</span>
-          {% endif %}
-        {% else %}—{% endif %}
-      </td>
-    </tr>
-    {% else %}
-    <tr><td colspan="6" class="empty">No indexed sessions.</td></tr>
-    {% endfor %}
-  </tbody>
-</table>
-</div>
-</section>
+{# A real link per tab, not a client-side switch: a full page load keeps
+   Back/Forward predictable and the URL shareable. Unknown `?tab=` values
+   normalize to `current` in `build_workspace`, so `model.tab` is always one
+   of the four below -- there is no fifth, unhighlighted state. No per-tab
+   count badges: the model only ever loads the SELECTED tab's list (the other
+   two stay empty, unfetched), so a count would need a new query this task
+   does not add. #}
+<nav class="workspace-tabs" aria-label="Project sections">
+  <a class="workspace-tabs__link" href="/project/{{ model.card.project_id }}?tab=current"
+     {% if model.tab == "current" %}aria-current="page"{% endif %}>Current</a>
+  <a class="workspace-tabs__link" href="/project/{{ model.card.project_id }}?tab=sessions"
+     {% if model.tab == "sessions" %}aria-current="page"{% endif %}>Sessions</a>
+  <a class="workspace-tabs__link" href="/project/{{ model.card.project_id }}?tab=handoffs"
+     {% if model.tab == "handoffs" %}aria-current="page"{% endif %}>Handoffs</a>
+  <a class="workspace-tabs__link" href="/project/{{ model.card.project_id }}?tab=launches"
+     {% if model.tab == "launches" %}aria-current="page"{% endif %}>Launches</a>
+</nav>
+
+{% if model.tab == "current" %}
+  {% include "_workspace_current.html" %}
+{% else %}
+  {% include "_workspace_history.html" %}
+{% endif %}
 {% endblock %}

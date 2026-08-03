@@ -1,0 +1,37 @@
+{# The Current tab: what is running or queued for this project right now.
+   Task 3.2 lands the tab shell with the project's live/git state, carried
+   over from the pre-redesign `project.html` rather than duplicated --
+   `detail-page.json`'s two git-log mutation anchors point here now, unchanged
+   from what they guarded before. Task 3.3 rehomes the full continuation
+   surface (compose/handoff/launch/schedule) here via the shared macros in
+   `_launch.html`. #}
+{% set card = model.card %}
+{% set git = model.git %}
+
+<section class="workspace-state" aria-label="Project state">
+  {% if git and git.status == "ok" %}
+  <section class="card__git detail-git" aria-label="Recent git state">
+    {% if git.branch %}<span>{{ git.branch }}</span>{% endif %}
+    {% if git.dirty_count %}<span>{{ git.dirty_count }} dirty</span>{% endif %}
+    {% if git.ahead %}<span>{{ git.ahead }} ahead</span>{% endif %}
+    {% if git.behind %}<span>{{ git.behind }} behind</span>{% endif %}
+    {% if git.last_commit_summary %}
+    <span class="detail-git__commit">last commit: {{ git.last_commit_summary }}{% if git.last_commit_at %} · {{ git.last_commit_at | ago_epoch }} ago{% endif %}</span>
+    {% endif %}
+    {% if git.cached_at %}<span class="card__meta">git checked {{ git.cached_at | ago_epoch }} ago</span>{% endif %}
+  </section>
+  {% endif %}
+  {% if card.session %}
+  <p class="workspace-state__session">
+    {{ card.session.title or "Untitled session" }}
+    <time datetime="{{ card.session.ended_at }}" title="{{ card.session.ended_at }}">{{ card.session.ended_at | ago }} ago</time>
+    {% if card.session.interrupted %}<span class="card__note">interrupted</span>{% endif %}
+  </p>
+  {% endif %}
+</section>
+
+{% if card.handoff %}
+<p class="card__note">Next step queued: {{ card.handoff.summary or "see the saved prompt" }}</p>
+{% else %}
+<p class="empty">No session in progress for this project.</p>
+{% endif %}

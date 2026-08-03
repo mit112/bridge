@@ -23,7 +23,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, field_validator, model_validator
 
-from bridge import agents, hooks, launcher, schedspool, sessionmeta, spool
+from bridge import agents, hooks, launcher, schedspool, spool
 from bridge.cards import FIVE_HOURS, LivenessDebouncer, build_cards, spark_points
 from bridge.config import Config
 from bridge.dashboard import DashboardBuilder
@@ -32,6 +32,7 @@ from bridge.projects_view import build_projects
 from bridge.refresh import RefreshCoordinator
 from bridge.registry import display_name, resolve_project
 from bridge.store import Store, now_epoch
+from bridge.workspace import build_workspace
 
 HERE = Path(__file__).parent
 
@@ -838,35 +839,32 @@ def create_app(
         )
 
     @app.get("/project/{project_id}", response_class=HTMLResponse)
-    def detail(request: Request, project_id: int):
-        row = store.get_project(project_id)
-        if row is None:
+    def detail(request: Request, project_id: int, tab: str = "current"):
+        # One live probe for the whole page view, shared between the workspace
+        # model and the cross-project token total below -- the same "probe
+        # once per view" rule the dashboard route already follows.
+        now = now_epoch()
+        probe = dashboard_builder._live_state(now)
+        model = build_workspace(store, cfg, project_id, tab, live_state=probe)
+        if model is None:
             raise HTTPException(status_code=404, detail="unknown project")
-        # The git log is a READ of the cache the card build already wrote, never
-        # a fresh probe: `behind` and the last-commit fields were computed on
-        # every card build and shown nowhere. `cached_at` carries the probe age
-        # so the page can say "as of ... ago", exactly as `build_cards` does.
-        cached_git = store.get_git_cache(project_id)
-        git = None
-        if cached_git is not None:
-            git, probed_at = cached_git
-            git = dataclasses_replace(git, cached_at=probed_at)
-        sessions = store.sessions(project_id)
-        session_metas = sessionmeta.read_many(
-            [s["id"] for s in sessions], cfg.session_meta_dir
-        )
         return templates.TemplateResponse(
             request,
             "project.html",
             {
-                "project": row,
-                "git": git,
-                "sessions": sessions,
-                "session_metas": session_metas,
-                "handoffs": store.handoffs(project_id),
-                # Task 7 added the launch-history table to the template but
-                # nothing ever passed it, so the block was inert in the live app.
-                "launches": store.launches(project_id),
+                "model": model,
+                "active": "projects",
+                # The schedule mini-form's hint line reads the same
+                # across-every-project total the dashboard's own compose box
+                # shows -- summed directly off `store.token_totals`, the exact
+                # read `build_cards` already does per project, rather than
+                # building every card again just to add `tokens_5h` back up.
+                "totals": {
+                    "last_5h": sum(
+                        store.token_totals(p["id"], now - FIVE_HOURS)
+                        for p in store.projects()
+                    ),
+                },
             },
         )
 

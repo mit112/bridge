@@ -87,15 +87,18 @@ def test_project_detail_renders(client):
 
 
 def test_project_detail_explains_empty_history_and_the_current_window(client):
+    """History lives on its own tab now (spec:Milestone-3): the Current tab
+    never carries table markup, so each empty state is read off the tab it
+    actually belongs to."""
     c, store, pid = client
     empty_id = store.upsert_project("/Users/mitsheth/dev/empty", "empty")
-    empty = c.get(f"/project/{empty_id}").text
-    assert "No handoffs recorded." in empty
-    assert "No launches recorded." in empty
-    assert "No indexed sessions." in empty
+    assert "No handoffs recorded." in c.get(f"/project/{empty_id}?tab=handoffs").text
+    assert "No launches recorded." in c.get(f"/project/{empty_id}?tab=launches").text
+    assert "No indexed sessions." in c.get(f"/project/{empty_id}?tab=sessions").text
 
-    populated = c.get(f"/project/{pid}").text
-    assert "Showing up to 50 most recent records." in populated
+    assert "Showing up to 50 most recent records." in c.get(
+        f"/project/{pid}?tab=sessions"
+    ).text
 
 
 def test_html_pages_have_one_page_heading_home_navigation_and_metadata(client):
@@ -111,7 +114,7 @@ def test_html_pages_have_one_page_heading_home_navigation_and_metadata(client):
 
 def test_project_and_diagnostics_tables_are_keyboard_scroll_regions(client):
     c, _, pid = client
-    project = c.get(f"/project/{pid}").text
+    project = c.get(f"/project/{pid}?tab=sessions").text
     diagnostics = c.get("/diagnostics").text
     assert 'class="table-scroll" tabindex="0" role="region"' in project
     assert 'aria-label="Indexed sessions table"' in project
@@ -184,7 +187,7 @@ def test_the_project_page_breaks_down_session_tokens_including_sidechain(client)
         pid,
     )
 
-    html = c.get(f"/project/{pid}").text
+    html = c.get(f"/project/{pid}?tab=sessions").text
 
     assert "3k sidechain" in html, "the sidechain subtotal renders"
     assert "cache 5kw/9kr" in html, "cache create/read subtotals render"
@@ -620,7 +623,7 @@ def test_the_project_page_lists_past_handoffs_with_their_status(handoff_app):
     pid = c.post("/api/handoff", json=body("old", prompt="first")).json()["project_id"]
     c.post("/api/handoff", json=body("new", prompt="second"))
 
-    html = c.get(f"/project/{pid}").text
+    html = c.get(f"/project/{pid}?tab=handoffs").text
 
     assert "Handoffs, most recent first" in html
     assert "superseded" in html
@@ -1098,7 +1101,7 @@ def test_the_project_page_lists_launch_history_with_its_linked_session(launch_ap
                effort="low", prompt="go too", launched_at=1000, outcome="started")
     )
 
-    html = c.get(f"/project/{pid}").text
+    html = c.get(f"/project/{pid}?tab=launches").text
 
     assert "Launches, most recent first" in html
     assert "terminal" in html
@@ -2779,7 +2782,7 @@ def test_detail_page_shows_session_meta_activity_when_present(tmp_path):
                 git_commits=2, git_pushes=1, duration_minutes=45,
                 uses_task_agent=True, uses_mcp=True, uses_web_search=True)
 
-    html = TestClient(create_app(store, cfg)).get(f"/project/{pid}").text
+    html = TestClient(create_app(store, cfg)).get(f"/project/{pid}?tab=sessions").text
 
     assert "3 files" in html
     assert "+120" in html and "40" in html
@@ -2802,7 +2805,7 @@ def test_detail_page_omits_token_fields_from_meta(tmp_path):
         pid)
     _write_meta(cfg, "s1", input_tokens=99999, output_tokens=88888, files_modified=1)
 
-    html = TestClient(create_app(store, cfg)).get(f"/project/{pid}").text
+    html = TestClient(create_app(store, cfg)).get(f"/project/{pid}?tab=sessions").text
 
     assert "99999" not in html and "88888" not in html
     store.close()
@@ -2819,7 +2822,7 @@ def test_detail_page_is_unchanged_when_meta_dir_is_empty(tmp_path):
                       ended_at="2026-07-30T10:00:00.000Z", tokens_in=5, tokens_out=5),
         pid)
 
-    r = TestClient(create_app(store, cfg)).get(f"/project/{pid}")
+    r = TestClient(create_app(store, cfg)).get(f"/project/{pid}?tab=sessions")
 
     assert r.status_code == 200
     assert "Worked" in r.text
@@ -2839,7 +2842,7 @@ def test_detail_page_survives_malformed_meta(tmp_path):
     (tmp_path / "meta").mkdir(parents=True)
     (tmp_path / "meta" / "s1.json").write_text("{broken", encoding="utf-8")
 
-    r = TestClient(create_app(store, cfg)).get(f"/project/{pid}")
+    r = TestClient(create_app(store, cfg)).get(f"/project/{pid}?tab=sessions")
 
     assert r.status_code == 200
     store.close()
@@ -2858,7 +2861,7 @@ def test_detail_page_hides_zero_activity_meta(tmp_path):
         pid)
     _write_meta(cfg, "s1")  # session_id only, all facts zero
 
-    html = TestClient(create_app(store, cfg)).get(f"/project/{pid}").text
+    html = TestClient(create_app(store, cfg)).get(f"/project/{pid}?tab=sessions").text
 
     assert "files" not in html.split("<table")[-1] or "0 files" not in html
     store.close()

@@ -72,10 +72,10 @@
     "expect_count": 1
   },
   {
-    "name": "stop passing launches into the project page context, leaving the table inert",
-    "file": "src/bridge/api.py",
-    "old": "                \"launches\": store.launches(project_id),",
-    "new": "                \"launches\": [],",
+    "name": "stop passing launches into the project workspace context, leaving the table inert",
+    "file": "src/bridge/workspace.py",
+    "old": "        launches = store.launches(project_id, limit=50)",
+    "new": "        launches = []",
     "tests": [
       "tests/test_api.py::test_the_project_page_lists_launch_history_with_its_linked_session"
     ],

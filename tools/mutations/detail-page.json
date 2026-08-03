@@ -1,9 +1,9 @@
 [
   {
-    "name": "never read the git_cache on the detail path, so the whole git log the card build probed stays invisible",
-    "file": "src/bridge/api.py",
-    "old": "        cached_git = store.get_git_cache(project_id)",
-    "new": "        cached_git = None",
+    "name": "never read the git_cache on the workspace path, so the whole git log the card build probed stays invisible",
+    "file": "src/bridge/workspace.py",
+    "old": "    cached_git = store.get_git_cache(project_id)",
+    "new": "    cached_git = None",
     "tests": [
       "tests/test_api.py::test_the_project_page_shows_the_cached_git_log"
     ],
@@ -11,8 +11,8 @@
   },
   {
     "name": "drop the behind row, so the count probed on every card build renders nowhere again",
-    "file": "src/bridge/templates/project.html",
-    "old": "  {% if git.behind %}<span>{{ git.behind }} behind</span>{% endif %}",
+    "file": "src/bridge/templates/_workspace_current.html",
+    "old": "    {% if git.behind %}<span>{{ git.behind }} behind</span>{% endif %}",
     "new": "",
     "tests": [
       "tests/test_api.py::test_the_project_page_shows_the_cached_git_log"
@@ -21,7 +21,7 @@
   },
   {
     "name": "print the last-commit label with no summary, so the commit the cache holds is not shown",
-    "file": "src/bridge/templates/project.html",
+    "file": "src/bridge/templates/_workspace_current.html",
     "old": "last commit: {{ git.last_commit_summary }}",
     "new": "last commit:",
     "tests": [
@@ -31,7 +31,7 @@
   },
   {
     "name": "fold away the sidechain subtotal, so a session's sidechain burn disappears into nothing",
-    "file": "src/bridge/templates/project.html",
+    "file": "src/bridge/templates/_workspace_history.html",
     "old": "{% if s[\"sidechain_tokens\"] %} · {{ s[\"sidechain_tokens\"] | kilo }} sidechain{% endif %}",
     "new": "",
     "tests": [
@@ -41,7 +41,7 @@
   },
   {
     "name": "fold away the cache create/read subtotal, so the parsed cache columns are dropped by the template again",
-    "file": "src/bridge/templates/project.html",
+    "file": "src/bridge/templates/_workspace_history.html",
     "old": "{% if s[\"tokens_cache_create\"] or s[\"tokens_cache_read\"] %} · cache {{ s[\"tokens_cache_create\"] | kilo }}w/{{ s[\"tokens_cache_read\"] | kilo }}r{% endif %}",
     "new": "",
     "tests": [

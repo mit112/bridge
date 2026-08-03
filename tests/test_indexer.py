@@ -393,16 +393,18 @@ def make_launch(store, project_id, mode, lid="L1", session_id=None, short_id=Non
     return lid
 
 
-def render_detail_page(store, project_id):
-    """Render `project.html` with the context the detail route gives it.
+def render_detail_page(cfg, store, project_id, tab="launches"):
+    """Render `project.html` through the real workspace model (`tab=launches`
+    by default, since every caller only inspects the launches table).
 
-    Rendered directly rather than through the route because the route's context
-    is another task's to extend; the filters come from `api` so a filter this
-    template names but the app does not register fails here.
+    Rendered directly rather than through the route because the route's
+    context is another task's to extend; the filters come from `api` so a
+    filter this template names but the app does not register fails here.
     """
     from jinja2 import Environment, FileSystemLoader, select_autoescape
 
     from bridge import api
+    from bridge.workspace import build_workspace
 
     env = Environment(
         loader=FileSystemLoader(str(Path(api.__file__).parent / "templates")),
@@ -411,20 +413,10 @@ def render_detail_page(store, project_id):
     env.filters["ago"] = api._ago
     env.filters["ago_epoch"] = api._ago_epoch
     env.filters["kilo"] = api._kilo
-    from dataclasses import replace as _replace
 
-    cached_git = store.get_git_cache(project_id)
-    git = None
-    if cached_git is not None:
-        git, probed_at = cached_git
-        git = _replace(git, cached_at=probed_at)
+    model = build_workspace(store, cfg, project_id, tab)
     return env.get_template("project.html").render(
-        project=store.get_project(project_id),
-        git=git,
-        sessions=store.sessions(project_id),
-        session_metas={},
-        handoffs=store.handoffs(project_id),
-        launches=store.launches(project_id),
+        model=model, active="projects", totals={"last_5h": 0},
     )
 
 
@@ -509,7 +501,7 @@ def test_a_launch_with_no_matching_session_renders_the_detail_page(env):
     write(projects, "s.jsonl", transcript_lines())
     reindex(store, cfg)
 
-    table = launches_table(render_detail_page(store, pid))
+    table = launches_table(render_detail_page(cfg, store, pid))
 
     assert "background" in table
     assert "no session yet" in table
@@ -525,7 +517,7 @@ def test_a_linked_launch_shows_its_session_on_the_detail_page(env):
     write(projects, "s.jsonl", transcript_lines())
     reindex(store, cfg)
 
-    table = launches_table(render_detail_page(store, pid))
+    table = launches_table(render_detail_page(cfg, store, pid))
 
     assert "Did work" in table, "the launched session's own title"
     assert "no session yet" not in table
