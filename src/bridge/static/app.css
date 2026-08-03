@@ -32,6 +32,7 @@
   }
 }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 body {
   margin: 0; background: var(--bg); color: var(--fg);
   font: var(--text-body)/1.5 var(--sans);

@@ -1,0 +1,12 @@
+[
+  {
+    "name": "let component display rules override hidden and expand every disclosure on load",
+    "file": "src/bridge/static/app.css",
+    "old": "[hidden] { display: none !important; }",
+    "new": "[hidden] { display: none; }",
+    "tests": [
+      "tests/test_api.py::test_author_css_cannot_override_hidden_disclosures"
+    ],
+    "expect_count": 1
+  }
+]

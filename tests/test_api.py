@@ -107,6 +107,14 @@ def test_pin_control_has_a_persistent_visible_label(client):
     assert "📌" not in button.group(0)
 
 
+def test_author_css_cannot_override_hidden_disclosures():
+    css = (
+        Path(__file__).resolve().parent.parent
+        / "src" / "bridge" / "static" / "app.css"
+    ).read_text()
+    assert "[hidden] { display: none !important; }" in css
+
+
 def test_unknown_project_returns_404(client):
     c, _, _ = client
     assert c.get("/project/99999").status_code == 404
