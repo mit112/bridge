@@ -111,15 +111,25 @@
         </div>
         <div class="attention-span__labels"><span>Session ended</span><span>Handoff ready</span><span>Next session</span></div>
         {% endif %}
-        {#- The list itself is guarded too: a `running` hero has neither a
-            handoff timestamp nor a waiting reason, and an empty `<dl>` would
-            still spend its top margin. -#}
-        {% if primary.meta.created_at or wait %}
+        {#- Each row is its own guarded fact, and the list itself is guarded too:
+            a `running` hero has no handoff timestamp and no waiting reason, and
+            an empty `<dl>` would still spend its top margin. The working tree is
+            NOT folded into "Last activity" -- a running session has no
+            ended-at, so that guard would drop its branch and dirty count
+            entirely, and a row labelled "Last activity" whose value is a branch
+            name would be a lie. -#}
+        {% if primary.meta.created_at or primary.meta.branch or primary.meta.dirty_count or wait %}
         <dl class="attention-detail">
           {% if primary.meta.created_at %}
           <div class="attention-detail__row">
             <dt>Last activity</dt>
-            <dd>{{ primary.meta.created_at | ago_epoch }} ago{% if primary.meta.branch %} · {{ primary.meta.branch }}{% endif %}{% if primary.meta.dirty_count %} · {{ primary.meta.dirty_count }} dirty{% endif %}</dd>
+            <dd>{{ primary.meta.created_at | ago_epoch }} ago</dd>
+          </div>
+          {% endif %}
+          {% if primary.meta.branch or primary.meta.dirty_count %}
+          <div class="attention-detail__row">
+            <dt>Working tree</dt>
+            <dd>{% if primary.meta.branch %}{{ primary.meta.branch }}{% endif %}{% if primary.meta.branch and primary.meta.dirty_count %} · {% endif %}{% if primary.meta.dirty_count %}{{ primary.meta.dirty_count }} dirty{% endif %}</dd>
           </div>
           {% endif %}
           {% if wait %}
@@ -131,8 +141,12 @@
         {% endif %}
         <div class="attention-primary__actions">
           <a class="btn btn--primary" href="{{ primary.primary_action.href }}">{{ primary.primary_action.label }}</a>
+          {#- A handoff's own primary_action is already the session tab, so the
+              ghost has to be the project page itself or it is a second button to
+              the identical URL. Every other kind's primary is the project page,
+              so for them the session tab is the distinct destination. -#}
           {% if primary.kind == "handoff" %}
-            <a class="btn" href="{{ primary.primary_action.href }}">Review handoff</a>
+            <a class="btn" href="/project/{{ primary.project_id }}">Open project</a>
           {% elif primary.project_id %}
             <a class="btn" href="/project/{{ primary.project_id }}?tab=current">View session</a>
           {% endif %}

@@ -458,6 +458,116 @@ def test_overview_route_uses_compact_primary_and_secondary_composition(tmp_path)
     store.close()
 
 
+def _hero(html: str) -> str:
+    """The `.attention-primary` article only -- scoping every hero assertion to
+    it keeps a secondary mini-card's markup from satisfying one by accident."""
+    hero = html[html.index('<article class="attention-primary '):]
+    return hero[:hero.index("</article>")]
+
+
+def _hero_actions(html: str) -> str:
+    hero = _hero(html)
+    actions = hero[hero.index('<div class="attention-primary__actions">'):]
+    return actions[:actions.index("</div>")]
+
+
+def test_handoff_hero_ghost_action_is_not_a_duplicate_of_the_primary(tmp_path):
+    """One primary action per view, and the ghost beside it must go somewhere
+    else. A handoff's own `primary_action` is already `?tab=current`
+    (`overview.py`'s handoff branch), so pointing the ghost at
+    `primary_action.href` -- or at the generic `?tab=current` fallback -- makes
+    it a second button to the identical URL: two controls, one destination,
+    which is exactly the redundant twin the spec forbids.
+    """
+    c, store, _ = _route_client(tmp_path)
+    pid = store.upsert_project("/p/handoff", "handoff-project")
+    store.create_handoff(Handoff(
+        id="h1", project_path="/p/handoff", next_prompt="keep going", created_at=1,
+    ), pid)
+
+    actions = _hero_actions(c.get("/").text)
+    hrefs = re.findall(r'<a class="btn[^"]*" href="([^"]+)"', actions)
+
+    assert len(hrefs) == 2, f"hero should offer a primary and one ghost: {hrefs}"
+    assert len(set(hrefs)) == 2, f"ghost duplicates the primary's href: {hrefs}"
+    assert f"/project/{pid}?tab=current" in hrefs
+    assert f"/project/{pid}" in hrefs
+    assert actions.count("btn--primary") == 1
+    store.close()
+
+
+def test_running_hero_keeps_its_working_tree_without_a_last_activity_row(tmp_path,
+                                                                        monkeypatch):
+    """A running item's `meta` carries `branch`/`dirty_count` but never a
+    `created_at` (`overview.py`'s running branch), so guarding the branch and
+    dirty count behind a "Last activity" timestamp silently drops both from the
+    hero -- the facts the retired `.attention-primary__meta` strip always
+    showed. They belong to their own labelled row: calling a branch name "Last
+    activity" would be a lie, and a live session has no ended-at to report.
+    """
+    from bridge import agents
+    import bridge.cards as cards_mod
+
+    monkeypatch.setattr(agents, "probe", lambda *a, **k: AgentsState(
+        status="ok", sessions=[LiveSession(
+            session_id="live-1", cwd="/p/running", kind="interactive",
+            status="busy",
+        )],
+    ))
+    monkeypatch.setattr(cards_mod.gitprobe, "probe", lambda p: GitState(
+        status="ok", branch="feature/almanac", dirty_count=4,
+    ))
+
+    c, store, _ = _route_client(tmp_path)
+    store.upsert_project("/p/running", "running-project")
+
+    hero = _hero(c.get("/").text)
+
+    assert "<dt>Working tree</dt>" in hero
+    assert "feature/almanac · 4 dirty" in hero
+    assert "<dt>Last activity</dt>" not in hero
+    assert "<dt>Waiting on</dt>" not in hero
+    store.close()
+
+
+def test_working_tree_row_separates_branch_and_dirty_only_when_it_has_both(tmp_path,
+                                                                          monkeypatch):
+    """The row is built from two independently-absent facts, so the separator
+    has to belong to the pair rather than to either half. A stray leading or
+    trailing ` · ` -- or a literal `None` from an unguarded null branch, which
+    `GitState.branch` permits -- is the failure mode."""
+    from bridge import agents
+    import bridge.cards as cards_mod
+
+    monkeypatch.setattr(agents, "probe", lambda *a, **k: AgentsState(
+        status="ok", sessions=[LiveSession(
+            session_id="live-1", cwd="/p/running", kind="interactive",
+            status="busy",
+        )],
+    ))
+
+    cases = [
+        ("both", "feature/almanac", 4, "feature/almanac · 4 dirty"),
+        ("branch-only", "feature/almanac", 0, "feature/almanac"),
+        ("dirty-only", None, 4, "4 dirty"),
+    ]
+    for name, branch, dirty, expected in cases:
+        monkeypatch.setattr(cards_mod.gitprobe, "probe", lambda p, branch=branch,
+                            dirty=dirty: GitState(
+            status="ok", branch=branch, dirty_count=dirty,
+        ))
+        c, store, _ = _route_client(tmp_path, name=f"tree-{name}")
+        store.upsert_project("/p/running", "running-project")
+
+        hero = _hero(c.get("/").text)
+        row = re.search(r"<dt>Working tree</dt>\s*<dd>(.*?)</dd>", hero, re.S)
+
+        assert row is not None, f"{name}: no working-tree row"
+        assert row.group(1).strip() == expected, f"{name}: {row.group(1)!r}"
+        assert "None" not in row.group(1), f"{name}: null branch leaked"
+        store.close()
+
+
 def test_overview_route_keeps_freshness_strip_and_total_hooks_for_live_js(tmp_path):
     c, store, _ = _route_client(tmp_path)
     store.upsert_project("/p/quiet", "quiet-project")
