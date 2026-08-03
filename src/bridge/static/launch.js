@@ -179,15 +179,24 @@ document.addEventListener("click", async (event) => {
     // The launch band that was driving THIS handoff -- matched by
     // `data-launch-handoff`, not by the band's own id, since the band's id is
     // keyed off the project, not the handoff. Demoted to a plain launch: the
-    // attributes that named the now-dismissed prompt are removed, and the
-    // primary button's label falls back to the empty-state wording.
+    // handoff link is dropped and `data-launch-prompt` is RE-POINTED at the ad
+    // hoc compose textarea rather than removed, landing the band on the exact
+    // empty-state wiring the server renders when nothing is queued -- the band
+    // id is `launch-<project_id>` and the compose box is `compose-<project_id>`.
+    // The primary button falls back to the empty-state label AND starts
+    // disabled (enabled only once the compose box has text, by the input
+    // listener above); without this, "Start session" would fire a promptless
+    // /api/launch and 422.
     const band = document.querySelector(`[data-launch-handoff="${id}"]`);
     if (band) {
       band.removeAttribute("data-launch-handoff");
-      band.removeAttribute("data-launch-prompt");
+      const composeId = (band.getAttribute("data-launch") || "").replace(/^launch-/, "compose-");
+      band.setAttribute("data-launch-prompt", composeId);
       const launchButton = band.querySelector("[data-launch-button]");
       if (launchButton && launchButton.textContent.trim() === "Continue in Terminal") {
         launchButton.textContent = "Start session";
+        const compose = document.getElementById(composeId);
+        launchButton.disabled = !compose || compose.value.trim() === "";
       }
     }
 

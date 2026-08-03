@@ -291,10 +291,19 @@ DISMISS_HARNESS = """
 globalThis.window = globalThis;
 let clickHandlers = [];
 const section = { hidden: false };
-const launchButton = { textContent: "Continue in Terminal" };
+const launchButton = { textContent: "Continue in Terminal", disabled: false };
+// The ad hoc compose textarea the demoted band must re-point at. Starts empty,
+// so the demoted button must land disabled -- exactly the server-rendered
+// empty state.
+const composeField = { value: "" };
 const band = {
-  attrs: { "data-launch-handoff": "h1", "data-launch-prompt": "handoff-h1" },
+  attrs: {
+    "data-launch-handoff": "h1",
+    "data-launch-prompt": "handoff-h1",
+    "data-launch": "launch-1",
+  },
   getAttribute(name) { return Object.prototype.hasOwnProperty.call(this.attrs, name) ? this.attrs[name] : null; },
+  setAttribute(name, value) { this.attrs[name] = value; },
   removeAttribute(name) { delete this.attrs[name]; },
   querySelector(sel) { return sel === "[data-launch-button]" ? launchButton : null; },
 };
@@ -309,6 +318,7 @@ const controls = {
 globalThis.document = {
   addEventListener(type, fn) { if (type === "click") clickHandlers.push(fn); },
   querySelector: (sel) => controls[sel] ?? null,
+  getElementById: (id) => (id === "compose-1" ? composeField : null),
 };
 // A reload or a `location.href` assignment would be the "no reload" contract
 // broken -- neither is ever referenced by the handler, but stubbing both as
@@ -340,7 +350,9 @@ Promise.all(clickHandlers.map((fn) => fn(event))).then(() => {
     sectionHidden: section.hidden,
     emptyHidden: empty.hidden,
     bandStillHasHandoff: Object.prototype.hasOwnProperty.call(band.attrs, "data-launch-handoff"),
+    bandPromptTarget: Object.prototype.hasOwnProperty.call(band.attrs, "data-launch-prompt") ? band.attrs["data-launch-prompt"] : null,
     launchButtonText: launchButton.textContent,
+    launchButtonDisabled: launchButton.disabled,
     statusText: status.textContent,
     reloadCalled,
     hrefAssigned,
@@ -388,6 +400,18 @@ def test_dismiss_handoff_updates_the_dom_in_place_on_success(tmp_path):
     assert "Dismissed" in result["statusText"]
     assert result["reloadCalled"] is False
     assert result["hrefAssigned"] is False
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_dismiss_handoff_repoints_band_at_compose_and_disables_start(tmp_path):
+    # Demoting the band must land it on the SAME empty-state wiring the server
+    # renders when nothing is queued: `data-launch-prompt` names the ad hoc
+    # compose textarea (`compose-<project_id>`, derived from the band's own
+    # `launch-<project_id>` id) and the primary button starts disabled. Without
+    # this, "Start session" would fire immediately with no prompt and 422.
+    result = _run_dismiss_harness(tmp_path)
+    assert result["bandPromptTarget"] == "compose-1"
+    assert result["launchButtonDisabled"] is True
 
 
 # --- Phase 4 Task 8: live.js behaviour ---------------------------------------
