@@ -704,7 +704,7 @@ def create_app(
         diag = _diagnostics()
         return templates.TemplateResponse(
             request, "diagnostics.html",
-            {"diag": diag, "alert": _needs_attention(diag)},
+            {"diag": diag, "alert": _needs_attention(diag), "active": "diagnostics"},
         )
 
     @app.get("/", response_class=HTMLResponse)
@@ -801,6 +801,7 @@ def create_app(
                 "scheduled": scheduled,
                 "scheduled_older": older_count,
                 "diag_alert": _needs_attention(diag),
+                "active": "overview",
                 "dashboard_update": dashboard_update,
                 "totals": {
                     "today": sum(c.tokens_today for c in cards),

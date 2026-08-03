@@ -1,0 +1,49 @@
+{# Shared shell macros -- imported by base.html so every page renders the same
+   nav and (where a page has the data) the same connection-freshness strip,
+   instead of each template hand-rolling its own copy. #}
+
+{% macro app_nav(active) %}
+<nav aria-label="Primary" id="primary-nav" class="sidebar__nav">
+  <div class="sidebar__group">
+    <h2 class="sidebar__group-title">Workspace</h2>
+    <ul class="sidebar__list">
+      <li>
+        <a class="sidebar__link" href="/"{% if active == "overview" %} aria-current="page"{% endif %}>
+          <svg class="sidebar__icon" aria-hidden="true" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 11.5 12 5l8 6.5" />
+            <path d="M6 10.5V19h12v-8.5" />
+          </svg>
+          <span class="sidebar__label">Overview</span>
+        </a>
+      </li>
+    </ul>
+  </div>
+  <div class="sidebar__group">
+    <h2 class="sidebar__group-title">System</h2>
+    <ul class="sidebar__list">
+      <li>
+        <a class="sidebar__link" href="/diagnostics"{% if active == "diagnostics" %} aria-current="page"{% endif %}>
+          <svg class="sidebar__icon" aria-hidden="true" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 3v5M12 16v5M5 7.5l3.5 3M15.5 13.5l3.5 3M19 7.5l-3.5 3M8.5 13.5 5 16.5" />
+            <circle cx="12" cy="12" r="2.2" />
+          </svg>
+          <span class="sidebar__label">Diagnostics</span>
+        </a>
+      </li>
+    </ul>
+  </div>
+</nav>
+{% endmacro %}
+
+{% macro freshness_status(state, age, generated_at=none, generation=none, index_at=none, server=none) %}
+<section class="freshness-strip" data-freshness-strip
+         {% if generated_at is not none %}data-generated-at="{{ generated_at }}"{% endif %}
+         {% if generation is not none %}data-generation="{{ generation }}"{% endif %}
+         data-index-at="{{ index_at or '' }}"
+         data-server="{{ server }}"
+         data-freshness-state="{{ state }}">
+  <span class="freshness-strip__label" data-freshness-label role="status" aria-live="polite">{{ state }}</span>
+  <span class="card__note" data-freshness-age>{{ age }}</span>
+  {% if caller %}{{ caller() }}{% endif %}
+</section>
+{% endmacro %}

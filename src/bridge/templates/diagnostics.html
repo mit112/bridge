@@ -1,7 +1,6 @@
 {% extends "base.html" %}
+{% block page_title %}Diagnostics{% endblock %}
 {% block content %}
-<h1>Diagnostics</h1>
-
 {# Status is never colour alone: each row says what it is in words. #}
 <p class="{{ 'risk' if alert else 'muted' }}">
   {% if alert %}⚠ Something needs attention{% else %}Nothing is wrong{% endif %}

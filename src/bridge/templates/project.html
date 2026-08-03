@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ project.name }} — Bridge{% endblock %}
+{% block page_title %}{{ project.name }}{% endblock %}
 {% block content %}
-<h1 class="page-title">{{ project.name }}</h1>
 <p class="card__path">{{ project.path }}</p>
 {# Recent git, spec:394. Read from git_cache -- these fields were probed on
    every card build and rendered nowhere. Only status=="ok" is ever cached, so

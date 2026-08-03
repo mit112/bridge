@@ -1,5 +1,7 @@
 {% extends "base.html" %}
-{% block topbar %}
+{% from "_shell.html" import freshness_status %}
+{% block page_title %}Overview{% endblock %}
+{% block page_summary %}
 <dl class="totals">
   <div class="total" data-dashboard-total="projects"><dt>projects</dt><dd>{{ totals.projects }}</dd></div>
   <div class="total" data-dashboard-total="running"><dt>running</dt><dd>{{ totals.running }}</dd></div>
@@ -18,22 +20,21 @@
      and a fresh install genuinely has not indexed yet. #}
   <div class="total" data-dashboard-total="last_index"><dt>indexed</dt><dd>{{ (totals.last_index | ago_epoch) or "never" }}</dd></div>
 </dl>
+{% endblock %}
+{% block page_actions %}
 {% set freshness = dashboard_update.freshness %}
 {% set freshness_state = "unavailable" if freshness.server == "unavailable" or freshness.index_at is none else ("stale" if freshness.index_age_seconds >= 45 else "connected") %}
-<section class="freshness-strip" data-freshness-strip
-         data-generated-at="{{ dashboard_update.generated_at }}"
-         data-generation="{{ dashboard_update.generation }}"
-         data-index-at="{{ freshness.index_at or '' }}"
-         data-server="{{ freshness.server }}"
-         data-freshness-state="{{ freshness_state }}">
-  <span class="freshness-strip__label" data-freshness-label role="status" aria-live="polite">{{ freshness_state }}</span>
-  <span class="card__note" data-freshness-age>{{ freshness.index_age_seconds if freshness.index_age_seconds is not none else "never indexed" }}</span>
+{% call freshness_status(freshness_state,
+                          freshness.index_age_seconds if freshness.index_age_seconds is not none else "never indexed",
+                          generated_at=dashboard_update.generated_at,
+                          generation=dashboard_update.generation,
+                          index_at=freshness.index_at,
+                          server=freshness.server) %}
   <button type="button" class="btn" data-dashboard-refresh>Refresh</button>
   <span class="card__note" data-refresh-status role="status" aria-live="polite"></span>
-</section>
+{% endcall %}
 {% endblock %}
 {% block content %}
-<h1 class="visually-hidden">Bridge project control panel</h1>
 {% if not cards %}
   <p class="empty">No projects indexed yet. Run <code>uv run python -m bridge index</code>.</p>
 {% endif %}

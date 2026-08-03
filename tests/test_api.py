@@ -103,7 +103,7 @@ def test_html_pages_have_one_page_heading_home_navigation_and_metadata(client):
     for path in ("/", f"/project/{pid}", "/diagnostics"):
         html = c.get(path).text
         assert len(re.findall(r"<h1\b", html)) == 1, path
-        assert '<a class="topbar__home" href="/">Bridge</a>' in html
+        assert '<a class="sidebar__brand" href="/">Bridge</a>' in html
         assert '<meta name="description"' in html
         assert '<link rel="icon" href="/static/favicon.svg"' in html
     assert c.get("/static/favicon.svg").status_code == 200
@@ -1052,7 +1052,13 @@ def test_every_new_control_is_labelled_and_none_leaves_the_tab_order(launch_app)
 
     html = c.get("/").text
 
-    assert 'tabindex="-1"' not in html
+    # `<main id="main" tabindex="-1">` is the one deliberate exception: it is
+    # the skip link's landmark target, not a control, and WCAG's own
+    # technique for a programmatically-focusable landmark (SCR29) is to give
+    # it tabindex="-1" rather than pull it into the tab order. Every OTHER
+    # tabindex="-1" would still be a control silently pulled out of the flow.
+    assert html.count('tabindex="-1"') == 1
+    assert '<main id="main" tabindex="-1">' in html
     labelled = set(re.findall(r'<label[^>]*\sfor="([^"]+)"', html))
     fields = re.findall(r"<(?:select|textarea)\b[^>]*>", html)
     # Three launch-band selects and the handoff's own prompt field, plus

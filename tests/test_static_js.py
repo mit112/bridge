@@ -1420,3 +1420,85 @@ def test_a_retry_refused_for_any_other_reason_keeps_the_button(tmp_path):
     got = _run_retry(tmp_path, {"detail": "boom"}, ok=False, code=500)
     assert got["buttonRemoved"] is False
     assert got["retryTarget"] == "sched-5"
+
+
+# --- Task 1.3: shell.js — the Menu disclosure toggles the sidebar nav -------
+#
+# Nothing here exercises real CSS, so this cannot prove the nav is visually
+# hidden at narrow widths -- only that the JS which drives the disclosure
+# does not run until a click, and toggles both halves of the ARIA contract
+# (the button's `aria-expanded` and the nav's `hidden` attribute) in lockstep.
+
+SHELL_JS = Path(__file__).resolve().parent.parent / "src" / "bridge" / "static" / "shell.js"
+
+SHELL_HARNESS = """
+globalThis.window = globalThis;
+const nav = {
+  attrs: {},
+  hasAttribute(name) { return Object.prototype.hasOwnProperty.call(this.attrs, name); },
+  setAttribute(name, value) { this.attrs[name] = value; },
+  removeAttribute(name) { delete this.attrs[name]; },
+};
+const button = {
+  attrs: { "aria-expanded": "true", "aria-controls": "primary-nav" },
+  getAttribute(name) { return this.attrs[name] ?? null; },
+  setAttribute(name, value) { this.attrs[name] = value; },
+  closest(sel) { return sel === ".menu-toggle" ? this : null; },
+};
+let clickHandler = null;
+globalThis.document = {
+  addEventListener(type, fn) { if (type === "click") clickHandler = fn; },
+  getElementById: (id) => (id === "primary-nav" ? nav : null),
+};
+
+const fs = require("fs");
+eval(fs.readFileSync(process.argv[2], "utf8"));
+
+const beforeExpanded = button.attrs["aria-expanded"];
+const beforeHidden = nav.hasAttribute("hidden");
+
+clickHandler({ target: button });
+const afterFirstClickExpanded = button.attrs["aria-expanded"];
+const afterFirstClickHidden = nav.hasAttribute("hidden");
+
+clickHandler({ target: button });
+const afterSecondClickExpanded = button.attrs["aria-expanded"];
+const afterSecondClickHidden = nav.hasAttribute("hidden");
+
+console.log(JSON.stringify({
+  beforeExpanded, beforeHidden,
+  afterFirstClickExpanded, afterFirstClickHidden,
+  afterSecondClickExpanded, afterSecondClickHidden,
+}));
+"""
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_shell_js_does_nothing_on_load(tmp_path):
+    """With no JS -- or before any click -- the nav is exactly as the server
+    rendered it: visible, `hidden` absent. Loading shell.js must not itself
+    collapse the nav; only a click may."""
+    harness = tmp_path / "shell_load_harness.js"
+    harness.write_text(SHELL_HARNESS)
+    proc = subprocess.run(
+        [_node(), str(harness), str(SHELL_JS)], capture_output=True, text=True
+    )
+    assert proc.returncode == 0, proc.stderr
+    got = json.loads(proc.stdout)
+    assert got["beforeHidden"] is False
+    assert got["beforeExpanded"] == "true"
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_shell_js_menu_toggle_collapses_and_restores_the_nav(tmp_path):
+    harness = tmp_path / "shell_toggle_harness.js"
+    harness.write_text(SHELL_HARNESS)
+    proc = subprocess.run(
+        [_node(), str(harness), str(SHELL_JS)], capture_output=True, text=True
+    )
+    assert proc.returncode == 0, proc.stderr
+    got = json.loads(proc.stdout)
+    assert got["afterFirstClickExpanded"] == "false"
+    assert got["afterFirstClickHidden"] is True
+    assert got["afterSecondClickExpanded"] == "true"
+    assert got["afterSecondClickHidden"] is False

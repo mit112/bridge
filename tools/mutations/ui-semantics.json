@@ -2,8 +2,8 @@
   {
     "name": "turn the Bridge wordmark back into a non-navigable heading",
     "file": "src/bridge/templates/base.html",
-    "old": "    <a class=\"topbar__home\" href=\"/\">Bridge</a>",
-    "new": "    <h1>Bridge</h1>",
+    "old": "        <a class=\"sidebar__brand\" href=\"/\">Bridge</a>",
+    "new": "        <h1>Bridge</h1>",
     "tests": [
       "tests/test_api.py::test_html_pages_have_one_page_heading_home_navigation_and_metadata"
     ],

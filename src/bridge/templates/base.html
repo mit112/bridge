@@ -4,24 +4,44 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="Local control panel for Claude Code project state, handoffs, and launches.">
-  <meta name="theme-color" content="#f4f2ed" media="(prefers-color-scheme: light)">
-  <meta name="theme-color" content="#171817" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#f4f6f5" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#12191b" media="(prefers-color-scheme: dark)">
   <title>{% block title %}Bridge{% endblock %}</title>
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
-  <header class="topbar">
-    <a class="topbar__home" href="/">Bridge</a>
-    {# Shown only when something is actually wrong. A permanent link would
-       train the eye to ignore it, which is exactly the signal it exists to
-       carry. Undefined on pages that do not compute it, which Jinja treats as
-       falsy -- so those pages simply omit it rather than erroring. #}
-    <a class="risk" href="/diagnostics" data-diagnostics-alert
-       {% if not diag_alert %}hidden{% endif %}>{% if diag_alert %}⚠ {% endif %}Diagnostics</a>
-    {% block topbar %}{% endblock %}
-  </header>
-  <main>{% block content %}{% endblock %}</main>
+  {% from "_shell.html" import app_nav %}
+  <a class="skip-link" href="#main">Skip to content</a>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="sidebar__head">
+        <a class="sidebar__brand" href="/">Bridge</a>
+        <button type="button" class="menu-toggle" aria-expanded="true" aria-controls="primary-nav">Menu</button>
+      </div>
+      {{ app_nav(active) }}
+    </aside>
+    <div class="shell__body">
+      <header class="page-head">
+        <div class="page-head__text">
+          <h1 class="page-title">{% block page_title %}Bridge{% endblock %}</h1>
+          {% block page_summary %}{% endblock %}
+        </div>
+        <div class="page-actions">
+          {# Shown only when something is actually wrong. A permanent link
+             would train the eye to ignore it, which is exactly the signal it
+             exists to carry. Undefined on pages that do not compute it, which
+             Jinja treats as falsy -- so those pages simply omit the alert
+             rather than erroring. #}
+          <a class="risk" href="/diagnostics" data-diagnostics-alert
+             {% if not diag_alert %}hidden{% endif %}>{% if diag_alert %}⚠ {% endif %}Diagnostics</a>
+          {% block page_actions %}{% endblock %}
+        </div>
+      </header>
+      <main id="main" tabindex="-1">{% block content %}{% endblock %}</main>
+    </div>
+  </div>
+  <script src="/static/shell.js" defer></script>
   <script src="/static/copy.js" defer></script>
   {# After copy.js, which defines the clipboard helper launch.js reuses. #}
   <script src="/static/launch.js" defer></script>

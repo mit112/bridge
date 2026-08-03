@@ -34,6 +34,14 @@
   --field-line: var(--p-field-line);
   --focus: var(--p-work);
   --nav: var(--p-nav);
+  /* The sidebar itself does not flip with the theme (--p-nav is a dark rail
+     in both), so its own text is fixed rather than aliased to --text/--work,
+     which would go dark-on-dark under the light theme. Same values the dark
+     theme already uses for --p-text/--p-text-2/--p-work, since a dark nav
+     rail is exactly the surface those were designed for. */
+  --nav-text: #eef3f2;
+  --nav-text-secondary: #a9b7b8;
+  --nav-accent: #77b4c0;
 
   /* Legacy semantic names, repointed at the primitives above so existing
      component CSS and templates keep working unchanged. */
@@ -165,7 +173,7 @@ body {
   font: var(--text-body)/1.5 var(--font-sans);
 }
 a { color: var(--accent); text-underline-offset: .16em; }
-:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 
 .visually-hidden {
   position: absolute;
@@ -179,29 +187,118 @@ a { color: var(--accent); text-underline-offset: .16em; }
   border: 0;
 }
 
-.topbar {
-  display: flex; align-items: baseline; gap: var(--space-6); flex-wrap: wrap;
-  padding: var(--space-3) var(--space-6); border-bottom: 1px solid var(--line);
+/* --- Shared app shell: skip link, sidebar nav, page head. ------------------
+   The sidebar is a fixed-dark rail in both themes (--p-nav stays dark under
+   `prefers-color-scheme: light` too), so its own text uses the --nav-* tokens
+   below rather than the theme-flipping --text/--work, which would go
+   unreadable-dark-on-dark under the light theme. */
+.skip-link {
+  position: absolute;
+  top: var(--space-3);
+  left: var(--space-3);
+  z-index: 100;
+  padding: var(--space-2) var(--space-4);
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
+  /* Off-screen via `transform`, not `top`/layout, so revealing it on focus
+     is a compositor-only change -- never a layout animation. */
+  transform: translateY(-150%);
+  transition: transform var(--motion-fast) ease;
+}
+.skip-link:focus-visible { transform: translateY(0); }
+
+.shell { display: grid; grid-template-columns: minmax(0, 1fr); min-height: 100vh; }
+@media (min-width: 1024px) {
+  .shell { grid-template-columns: 208px minmax(0, 1fr); }
+}
+
+.sidebar {
+  background: var(--nav);
+  color: var(--nav-text-secondary);
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.sidebar__head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
+.sidebar__brand {
+  color: var(--nav-text);
+  font: 700 1rem/1 var(--font-sans);
+  letter-spacing: .06em;
+  text-decoration: none;
+  text-transform: uppercase;
+}
+.menu-toggle {
+  display: none;
+  min-height: var(--control-min);
+  padding: .35rem .7rem;
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--nav-text);
+  background: transparent;
+  border: 1px solid var(--nav-text-secondary);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+@media (max-width: 1023px) { .menu-toggle { display: inline-flex; align-items: center; } }
+
+.sidebar__group + .sidebar__group { margin-top: var(--space-2); }
+.sidebar__group-title {
+  margin: 0 0 var(--space-1);
+  font-size: var(--text-xs);
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--nav-text-secondary);
+}
+.sidebar__list { list-style: none; margin: 0; padding: 0; }
+.sidebar__link {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--control-min);
+  padding: .35rem var(--space-2);
+  border-radius: var(--radius-sm);
+  color: var(--nav-text-secondary);
+  text-decoration: none;
+}
+@media (max-width: 1023px) { .sidebar__link { min-height: 44px; } }
+.sidebar__link:hover { color: var(--nav-text); background: rgb(255 255 255 / 8%); }
+.sidebar__link[aria-current="page"] {
+  color: var(--nav-text);
+  font-weight: 600;
+  background: rgb(255 255 255 / 12%);
+  box-shadow: inset 3px 0 0 var(--nav-accent);
+}
+.sidebar__icon { flex: 0 0 auto; }
+
+.page-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+  padding: var(--space-4) var(--space-6);
+  border-bottom: 1px solid var(--line);
   background: var(--card);
   position: sticky;
   top: 0;
   z-index: 10;
 }
-.topbar__home {
-  color: var(--fg);
-  font: 700 1rem/1 var(--display);
-  letter-spacing: .1em;
-  text-decoration: none;
-  text-transform: uppercase;
-}
-.totals { display: flex; gap: var(--space-2) var(--space-6); margin: 0; flex-wrap: wrap; }
+.page-title { margin: 0; font: 700 var(--text-page)/1.2 var(--font-sans); }
+.page-actions { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+
+.freshness-strip { display: flex; align-items: baseline; gap: .4rem; font-size: var(--text-sm); }
+.freshness-strip__label { font-weight: 600; }
+
+.totals { display: flex; gap: var(--space-2) var(--space-6); margin: var(--space-2) 0 0; flex-wrap: wrap; }
 .total { white-space: nowrap; }
 .totals dt { color: var(--muted); font-size: var(--text-xs); }
 .totals dd { margin: 0 0 0 .35rem; font-variant-numeric: tabular-nums; }
 .totals dt, .totals dd { display: inline; }
 
-main { width: min(100%, 1800px); margin: 0 auto; padding: var(--space-6); }
-main > h1, .page-title { margin: 0; font: 700 var(--text-page)/1.2 var(--display); }
+main { width: min(100%, 68rem); margin-inline: auto; padding: var(--space-6); }
 .cards { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-4); }
 @media (min-width: 1400px) { .cards { grid-template-columns: 1fr 1fr; } }
 
@@ -613,8 +710,7 @@ main > h1, .page-title { margin: 0; font: 700 var(--text-page)/1.2 var(--display
 .diag th { width: 18rem; }
 
 @media (max-width: 720px) {
-  .topbar { position: static; padding: var(--space-3) var(--space-4); }
-  .topbar__home { flex-basis: 100%; }
+  .page-head { position: static; padding: var(--space-3) var(--space-4); }
   .totals { gap: var(--space-1) var(--space-4); }
   main { padding: var(--space-4); }
   .card { padding: var(--space-3); }
@@ -627,4 +723,5 @@ main > h1, .page-title { margin: 0; font: 700 var(--text-page)/1.2 var(--display
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto; }
+  .skip-link { transition: none; }
 }
