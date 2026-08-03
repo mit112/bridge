@@ -36,17 +36,25 @@ class DashboardBuilder:
         self.agents_fn = agents_fn
         self.now_fn = now_fn
 
-    def full_update(self, refresh: RefreshResult | None = None) -> dict:
-        now = self.now_fn()
-        state = self._live_state(now)
-        cards = build_cards(
-            self.store,
-            self.cfg,
-            probe_fn=self.probe_fn,
-            agents_fn=lambda: state,
-            debouncer=None,
-            hook_state=None,
-        )
+    def full_update(
+        self,
+        refresh: RefreshResult | None = None,
+        *,
+        live_state: AgentsState | None = None,
+        cards: list[Card] | None = None,
+        now: int | None = None,
+    ) -> dict:
+        now = self.now_fn() if now is None else now
+        state = live_state if live_state is not None else self._live_state(now)
+        if cards is None:
+            cards = build_cards(
+                self.store,
+                self.cfg,
+                probe_fn=self.probe_fn,
+                agents_fn=lambda: state,
+                debouncer=None,
+                hook_state=None,
+            )
         status = self.coordinator.status_snapshot()
         return self._envelope(
             kind="snapshot",

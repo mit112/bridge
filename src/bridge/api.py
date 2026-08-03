@@ -26,7 +26,7 @@ from pydantic import BaseModel, field_validator, model_validator
 from bridge import agents, hooks, launcher, schedspool, sessionmeta, spool
 from bridge.cards import FIVE_HOURS, LivenessDebouncer, build_cards, spark_points
 from bridge.config import Config
-from bridge.indexer import reindex
+from bridge.dashboard import DashboardBuilder
 from bridge.models import AgentsState, Handoff, ScheduledRun
 from bridge.refresh import RefreshCoordinator
 from bridge.registry import display_name, resolve_project
@@ -471,6 +471,14 @@ def create_app(
     # and why nothing below can raise.
 
     hook_state = app.state.hook_state = hooks.HookState()
+    dashboard_builder = app.state.dashboard_builder = DashboardBuilder(
+        store,
+        cfg,
+        refresh_coordinator,
+        debouncer=debouncer,
+        hook_state=hook_state,
+        agents_fn=lambda: agents.probe(),
+    )
 
     @app.post("/api/hooks")
     async def post_hook(request: Request):
@@ -596,19 +604,46 @@ def create_app(
     @app.get("/events")
     def events(max_ticks: int | None = None, interval: float = 3.0,
                max_seconds: float = SSE_MAX_SECONDS):
+        def live_signature(payload: dict) -> dict:
+            return {
+                "topbar": {"running": payload["topbar"]["running"]},
+                "diagnostics": payload["diagnostics"],
+                "freshness": payload["freshness"],
+                "cards": {
+                    project_id: {"live": card["live"]}
+                    for project_id, card in payload["cards"].items()
+                },
+                "unattributed": payload["unattributed"],
+                "refresh": {"error": payload["refresh"]["error"]},
+            }
+
         def stream():
             started = time.monotonic()
             ticks = 0
             previous = None
+            previous_generation = None
+            previous_live_signature = None
             while True:
-                payload = _live_snapshot()   # takes and releases the lock
+                status = refresh_coordinator.status_snapshot()
                 if previous is None:
+                    payload = dashboard_builder.full_update()
                     yield _frame("snapshot", payload)
+                    previous_generation = payload["generation"]
+                    previous = payload
+                    previous_live_signature = live_signature(payload)
+                elif status.generation != previous_generation:
+                    payload = dashboard_builder.full_update()
+                    yield _frame("update", payload)
+                    previous_generation = payload["generation"]
+                    previous = payload
+                    previous_live_signature = live_signature(payload)
                 else:
-                    delta = _delta(previous, payload)
-                    if delta is not None:
-                        yield _frame("delta", delta)
-                previous = payload
+                    payload = dashboard_builder.live_patch()
+                    current_live_signature = live_signature(payload)
+                    if current_live_signature != previous_live_signature:
+                        yield _frame("update", payload)
+                    previous = payload
+                    previous_live_signature = current_live_signature
                 ticks += 1
 
                 if max_ticks is not None and ticks >= max_ticks:
@@ -676,12 +711,10 @@ def create_app(
         # ONE probe for the whole page. `build_cards` guards its own call, so
         # the guard has to move out here with it: without this a sensor failure
         # would 500 the dashboard instead of rendering it with no live bands.
-        try:
-            probe = agents.probe()
-        except Exception:  # noqa: BLE001
-            probe = AgentsState(status="unavailable", sessions=[], source="none")
+        now = now_epoch()
+        probe = dashboard_builder._live_state(now)
         cards = build_cards(store, cfg, agents_fn=lambda: probe,
-                            debouncer=debouncer, hook_state=hook_state)
+                            debouncer=None, hook_state=None)
         # `store.projects()` whitelists `active`, so a hidden project is absent
         # from the cards entirely. Without this list, hiding one would be a
         # one-way door: nothing in the panel could name it again, let alone
@@ -696,9 +729,12 @@ def create_app(
         # Built from the same snapshot the SSE stream sends, so the block below
         # and the live ticks that patch it can never disagree about what is
         # running where -- the same reason the overlay is shared at line 218.
-        snapshot = _live_snapshot(probe)
+        dashboard_update = dashboard_builder.full_update(
+            live_state=probe, cards=cards, now=now,
+        )
         unattributed = [
-            dict(snapshot["live"][cwd], cwd=cwd) for cwd in snapshot["unattributed"]
+            dict(session, cwd=session["path"])
+            for session in dashboard_update["unattributed"]
         ]
         last_5h = sum(c.tokens_5h for c in cards)
         # Server-rendered exactly like `hidden` above: `cancelled` is a schedule
@@ -764,6 +800,7 @@ def create_app(
                 "scheduled": scheduled,
                 "scheduled_older": older_count,
                 "diag_alert": _needs_attention(diag),
+                "dashboard_update": dashboard_update,
                 "totals": {
                     "today": sum(c.tokens_today for c in cards),
                     "last_5h": last_5h,
@@ -839,7 +876,8 @@ def create_app(
 
     @app.post("/api/refresh")
     def refresh():
-        return asdict(reindex(store, cfg))
+        result = refresh_coordinator.run_once()
+        return dashboard_builder.full_update(refresh=result)
 
     @app.post("/api/handoff", status_code=201)
     def post_handoff(body: HandoffIn):

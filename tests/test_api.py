@@ -10,6 +10,7 @@ from bridge.api import DASHBOARD_TERMINAL_SCHEDULES, create_app
 from bridge.config import load
 from bridge.models import GitState, Handoff, Launch, ScheduledRun, SessionRecord
 from bridge.registry import resolve_project
+from bridge.refresh import RefreshCoordinator, RefreshStatus
 from bridge.store import Store, now_epoch
 
 DEMO = "/Users/mitsheth/dev/demo"
@@ -59,7 +60,7 @@ def test_dashboard_renders_with_zero_projects(tmp_path):
 
 
 def test_project_detail_renders(client):
-    c, _, pid = client
+    c, _, _ = client
     r = c.get(f"/project/{pid}")
     assert r.status_code == 200
     assert "Did the work" in r.text
@@ -169,11 +170,43 @@ def test_the_project_page_breaks_down_session_tokens_including_sidechain(client)
     assert "cache 5kw/9kr" in html, "cache create/read subtotals render"
 
 
-def test_refresh_returns_stats(client):
-    c, _, _ = client
+def test_refresh_returns_full_dashboard_snapshot(client):
+    c, _, pid = client
     r = c.post("/api/refresh")
     assert r.status_code == 200
-    assert "files_seen" in r.json()
+    body = r.json()
+    assert body["schema"] == 1
+    assert body["kind"] == "snapshot"
+    assert body["refresh"]["attempted"] is True
+    assert body["refresh"]["completed"] is True
+    assert "files_seen" in body["refresh"]["stats"]
+    assert body["topbar"]["projects"] == len(body["card_order"])
+    assert body["card_order"]
+    assert all(str(project_id) in body["cards"] for project_id in body["card_order"])
+
+
+def test_refresh_failure_returns_unavailable_snapshot_with_last_card_values(
+    tmp_path,
+):
+    cfg = load({"db_path": tmp_path / "failed.db", "spool_dir": tmp_path / "spool"})
+    store = Store(cfg.db_path)
+    pid = store.upsert_project("/p/kept", "kept")
+    store.record_index_run({"files_seen": 1}, ran_at=100, duration_ms=1)
+
+    def fail(*_):
+        raise RuntimeError("scanner offline")
+
+    coordinator = RefreshCoordinator(store, cfg, fail)
+    client = TestClient(create_app(store, cfg, refresh_coordinator=coordinator))
+    body = client.post("/api/refresh").json()
+
+    assert body["refresh"]["completed"] is False
+    assert body["refresh"]["error"] == "scanner offline"
+    assert body["freshness"]["server"] == "unavailable"
+    assert body["freshness"]["index_at"] == 100
+    assert body["card_order"] == [pid]
+    assert body["refresh"]["stats"] is None
+    store.close()
 
 
 def test_stale_project_shows_warning_glyph_and_text(tmp_path):
@@ -1308,7 +1341,34 @@ def test_events_opens_with_a_full_snapshot_in_sse_frame_format(client):
     assert body.endswith("\n\n")
     name, payload = _frames(body)[0]
     assert name == "snapshot"
-    assert "live" in payload
+    assert payload["schema"] == 1
+    assert payload["kind"] == "snapshot"
+    assert "topbar" in payload
+    assert "cards" in payload
+
+
+def test_sse_emits_full_update_after_periodic_generation(tmp_path):
+    cfg = load({"db_path": tmp_path / "generation.db", "spool_dir": tmp_path / "spool"})
+    store = Store(cfg.db_path)
+    store.upsert_project("/p/generation", "generation")
+
+    class GenerationSequence:
+        def __init__(self):
+            self.calls = 0
+
+        def status_snapshot(self):
+            self.calls += 1
+            generation = 1 if self.calls >= 3 else 0
+            return RefreshStatus(generation=generation, index_at=100 + generation)
+
+    c = TestClient(create_app(store, cfg, refresh_coordinator=GenerationSequence()))
+    with c.stream("GET", "/events?max_ticks=2&interval=0") as response:
+        frames = _frames("".join(response.iter_text()))
+
+    assert [name for name, _ in frames] == ["snapshot", "update"]
+    assert frames[1][1]["kind"] == "snapshot"
+    assert frames[1][1]["generation"] == 1
+    store.close()
 
 
 def test_every_reconnect_begins_with_a_snapshot_so_no_replay_is_needed(client):
@@ -1362,9 +1422,9 @@ def test_a_delta_carries_a_tombstone_when_a_session_ends(tmp_path, monkeypatch):
         frames = _frames("".join(r.iter_text()))
     store.close()
 
-    assert [n for n, _ in frames] == ["snapshot", "delta"]
-    assert frames[0][1]["live"]["/p/gone"]["status"] == "busy"
-    assert frames[1][1]["removed"] == ["/p/gone"]
+    assert [n for n, _ in frames] == ["snapshot", "update"]
+    assert frames[0][1]["cards"]["1"]["live"]["status"] == "busy"
+    assert frames[1][1]["cards"]["1"]["live"]["available"] is False
 
 
 def test_a_single_sample_busy_to_idle_flap_never_reaches_the_wire(
@@ -1438,7 +1498,7 @@ def test_the_hold_releases_so_idle_is_delayed_and_not_suppressed(
         frames = _frames("".join(r.iter_text()))
     store.close()
 
-    assert [n for n, _ in frames] == ["snapshot", "delta"], (
+    assert [n for n, _ in frames] == ["snapshot", "update"], (
         "one delta, on the tick after the hold expired -- not two, and not none"
     )
     assert frames[0][1]["live"]["/p/hold"]["status"] == "busy"
