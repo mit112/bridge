@@ -124,6 +124,9 @@ def test_project_and_diagnostics_tables_are_keyboard_scroll_regions(client):
     assert 'aria-label="Runtime table"' in diagnostics
     assert 'aria-label="Indexing table"' in diagnostics
     assert 'aria-label="Storage table"' in diagnostics
+    # The flat table this replaced showed "Sessions upserted"; the regroup
+    # must not drop a previously-visible fact.
+    assert "Sessions upserted" in diagnostics
 
 
 def test_pin_control_has_a_persistent_visible_label(client):
@@ -1411,6 +1414,59 @@ def test_diagnostics_unavailable_liveness_surfaces_under_needs_attention(tmp_pat
     html = c.get("/diagnostics").text
     assert "registry sensor could not determine" in html
     assert "Check that Claude Code" in html
+    store.close()
+
+
+def test_diagnostics_banner_and_needs_attention_section_share_one_source_of_truth(client):
+    """`_needs_attention` (drives both the dashboard's `data-diagnostics-alert`
+    and this page's top banner) must never disagree with the "Needs
+    attention" section about whether something is wrong -- they are two
+    views of the same list, not two copies of the same three conditions."""
+    c, store, _ = client
+
+    healthy_dashboard = c.get("/").text
+    healthy_diag = c.get("/diagnostics").text
+    assert re.search(r'data-diagnostics-alert\s+hidden', healthy_dashboard)
+    assert "Bridge is healthy" in healthy_diag
+    assert "Bridge needs attention" not in healthy_diag
+    assert "Nothing needs attention." in healthy_diag
+
+    store.record_index_run({"parse_errors": 1}, ran_at=1, duration_ms=1)
+    degraded_dashboard = c.get("/").text
+    degraded_diag = c.get("/diagnostics").text
+    assert "data-diagnostics-alert" in degraded_dashboard
+    assert not re.search(r'data-diagnostics-alert\s+hidden', degraded_dashboard)
+    assert "Bridge needs attention" in degraded_diag
+    assert "Nothing needs attention." not in degraded_diag
+    assert "Parse errors during indexing" in degraded_diag
+
+
+def test_diagnostics_attention_items_render_in_a_fixed_order_when_all_fire_together(
+    tmp_path, monkeypatch
+):
+    """Parse errors, spool backlog, and an unavailable liveness sensor can all
+    be true at once; the section must list them in the same fixed order
+    every time (parse errors -> spool -> liveness), not whatever order a
+    future edit happens to append conditions in."""
+    from bridge import agents
+    from bridge.models import AgentsState
+
+    def fake_probe(*a, **k):
+        return AgentsState(status="unavailable", source="registry", sessions=[])
+
+    monkeypatch.setattr(agents, "probe", fake_probe)
+    cfg = load({"db_path": tmp_path / "d5.db", "spool_dir": tmp_path / "spool"})
+    store = Store(cfg.db_path)
+    store.record_index_run({"parse_errors": 2}, ran_at=1, duration_ms=1)
+    c = TestClient(create_app(store, cfg))
+    cfg.spool_dir.mkdir(parents=True, exist_ok=True)
+    (cfg.spool_dir / "x.json").write_text("{}")
+
+    html = c.get("/diagnostics").text
+    parse_at = html.index("Parse errors during indexing")
+    spool_at = html.index("Handoffs stuck in the spool")
+    live_at = html.index("Liveness sensor unavailable")
+    assert parse_at < spool_at < live_at
     store.close()
 
 

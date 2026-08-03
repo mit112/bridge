@@ -693,17 +693,18 @@ def create_app(
             "queued_handoffs": store.queued_handoff_count(),
         }
 
-    def _needs_attention(diag: dict) -> bool:
-        """A permanent "diagnostics" link would train the eye to ignore it."""
-        return bool(diag["parse_errors"] or diag["spool_depth"]
-                    or diag["live"] == "unavailable")
-
     def _attention_items(diag: dict) -> list[dict]:
-        """Turns each failing/degraded check `_needs_attention` cares about
-        into plain language: what it means and what to do about it. Presented
-        under "Needs attention" so a fresh install is not led anywhere -- this
-        is display-only grouping of the same `_diagnostics()` dict, never a
-        new probe.
+        """The one place that decides which checks are failing/degraded, and
+        what to say about each. Turns each into plain language: what it means
+        and what to do about it. Presented under "Needs attention" so a fresh
+        install is not led anywhere -- this is display-only grouping of the
+        same `_diagnostics()` dict, never a new probe.
+
+        `_needs_attention` below defers to this list's truthiness rather than
+        re-checking the same three conditions itself: two independent copies
+        of "what counts as degraded" would let the top-of-page banner and
+        this section silently disagree the next time a condition is added to
+        only one of them.
         """
         items = []
         if diag["parse_errors"]:
@@ -734,6 +735,10 @@ def create_app(
                          "then reload Diagnostics.",
             })
         return items
+
+    def _needs_attention(diag: dict) -> bool:
+        """A permanent "diagnostics" link would train the eye to ignore it."""
+        return bool(_attention_items(diag))
 
     @app.get("/api/diagnostics")
     def api_diagnostics():

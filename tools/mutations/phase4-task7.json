@@ -32,7 +32,7 @@
   {
     "name": "always show the diagnostics affordance, so the one signal that something is wrong becomes furniture",
     "file": "src/bridge/api.py",
-    "old": "        return bool(diag[\"parse_errors\"] or diag[\"spool_depth\"]\n                    or diag[\"live\"] == \"unavailable\")",
+    "old": "        return bool(_attention_items(diag))",
     "new": "        return True",
     "tests": [
       "tests/test_api.py::test_the_header_links_to_diagnostics_only_when_something_is_wrong"
@@ -42,7 +42,7 @@
   {
     "name": "never show the diagnostics affordance, so parse errors are silent",
     "file": "src/bridge/api.py",
-    "old": "        return bool(diag[\"parse_errors\"] or diag[\"spool_depth\"]\n                    or diag[\"live\"] == \"unavailable\")",
+    "old": "        return bool(_attention_items(diag))",
     "new": "        return False",
     "tests": [
       "tests/test_api.py::test_the_header_links_to_diagnostics_only_when_something_is_wrong"
