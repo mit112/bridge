@@ -386,6 +386,34 @@ def test_overview_route_shows_attention_recent_link_and_freshness(tmp_path):
     store.close()
 
 
+def test_overview_route_renders_command_strip_with_hot_and_cold_branches(tmp_path):
+    """The six-cell command strip is server-rendered on every load. One queued
+    handoff makes attention_total == 1 (with running == 0 and no real git repo
+    behind the seeded path, so dirty == 0 too) -- exactly the state that
+    exercises both sides of the is-hot/is-live conditional: attention lights
+    up, running does not."""
+    c, store, _ = _route_client(tmp_path)
+    pid = store.upsert_project("/p/handoff", "handoff-project")
+    store.create_handoff(Handoff(
+        id="h1", project_path="/p/handoff", next_prompt="keep going", created_at=1,
+    ), pid)
+
+    html = c.get("/").text
+
+    assert 'class="overview-command-strip"' in html
+    for label in ("Running", "Needs attention", "Queued", "Dirty trees", "Scheduled", "Projects"):
+        assert label in html
+
+    assert "is-hot" in html
+    assert "is-live" not in html
+
+    assert re.search(
+        r'class="command-cell is-hot">\s*<span class="command-cell__num">1</span>',
+        html,
+    )
+    store.close()
+
+
 def test_overview_route_uses_compact_primary_and_secondary_composition(tmp_path):
     """The approved stage is one focal object plus at most two compact cards.
 

@@ -36,6 +36,32 @@
   {% endif %}
 {% endblock %}
 {% block content %}
+<div class="overview-command-strip" aria-label="System at a glance">
+  <div class="command-cell{% if model.totals.running %} is-live{% endif %}">
+    <span class="command-cell__num">{{ model.totals.running }}</span>
+    <span class="command-cell__label">Running</span>
+  </div>
+  <div class="command-cell{% if model.attention_total %} is-hot{% endif %}">
+    <span class="command-cell__num">{{ model.attention_total }}</span>
+    <span class="command-cell__label">Needs attention</span>
+  </div>
+  <div class="command-cell">
+    <span class="command-cell__num">{{ model.totals.queued }}</span>
+    <span class="command-cell__label">Queued</span>
+  </div>
+  <div class="command-cell">
+    <span class="command-cell__num">{{ model.totals.dirty }}</span>
+    <span class="command-cell__label">Dirty trees</span>
+  </div>
+  <div class="command-cell">
+    <span class="command-cell__num">{{ model.totals.scheduled }}</span>
+    <span class="command-cell__label">Scheduled</span>
+  </div>
+  <div class="command-cell">
+    <span class="command-cell__num">{{ model.totals.projects }}</span>
+    <span class="command-cell__label">Projects</span>
+  </div>
+</div>
 <section class="overview-attention" aria-labelledby="overview-attention-title">
   <div class="overview-section-head">
     <div>

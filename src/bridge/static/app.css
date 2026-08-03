@@ -1005,6 +1005,39 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
 .settings-reference .diag td { overflow-wrap: anywhere; }
 .sessions__tokens-detail { display: block; color: var(--muted); font-size: .78rem; }
 
+.overview-command-strip {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  margin: var(--space-6) 0 var(--space-8);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  overflow: hidden;
+}
+.command-cell {
+  padding: var(--space-4) var(--space-4);
+  border-right: 1px solid var(--rule);
+}
+.command-cell:last-child { border-right: 0; }
+.command-cell__num {
+  display: block;
+  font: 600 1.875rem/1 var(--font-display);
+  letter-spacing: -.01em;
+  font-variant-numeric: tabular-nums lining-nums;
+  color: var(--text);
+}
+.command-cell.is-live .command-cell__num { color: var(--status-running); }
+.command-cell.is-hot .command-cell__num { color: var(--status-attention); }
+.command-cell__label {
+  display: block;
+  margin-top: var(--space-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
 /* The approved Overview is one focal object, not an equal-row ladder. The
    three-item model cap maps directly to one dominant card and two compact
    secondaries; Projects and Schedule carry the complete lists. */
@@ -1456,6 +1489,9 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
   .diagnostics-section--wide { grid-column: auto; }
   .overview-section-head { align-items: flex-start; }
   .overview-section-links { align-items: flex-start; flex-direction: column; gap: var(--space-1); }
+  .overview-command-strip { grid-template-columns: repeat(3, 1fr); }
+  .command-cell:nth-child(3n) { border-right: 0; }
+  .command-cell:nth-child(-n+3) { border-bottom: 1px solid var(--rule); }
   .attention-primary__top { display: block; }
   .attention-primary__top .pill { margin-top: var(--space-3); }
   .attention-primary__actions { align-items: stretch; flex-wrap: wrap; }
