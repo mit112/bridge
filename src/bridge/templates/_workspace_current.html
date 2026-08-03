@@ -9,7 +9,27 @@
 {% set card = model.card %}
 {% set git = model.git %}
 
-<section class="workspace-state" aria-label="Project state">
+<div class="workspace-current">
+<div class="workspace-current__main">
+<div class="continuation-panel">
+{# Always rendered, `hidden` toggled by which state applies -- the same
+   "shell rendered either way, `hidden` flips it" pattern `dashboard.html`
+   already uses for its own scheduled/hidden-projects sections. `launch.js`'s
+   dismiss handler reveals this and hides the handoff section below it,
+   without a reload and without ever replacing either node's markup. #}
+<p class="empty" data-handoff-empty="{{ card.project_id }}" {% if card.handoff %}hidden{% endif %}>
+  No session in progress for this project.
+</p>
+
+{{ handoff_block(card, totals, collapse_prompt=True, show_dismiss=True, show_span_line=True) }}
+
+{{ launch_band(card, primary=True, collapse_options=(card.handoff is not none)) }}
+</div>
+
+{{ compose_box(card, totals, collapsed=(card.handoff is not none)) }}
+</div>
+
+<aside class="workspace-state" aria-label="Project state">
   {% if git and git.status == "ok" %}
   <section class="card__git detail-git" aria-label="Recent git state">
     {% if git.branch %}<span>{{ git.branch }}</span>{% endif %}
@@ -35,19 +55,5 @@
   {% endif %}
   {{ live_status(card) }}
   {{ token_burn(card) }}
-</section>
-
-{# Always rendered, `hidden` toggled by which state applies -- the same
-   "shell rendered either way, `hidden` flips it" pattern `dashboard.html`
-   already uses for its own scheduled/hidden-projects sections. `launch.js`'s
-   dismiss handler reveals this and hides the handoff section below it,
-   without a reload and without ever replacing either node's markup. #}
-<p class="empty" data-handoff-empty="{{ card.project_id }}" {% if card.handoff %}hidden{% endif %}>
-  No session in progress for this project.
-</p>
-
-{{ handoff_block(card, totals, collapse_prompt=True, show_dismiss=True, show_span_line=True) }}
-
-{{ launch_band(card, primary=True, collapse_options=(card.handoff is not none)) }}
-
-{{ compose_box(card, totals, collapsed=(card.handoff is not none)) }}
+</aside>
+</div>

@@ -536,6 +536,25 @@ def test_span_line_renders_only_when_session_and_handoff_both_exist(tmp_path):
     store3.close()
 
 
+def test_current_tab_leads_with_the_real_continuation_span_and_primary_action(tmp_path):
+    """A prose `title -> next: full summary` line or telemetry-first layout
+    loses the approved Bridge signature and makes the next action secondary."""
+    c, store, pid = _client_with_handoff(tmp_path)
+    html = c.get(f"/project/{pid}?tab=current").text
+
+    continuation = html.index('class="continuation-panel"')
+    primary = html.index("btn--primary")
+    state = html.index('class="workspace-state"')
+
+    assert continuation < primary < state
+    for label in ("Session ended", "Handoff ready", "Next session"):
+        assert label in html
+    span = html[html.index('class="workspace-span"'):]
+    span = span[:span.index("</div>")]
+    assert "finish the thing" not in span, "the span labels states, not a duplicated summary"
+    store.close()
+
+
 def test_queued_handoff_shows_its_age_beside_the_summary(tmp_path):
     """Spec line 180: the queued handoff shows its summary AND its age, so a
     stale next step reads as stale. `created_at` is on every handoff row."""

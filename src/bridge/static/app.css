@@ -690,12 +690,53 @@ main { width: min(100%, 68rem); margin-inline: auto; padding: var(--space-6); }
   border-bottom-color: var(--accent);
 }
 
+/* Current work leads with the continuation decision. Telemetry is a narrow,
+   quiet companion and follows the action surface in source order. */
+.workspace-current {
+  display: grid;
+  grid-template-columns: minmax(0, 1.65fr) minmax(17rem, .75fr);
+  gap: var(--space-10);
+  align-items: start;
+}
+.workspace-current__main { min-width: 0; }
+.continuation-panel {
+  min-width: 0;
+  padding: var(--space-5);
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-top: 3px solid var(--work);
+  border-radius: var(--radius-12);
+}
+.continuation-panel > .empty { margin: 0 0 var(--space-4); }
+.continuation-panel .handoff {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  border: 0;
+}
+.continuation-panel .handoff__actions,
+.continuation-panel .launch {
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--rule);
+}
+.continuation-panel .launch { margin: var(--space-4) 0 0; }
+.continuation-panel + .compose__disclosure { margin-top: var(--space-6); }
+.btn--quiet {
+  min-height: auto;
+  padding: var(--space-1) var(--space-2);
+  color: var(--text-secondary);
+  background: transparent;
+  border-color: transparent;
+}
+.btn--quiet:hover { color: var(--text); background: var(--surface-raised); }
+
 /* Secondary, quiet -- never competing with the Current tab's primary action. */
 .workspace-state {
-  margin: 0 0 var(--space-6);
-  padding: .6rem .7rem;
+  margin: 0;
+  padding: var(--space-4);
   border: 1px solid var(--line);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-12);
+  background: var(--surface);
   color: var(--muted);
 }
 .workspace-state .card__git { margin-top: 0; }
@@ -707,9 +748,48 @@ main { width: min(100%, 68rem); margin-inline: auto; padding: var(--space-6); }
 .workspace-state .live,
 .workspace-state .card__burn { margin-top: .5rem; }
 
-/* The session -> handoff -> next line: a fact, not decoration, so it only
-   ever renders inside the same real-state guard as everything else here. */
-.workspace-span { margin: 0 0 .5rem; font-size: .85rem; color: var(--muted); }
+/* The session -> handoff -> next line is Bridge's signature structural fact,
+   rendered only inside the real-state guard in `_launch.html`. */
+.workspace-span {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(2rem, .35fr) minmax(0, 1fr) minmax(2rem, .35fr) minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-2);
+  margin: var(--space-5) 0;
+  padding: var(--space-4) 0;
+  border-block: 1px solid var(--rule);
+}
+.workspace-span__node { display: grid; gap: var(--space-1); min-width: 0; }
+.workspace-span__label {
+  color: var(--work);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+.workspace-span__value {
+  overflow: hidden;
+  color: var(--text);
+  font-size: var(--text-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.workspace-span__connector {
+  position: relative;
+  min-width: 2rem;
+  border-top: 1px solid var(--work);
+}
+.workspace-span__connector::after {
+  position: absolute;
+  top: -4px;
+  right: 0;
+  width: 7px;
+  height: 7px;
+  content: "";
+  border-top: 1px solid var(--work);
+  border-right: 1px solid var(--work);
+  transform: rotate(45deg);
+}
 
 /* The saved-prompt preview shown before "Edit prompt" is opened. */
 .handoff__preview {
@@ -719,6 +799,12 @@ main { width: min(100%, 68rem); margin-inline: auto; padding: var(--space-6); }
   color: var(--muted);
   white-space: pre-wrap;
   word-break: break-word;
+}
+.continuation-panel .handoff__preview {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
 }
 .handoff__edit summary,
 .compose__disclosure summary,
@@ -1120,6 +1206,16 @@ main { width: min(100%, 68rem); margin-inline: auto; padding: var(--space-6); }
   .projects-list__item { flex-direction: column; align-items: stretch; }
   .attention-row { grid-template-columns: minmax(0, 1fr); }
   .attention-row .btn { justify-self: start; }
+  .workspace-span { display: flex; flex-direction: column; align-items: stretch; }
+  .workspace-span__connector {
+    width: 1px;
+    min-width: 0;
+    height: var(--space-4);
+    margin-left: var(--space-2);
+    border-top: 0;
+    border-left: 1px solid var(--work);
+  }
+  .workspace-span__connector::after { display: none; }
 }
 
 /* Tablet layer (Task 5.4): closes the 768-1023px dead zone flagged by recon --
@@ -1137,6 +1233,7 @@ main { width: min(100%, 68rem); margin-inline: auto; padding: var(--space-6); }
 @media (max-width: 1023px) {
   .overview-layout { grid-template-columns: minmax(0, 1fr); gap: var(--space-8); }
   .overview-secondary { padding-left: 0; border-left: 0; }
+  .workspace-current { grid-template-columns: minmax(0, 1fr); gap: var(--space-8); }
 }
 
 @media (prefers-reduced-motion: reduce) {

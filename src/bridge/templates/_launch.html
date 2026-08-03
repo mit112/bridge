@@ -98,7 +98,22 @@
         <span class="handoff__age card__note">queued {{ card.handoff.created_at | ago_epoch }} ago</span>
       </p>
       {% if show_span_line and card.session %}
-      <p class="workspace-span">{{ card.session.title or "Untitled session" }} → next: {{ card.handoff.summary or "see the saved prompt" }}</p>
+      <div class="workspace-span" aria-label="Continuation path">
+        <span class="workspace-span__node">
+          <span class="workspace-span__label">Session ended</span>
+          <span class="workspace-span__value">{{ card.session.title or "Untitled session" }}</span>
+        </span>
+        <span class="workspace-span__connector" aria-hidden="true"></span>
+        <span class="workspace-span__node">
+          <span class="workspace-span__label">Handoff ready</span>
+          <span class="workspace-span__value">Queued {{ card.handoff.created_at | ago_epoch }} ago</span>
+        </span>
+        <span class="workspace-span__connector" aria-hidden="true"></span>
+        <span class="workspace-span__node">
+          <span class="workspace-span__label">Next session</span>
+          <span class="workspace-span__value">Ready to continue</span>
+        </span>
+      </div>
       {% endif %}
       {% if collapse_prompt %}
       <p class="handoff__preview">{{ card.handoff.next_prompt[:200] }}{% if card.handoff.next_prompt | length > 200 %}…{% endif %}</p>
@@ -115,12 +130,12 @@
       </details>
       {% endif %}
       <p class="handoff__actions">
-        <button type="button" class="btn" data-copy-target="{{ hid }}">Copy prompt</button>
+        <button type="button" class="btn{% if show_dismiss %} btn--quiet{% endif %}" data-copy-target="{{ hid }}">Copy prompt</button>
         {% set hpanel = "schedule-" ~ hid %}
         <button type="button" class="btn" data-schedule-toggle="{{ hpanel }}"
                 aria-expanded="false" aria-controls="{{ hpanel }}">Schedule…</button>
         {% if show_dismiss %}
-        <button type="button" class="btn" data-handoff-dismiss="{{ card.handoff.id }}">Dismiss handoff</button>
+        <button type="button" class="btn btn--quiet" data-handoff-dismiss="{{ card.handoff.id }}">Dismiss handoff</button>
         {% endif %}
         {# Status lines, one key each. Copy, save, dismiss and launch all
            announce into `role="status"`, and sharing one key would let them
