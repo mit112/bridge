@@ -29,3 +29,19 @@ def test_font_files_and_licenses_present():
 
 def test_font_face_uses_swap():
     assert CSS.count("font-display: swap") >= 2
+
+
+def test_fraunces_display_font_present():
+    fonts = STATIC / "fonts"
+    assert (fonts / "OFL-Fraunces.txt").exists()
+    assert list(fonts.glob("fraunces-*.woff2"))
+    # Provenance is recorded, not just the bytes dropped in (matches the
+    # convention the existing fonts follow — a source + SHA-256 per file).
+    provenance = (fonts / "PROVENANCE.md").read_text()
+    assert "Fraunces" in provenance
+    assert "fraunces-semibold-600.woff2" in provenance
+
+
+def test_fraunces_declared_in_css():
+    assert 'font-family: "Fraunces"' in CSS
+    assert "/static/fonts/fraunces-" in CSS

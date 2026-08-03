@@ -36,4 +36,22 @@ unmodified from that source.
   | `ibm-plex-mono-regular-400.woff2` | `ibm-plex-mono/fonts/complete/woff2/IBMPlexMono-Regular.woff2` | `ba204497f16b6d334cee9d1e963a831b73e3a56e1d6300a8489d18df7214b350` |
   | `ibm-plex-mono-semibold-600.woff2` | `ibm-plex-mono/fonts/complete/woff2/IBMPlexMono-SemiBold.woff2` | `6a825b4824c01cbb401e829e5a066a1818411bcb3538b5a5792c5ca9b82343c3` |
 
-Fetched 2026-08-02.
+## Fraunces
+
+- Source: https://github.com/undercasetype/Fraunces
+- Fetched via Fontsource (a faithful self-host packager: static instances
+  generated from the upstream release, unmodified glyph data, latin subset),
+  package `@fontsource/fraunces`, resolved version `5.3.0`
+  (https://cdn.jsdelivr.net/npm/@fontsource/fraunces@5.3.0/files/)
+- License: SIL Open Font License 1.1 (`OFL-Fraunces.txt`, copied unmodified
+  from the upstream repo's `OFL.txt` at `master`)
+- Files fetched from the package's `files/` directory (static instances, not
+  the variable font):
+
+  | File | Source path | SHA-256 |
+  |---|---|---|
+  | `fraunces-semibold-600.woff2` | `files/fraunces-latin-600-normal.woff2` | `3a1de7711d147bad4422825045f87597fd77cca72e7c96d3b0a81735d00dda82` |
+  | `fraunces-italic-400.woff2` | `files/fraunces-latin-400-italic.woff2` | `475b154af19c6b4ef371db22078b5044a078ce2467e11ef22a7b87f77837caf3` |
+
+Fetched 2026-08-02 (Atkinson Hyperlegible Next, IBM Plex Mono); Fraunces
+fetched 2026-08-03.
