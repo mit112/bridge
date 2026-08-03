@@ -45,9 +45,13 @@ function hiddenRow(projectId, name) {
   const li = document.createElement("li");
   li.setAttribute("data-hidden-project", projectId);
 
-  const link = document.createElement("a");
-  link.href = `/project/${encodeURIComponent(projectId)}`;
-  link.textContent = name;
+  // Plain text, not a link: the workspace route 404s for a hidden project (no
+  // card -> None), so a `/project/{id}` link here would be a nav dead-end. This
+  // mirrors the server-rendered hidden row in projects.html exactly; Restore is
+  // the only action a hidden project offers.
+  const label = document.createElement("span");
+  label.className = "hidden-project__name";
+  label.textContent = name;
 
   const status = document.createElement("span");
   status.className = "card__note";
@@ -60,7 +64,7 @@ function hiddenRow(projectId, name) {
   restore.setAttribute("aria-label", `Restore ${name} to the dashboard`);
   restore.textContent = "Restore";
 
-  li.append(link, " ", status, " ", restore);
+  li.append(label, " ", status, " ", restore);
   return li;
 }
 
@@ -98,10 +102,21 @@ document.addEventListener("click", async (event) => {
     const name = nameNode ? nameNode.textContent.trim() : id;
     try {
       await patchProject(id, "hidden");
+      // On the workspace there is no `[data-project-card]` ancestor to fold
+      // into the hidden list, and a reload here would 404 now that the project
+      // is hidden -- so send the user to a page that still exists rather than
+      // silently doing nothing. On /projects the card is present, so the row
+      // moves into the hidden list as before.
+      if (!card) {
+        window.location.assign("/projects");
+        return;
+      }
       const list = document.querySelector("[data-hidden-list]");
       if (list) list.append(hiddenRow(id, name));
       bumpHiddenCount(1);
-      if (card) card.remove();
+      card.remove();
+      // Never fail silently -- a success says so, matching pin/restore.
+      say(`[data-project-status="${id}"]`, "✓ Hidden");
     } catch (error) {
       // The card stays, so its own status node is still on screen to say why.
       console.error("bridge: hiding the project failed", error);

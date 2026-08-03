@@ -135,6 +135,23 @@ document.addEventListener("click", async (event) => {
   }
 });
 
+// The workspace's empty-state primary button ("Start session") has no queued
+// handoff to launch, so its band points `data-launch-prompt` at the ad hoc
+// compose textarea instead — the click handler above already reads that field
+// into the request body. The button renders `disabled` (the compose box starts
+// empty), and this enables it only while there is text, so the primary action
+// can never fire a promptless /api/launch that would 422. A handoff-backed band
+// names its own prompt (`handoff-<id>`), never a compose id, so this leaves
+// those always-launchable buttons untouched.
+document.addEventListener("input", (event) => {
+  const field = event.target.closest("[data-compose-prompt]");
+  if (!field) return;
+  const band = document.querySelector(`[data-launch-prompt="${field.id}"]`);
+  if (!band) return;
+  const button = band.querySelector("[data-launch-button]");
+  if (button) button.disabled = field.value.trim() === "";
+});
+
 // Dismiss a queued handoff from the workspace's Current tab. Reuses the same
 // PATCH the handoff prompt already saves through — only the body differs —
 // so no new write path is introduced. No reload: the already-rendered

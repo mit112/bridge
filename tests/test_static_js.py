@@ -171,6 +171,114 @@ def test_launch_js_sends_the_empty_default_rather_than_omitting_it(tmp_path):
     assert body["permission_mode"] == ""
 
 
+# --- Empty-state primary action drives the compose textarea, never a 422 -----
+#
+# With no queued handoff, the workspace's "Start session" band names the ad hoc
+# compose textarea in `data-launch-prompt` and renders the button `disabled`.
+# This harness proves the button enables only once the compose field has text,
+# that an empty compose fires no /api/launch (the request that used to 422), and
+# that a launch with text carries that text and no handoff id.
+EMPTY_STATE_HARNESS = """
+globalThis.window = globalThis;
+let clickHandlers = [];
+let inputHandlers = [];
+
+const composeField = {
+  id: "compose-1", value: "",
+  closest: (sel) => (sel === "[data-compose-prompt]" ? composeField : null),
+};
+const button = {
+  disabled: true, attrs: { "data-launch-button": "launch-1" },
+  getAttribute(n) { return this.attrs[n] ?? null; },
+  setAttribute() {}, removeAttribute() {},
+  closest: (sel) => (sel === "[data-launch-button]" ? button : null),
+};
+const band = {
+  attrs: { "data-launch": "launch-1", "data-launch-path": "/Users/mitsheth/dev/demo",
+           "data-launch-prompt": "compose-1" },
+  getAttribute(n) { return Object.prototype.hasOwnProperty.call(this.attrs, n) ? this.attrs[n] : null; },
+  querySelector: (sel) => (sel === "[data-launch-button]" ? button : null),
+};
+const statusNode = { textContent: "" };
+const controls = {
+  '[data-launch="launch-1"]': band,
+  '[data-launch-prompt="compose-1"]': band,
+  '[data-launch-status="launch-1"]': statusNode,
+  '[data-launch-model="launch-1"]': { value: "claude-opus-4-8" },
+  '[data-launch-effort="launch-1"]': { value: "high" },
+  '[data-launch-perm="launch-1"]': { value: "" },
+};
+globalThis.document = {
+  addEventListener(type, fn) {
+    if (type === "click") clickHandlers.push(fn);
+    if (type === "input") inputHandlers.push(fn);
+  },
+  getElementById: (id) => (id === "compose-1" ? composeField : null),
+  querySelector: (sel) => controls[sel] ?? null,
+  createRange: () => ({}),
+};
+globalThis.navigator = { clipboard: { writeText: async () => {} } };
+let fetchCount = 0;
+let sentBody = null;
+globalThis.fetch = async (url, init) => {
+  fetchCount += 1;
+  sentBody = JSON.parse(init.body);
+  return { ok: true, status: 200, json: async () => ({ outcome: "started" }) };
+};
+const fs = require("fs");
+eval(fs.readFileSync(process.argv[2], "utf8"));
+
+const fireInput = () => Promise.all(inputHandlers.map((fn) =>
+  fn({ target: { closest: (sel) => composeField.closest(sel) } })));
+const fireClick = () => Promise.all(clickHandlers.map((fn) =>
+  fn({ target: { closest: (sel) => button.closest(sel) } })));
+
+(async () => {
+  await fireInput();
+  const disabledWhenEmpty = button.disabled;
+  const fetchAfterEmpty = fetchCount;
+  composeField.value = "run this now";
+  await fireInput();
+  const enabledWhenTyped = button.disabled;
+  await fireClick();
+  console.log(JSON.stringify({
+    disabledWhenEmpty, fetchAfterEmpty, enabledWhenTyped,
+    fetchCount, prompt: sentBody ? sentBody.prompt : null,
+    handoffId: sentBody ? sentBody.handoff_id : null,
+  }));
+})();
+"""
+
+
+def _run_empty_state(tmp_path) -> dict:
+    harness = tmp_path / "empty_state_harness.js"
+    harness.write_text(EMPTY_STATE_HARNESS)
+    proc = subprocess.run(
+        [_node(), str(harness), str(LAUNCH_JS)], capture_output=True, text=True
+    )
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout)
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_empty_state_primary_button_stays_disabled_and_never_fires_a_promptless_launch(
+    tmp_path,
+):
+    got = _run_empty_state(tmp_path)
+    assert got["disabledWhenEmpty"] is True
+    assert got["fetchAfterEmpty"] == 0, "an empty compose still fired a launch (422)"
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_empty_state_primary_button_enables_and_launches_the_composed_prompt(tmp_path):
+    got = _run_empty_state(tmp_path)
+    assert got["enabledWhenTyped"] is False, "typing a prompt did not enable the button"
+    assert got["fetchCount"] == 1
+    assert got["prompt"] == "run this now"
+    # No queued handoff to attach: an ad hoc launch carries no handoff id.
+    assert got["handoffId"] is None
+
+
 # --- Task 3.3 fix round: the "Dismiss handoff" click handler -----------------
 #
 # `launch.js` registers a SECOND delegated "click" listener for
@@ -562,6 +670,7 @@ setImmediate(() => console.log(JSON.stringify({
   textareaSame: textareaIdentity.every((item, index) => item === cards[index].textarea),
   textareaValues: textareaIdentity.map((item) => item.value),
   refresh: refreshStatus.textContent, totals: totals.today.textContent,
+  lastIndex: totals.last_index.textContent,
   beforeRefresh,
 })));
 '''
@@ -588,6 +697,21 @@ def test_dashboard_updates_keep_index_freshness_separate_from_liveness(tmp_path)
     assert got["fresh"] == "connected"
     assert got["unavailableState"] == "unavailable"
     assert got["totals"] == "1k"
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_topbar_last_index_is_left_server_rendered_not_overwritten_with_a_raw_epoch(
+    tmp_path,
+):
+    """Every frame the harness drives carries `topbar.last_index` as a raw epoch
+    (146). If the generic topbar loop patched it, the server-rendered "Xm ago"
+    would be replaced by "146" on the first tick. Excluding it keeps the node
+    untouched (still the empty server value in this stub), never a bare epoch."""
+    got = _run_freshness(tmp_path, {})
+    assert got["lastIndex"] == "", (
+        "last_index was patched with a raw epoch instead of being left as the "
+        "server-rendered relative time"
+    )
 
 
 @pytest.mark.skipif(_node() is None, reason="node is not installed")
@@ -852,7 +976,7 @@ const card = { removed: false, remove() { this.removed = true; },
                querySelector: () => ({ textContent: "  demo  " }) };
 const hideButton = {
   getAttribute: (n) => (n === "data-project-hide" ? "7" : null),
-  closest: (sel) => (sel === "[data-project-card]" ? card : null),
+  closest: (sel) => (sel === "[data-project-card]" && HIDE_HAS_CARD ? card : null),
 };
 const restoreButton = {
   getAttribute: (n) => (n === "data-project-restore" ? "7" : null),
@@ -880,11 +1004,25 @@ const nodes = {
   '[data-hidden-project="7"]': row,
 };
 
+// Every element the client builds for a hidden row, so the test can assert
+// the name is a plain span and no `/project/{id}` link is ever emitted (that
+// route 404s for hidden projects).
+const created = [];
+
+// A hide on the workspace has no `[data-project-card]` ancestor; the handler
+// navigates to /projects instead. `assign` records where it sent the user.
+let assigned = null;
+globalThis.location = { assign(target) { assigned = target; } };
+
 globalThis.document = {
   addEventListener(type, fn) { if (type === "click") clickHandler = fn; },
   querySelector: (sel) => nodes[sel] ?? null,
-  createElement: () => ({ setAttribute() {}, append() {},
-                          textContent: "", className: "", href: "", type: "" }),
+  createElement: (tag) => {
+    const el = { tag, setAttribute() {}, append() {},
+                 textContent: "", className: "", href: "", type: "" };
+    created.push(el);
+    return el;
+  },
 };
 
 let sent = null;
@@ -915,16 +1053,21 @@ clickHandler({ target: { closest: (sel) => {
     hiddenStatus: hiddenStatus.textContent,
     rowRemoved: row.removed,
     pressed: pinButton.attrs["aria-pressed"],
+    created: created.map((e) => ({ tag: e.tag, href: e.href, className: e.className })),
+    assigned,
   }));
 });
 """
 
 
-def _run_projects(tmp_path, target: str, ok: bool, pressed: str = "false") -> dict:
+def _run_projects(
+    tmp_path, target: str, ok: bool, pressed: str = "false", hide_has_card: bool = True
+) -> dict:
     harness = tmp_path / "projects_harness.js"
     harness.write_text(
         PROJECTS_HARNESS.replace("TARGET", json.dumps(target))
         .replace("PRESSED", json.dumps(pressed))
+        .replace("HIDE_HAS_CARD", "true" if hide_has_card else "false")
         .replace("OK", "true" if ok else "false")
     )
     proc = subprocess.run(
@@ -946,6 +1089,35 @@ def test_hide_patches_the_status_and_moves_the_card_into_the_hidden_list(tmp_pat
     assert got["appended"] == 1
     assert got["count"] == "1"
     assert got["listHidden"] is False, "the hidden list stayed collapsed away"
+    # Never fail silently: a success announces itself, matching pin/restore.
+    assert "✓" in got["cardStatus"]
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_hidden_row_names_the_project_in_plain_text_never_a_dead_link(tmp_path):
+    """A hidden project has no workspace (`/project/{id}` 404s), so the row the
+    client builds must name it in a `<span>`, not an `<a href>` -- matching the
+    server-rendered hidden row in projects.html."""
+    got = _run_projects(tmp_path, "hide", ok=True)
+    hrefs = [e["href"] for e in got["created"]]
+    assert not any("/project/" in (h or "") for h in hrefs), (
+        "the client built a /project/{id} link into a hidden row -- a nav dead-end"
+    )
+    names = [e for e in got["created"] if e["className"] == "hidden-project__name"]
+    assert names, "the hidden row has no plain-text name span"
+    assert all(e["tag"] == "span" for e in names)
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_hide_on_the_workspace_navigates_to_projects_rather_than_stranding(tmp_path):
+    """On the workspace there is no `[data-project-card]` to fold away and a
+    reload would 404, so a successful hide sends the user to /projects instead
+    of leaving them on a page that no longer resolves."""
+    got = _run_projects(tmp_path, "hide", ok=True, hide_has_card=False)
+    assert got["assigned"] == "/projects"
+    # Nothing on the workspace to fold into a hidden list, so it does not try.
+    assert got["cardRemoved"] is False
+    assert got["appended"] == 0
 
 
 @pytest.mark.skipif(_node() is None, reason="node is not installed")

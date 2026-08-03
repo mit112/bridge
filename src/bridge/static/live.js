@@ -230,7 +230,11 @@ function applyDashboardUpdate(update) {
   if (topbar.today != null) setText(totalNode("today"), formatKilo(topbar.today));
   if (topbar.last_5h != null) setText(totalNode("last_5h"), formatKilo(topbar.last_5h));
   if (topbar.burn_rate != null) setText(totalNode("burn_rate"), `${formatKilo(topbar.burn_rate)}/h`);
-  if (topbar.last_index != null) setText(totalNode("last_index"), topbar.last_index);
+  // `last_index` is deliberately NOT patched here: the server renders it as a
+  // human "Xm ago" (Jinja `ago_epoch`), but `topbar.last_index` on the wire is
+  // a raw epoch, so writing it would replace "3m ago" with "1785754250" on the
+  // first tick. Index time changes rarely, so it stays server-rendered until a
+  // reload rather than being reformatted client-side.
   if (update.cards) applyCardUpdates(update.cards);
   if (update.card_order) applyCardOrder(update.card_order);
   if (update.diagnostics && update.diagnostics.alert != null) {

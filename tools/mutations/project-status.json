@@ -192,8 +192,8 @@
   {
     "name": "remove the card before the PATCH answers, so a 404 looks like a successful hide",
     "file": "src/bridge/static/projects.js",
-    "old": "      await patchProject(id, \"hidden\");\n      const list = document.querySelector(\"[data-hidden-list]\");",
-    "new": "      if (card) card.remove();\n      await patchProject(id, \"hidden\");\n      const list = document.querySelector(\"[data-hidden-list]\");",
+    "old": "    try {\n      await patchProject(id, \"hidden\");",
+    "new": "    try {\n      if (card) card.remove();\n      await patchProject(id, \"hidden\");",
     "tests": [
       "tests/test_static_js.py::test_a_refused_hide_leaves_the_card_on_screen_and_says_so"
     ],
