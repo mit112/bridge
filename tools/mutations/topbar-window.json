@@ -78,5 +78,15 @@
       "tests/test_api.py::test_the_topbar_reports_a_burn_rate_over_the_measured_window"
     ],
     "expect_count": 1
+  },
+  {
+    "name": "blank the topbar's index timestamp, so a real indexed run reports as `never`",
+    "file": "src/bridge/dashboard.py",
+    "old": "\"last_index\": index_at,",
+    "new": "\"last_index\": None,",
+    "tests": [
+      "tests/test_api.py::test_the_topbar_reports_the_last_index_time_once_there_is_one"
+    ],
+    "expect_count": 1
   }
 ]
