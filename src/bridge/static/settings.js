@@ -1,13 +1,15 @@
 // The Settings page's own browser-local preferences: appearance, density, and
-// convenience defaults for the launch band's model/effort/permission selects.
+// convenience launch defaults -- model, effort, and terminal/background launch
+// mode.
 //
 // Everything here is scoped to `data-settings-*` elements ONLY. It never
-// queries or sets `data-launch-*` anything: the live launch permission
-// control (_launch.html / launch.js) always renders "Ask as usual" and reads
-// its own `<select>` fresh on every click, per the CONTROLLER DECISION that
-// permission mode is never persisted or pre-armed. A "safe launch default"
-// stored here can prefill THIS page's own selects; it can never reach the
-// launch band.
+// queries or sets `data-launch-*` anything; it only writes localStorage. The
+// stored model/effort/mode defaults are read back by launch.js, which prefills
+// the live launch band's model/effort selects and the schedule form's mode
+// select. Permission is deliberately NOT one of these defaults: the live
+// permission control (_launch.html / launch.js) always renders "Ask as usual"
+// and reads its own `<select>` fresh on every click, per the CONTROLLER
+// DECISION that permission mode is never persisted or pre-armed.
 //
 // Settings itself has no write API (spec: read-only page) -- every value here
 // lives only in this browser's localStorage.

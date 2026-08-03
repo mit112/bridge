@@ -185,3 +185,38 @@ document.addEventListener("click", async (event) => {
     button.disabled = false;
   }
 });
+
+// Prefill the launch band's model/effort selects and the schedule form's mode
+// select from the browser-local "safe launch defaults" the Settings page
+// stores (`bridge.launch.model` / `bridge.launch.effort` / `bridge.launch.mode`).
+// This is the ONLY consumer of those keys.
+//
+// It NEVER reads or writes any permission value and NEVER touches
+// `[data-launch-perm]`: the live permission control is armed solely by its own
+// server-rendered "Ask as usual" default, per the invariant that permission is
+// never persisted or pre-armed. A stored value is applied only when it matches
+// an existing `<option>`; anything else is skipped, and a missing control is a
+// no-op. Guarded so a sparser DOM (or a browser with no localStorage) is safe.
+(function prefillLaunchDefaults() {
+  if (typeof document === "undefined" || !document.querySelectorAll) return;
+  let store;
+  try {
+    store = window.localStorage;
+  } catch (error) {
+    return;
+  }
+  if (!store) return;
+
+  const applyStored = (selector, value) => {
+    if (value === null) return;
+    document.querySelectorAll(selector).forEach((el) => {
+      if (Array.prototype.some.call(el.options || [], (opt) => opt.value === value)) {
+        el.value = value;
+      }
+    });
+  };
+
+  applyStored("[data-launch-model]", store.getItem("bridge.launch.model"));
+  applyStored("[data-launch-effort]", store.getItem("bridge.launch.effort"));
+  applyStored("[data-schedule-mode]", store.getItem("bridge.launch.mode"));
+})();

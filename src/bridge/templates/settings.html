@@ -33,10 +33,9 @@
 
 <section class="history" aria-labelledby="settings-launch-title">
   <h2 id="settings-launch-title">Safe launch defaults</h2>
-  <p class="card__note">Convenience defaults for a new launch's model and effort
-    selects. The permission mode a launch actually uses is never remembered —
-    every launch band always starts on "Ask as usual", regardless of what is
-    picked here.</p>
+  <p class="card__note">Convenience defaults that prefill a new launch's model
+    and effort selects and the schedule form's launch mode. They live only in
+    this browser, and are applied only when they match an available option.</p>
   <p class="launch__field">
     <label class="launch__label" for="settings-launch-model">Default model</label>
     <select class="launch__select" id="settings-launch-model" data-settings-launch-model>
@@ -54,13 +53,17 @@
     </select>
   </p>
   <p class="launch__field">
-    <label class="launch__label" for="settings-launch-mode">Default permission mode</label>
+    <label class="launch__label" for="settings-launch-mode">Default launch mode</label>
     <select class="launch__select" id="settings-launch-mode" data-settings-launch-mode>
-      {%- for p in model.launch_defaults.permission_modes %}
-      <option value="{{ p.value }}"{% if p.danger %} class="launch__option--danger"{% endif %}{% if loop.first %} selected{% endif %}>{{ p.label }}</option>
-      {%- endfor %}
+      <option value="terminal" selected>terminal</option>
+      <option value="background">background</option>
     </select>
   </p>
+  {# A read-only statement, not a control: permission is never a stored default.
+     WCAG-meaningful in words, so no colour or glyph carries the meaning. #}
+  <p class="card__note" data-settings-permission-statement>Permission mode is
+    never remembered here. Every launch band always starts on "Ask as usual",
+    and Bridge never pre-sets a permission mode from this page.</p>
 </section>
 
 <section class="history" aria-labelledby="settings-effective-title">
