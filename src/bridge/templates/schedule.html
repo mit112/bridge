@@ -55,6 +55,14 @@
       </nav>
     </section>
   {% else %}
+    {% if not model.attention and not model.pending and not model.launching %}
+    <section class="schedule-empty" aria-labelledby="schedule-empty-title">
+      <p class="schedule-empty__eyebrow">Upcoming</p>
+      <h2 id="schedule-empty-title">Nothing scheduled yet</h2>
+      <p>Schedule work from a project when you want Bridge to hold the next start for you.</p>
+      <a class="btn" href="/projects">Browse projects</a>
+    </section>
+    {% else %}
     <section class="history" aria-labelledby="schedule-attention-title">
       <h2 id="schedule-attention-title">Attention</h2>
       {% if not model.attention %}
@@ -85,6 +93,7 @@
       </ul>
       {% endif %}
     </section>
+    {% endif %}
   {% endif %}
 </div>
 {% endblock %}

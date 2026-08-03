@@ -1406,15 +1406,15 @@ def test_diagnostics_reports_terminal_agents_as_not_running(tmp_path, monkeypatc
 # --- Task 4.3: Diagnostics recomposition -------------------------------------
 
 
-def test_diagnostics_groups_the_same_facts_into_four_sections(client):
-    """Presentation-only regroup: the JSON shape is untouched (asserted
-    elsewhere), but the HTML page must show the four named groups from the
-    design spec, in a page that still has exactly one page heading."""
+def test_diagnostics_healthy_state_keeps_three_fact_sections(client):
+    """A healthy page keeps the facts, but does not manufacture a redundant
+    empty alert section above them."""
     c, _, _ = client
     html = c.get("/diagnostics").text
     assert len(re.findall(r"<h1\b", html)) == 1
-    for heading in ("Needs attention", "Runtime", "Indexing", "Storage"):
+    for heading in ("Runtime", "Indexing", "Storage"):
         assert f">{heading}<" in html
+    assert ">Needs attention<" not in html
 
 
 def test_diagnostics_healthy_state_says_so_and_keeps_facts_quiet(client):
@@ -1425,7 +1425,7 @@ def test_diagnostics_healthy_state_says_so_and_keeps_facts_quiet(client):
     html = c.get("/diagnostics").text
     assert "Bridge is healthy" in html
     assert "card--risk" not in html
-    assert "Nothing needs attention" in html
+    assert "Nothing needs attention" not in html
 
 
 def test_diagnostics_parse_errors_surface_under_needs_attention_with_cause_and_action(client):
@@ -1485,7 +1485,7 @@ def test_diagnostics_banner_and_needs_attention_section_share_one_source_of_trut
     assert re.search(r'data-diagnostics-alert\s+hidden', healthy_dashboard)
     assert "Bridge is healthy" in healthy_diag
     assert "Bridge needs attention" not in healthy_diag
-    assert "Nothing needs attention." in healthy_diag
+    assert "Nothing needs attention." not in healthy_diag
 
     store.record_index_run({"parse_errors": 1}, ran_at=1, duration_ms=1)
     degraded_dashboard = c.get("/").text
@@ -2636,15 +2636,14 @@ def test_the_topbar_scheduled_count_is_zero_with_nothing_pending(client):
 
 
 def test_the_schedule_page_states_explicitly_when_nothing_is_pending(client):
-    """The mega-dashboard's collapsed-when-empty `<details>` had no
-    equivalent on the dedicated `/schedule` page -- it states the empty case
-    in words instead, the same `empty_state` convention every other list in
-    the redesign uses."""
+    """The dedicated page states the empty agenda once and points back to the
+    project surface where scheduling actually begins."""
     c, _, _ = client
 
     body = c.get("/schedule").text
 
-    assert "Nothing scheduled." in body
+    assert "Nothing scheduled yet" in body
+    assert "Schedule work from a project" in body
 
 
 def test_the_schedule_page_offers_edit_cancel_and_run_now_on_a_pending_job(client):

@@ -53,15 +53,21 @@
 
 {% macro project_summary_row(summary) %}
 <div class="project-row">
-  <span class="project-row__name">{{ summary.name }}</span>
-  <code class="project-row__path">{{ summary.path }}</code>
-  {{ status_pill(summary.status_word) }}
-  {% if summary.branch %}<span class="project-row__branch">{{ summary.branch }}</span>{% endif %}
-  {% if summary.dirty_count %}<span class="project-row__dirty">{{ summary.dirty_count }} dirty</span>{% endif %}
-  {% if summary.last_session_title %}
-  <span class="project-row__session card__note">{{ summary.last_session_title }}{% if summary.last_session_age_seconds is not none %} · {{ _duration_seconds(summary.last_session_age_seconds) }} ago{% endif %}</span>
-  {% endif %}
-  <a class="btn" href="/project/{{ summary.project_id }}">Open project</a>
+  <span class="project-row__identity">
+    <span class="project-row__name">{{ summary.name }}</span>
+    <code class="project-row__path">{{ summary.path }}</code>
+  </span>
+  <span class="project-row__activity">
+    {{ status_pill(summary.status_word) }}
+    {% if summary.branch %}<span class="project-row__branch">{{ summary.branch }}</span>{% endif %}
+    {% if summary.dirty_count %}<span class="project-row__dirty">{{ summary.dirty_count }} dirty</span>{% endif %}
+    {% if summary.last_session_title %}
+    <span class="project-row__session card__note">{{ summary.last_session_title }}{% if summary.last_session_age_seconds is not none %} · {{ _duration_seconds(summary.last_session_age_seconds) }} ago{% endif %}</span>
+    {% endif %}
+  </span>
+  <span class="project-row__action">
+    <a class="btn" href="/project/{{ summary.project_id }}">Open project</a>
+  </span>
 </div>
 {% endmacro %}
 

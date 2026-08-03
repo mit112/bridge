@@ -208,6 +208,25 @@ def test_projects_index_shows_an_empty_state_with_no_projects(tmp_path):
     store.close()
 
 
+def test_projects_index_rows_separate_identity_activity_and_action(tmp_path):
+    """The index should scan like a project directory, not a run-on flex row.
+    Identity leads, activity follows, and the one primary row action trails."""
+    cfg = _cfg(tmp_path, "row-composition")
+    store = Store(cfg.db_path)
+    repo = _dirty_repo(tmp_path)
+    pid = store.upsert_project(str(repo), "demo-project")
+    client = TestClient(create_app(store, cfg))
+
+    html = client.get("/projects").text
+    identity = html.index('class="project-row__identity"')
+    activity = html.index('class="project-row__activity"')
+    action = html.index('class="project-row__action"')
+
+    assert identity < activity < action
+    assert f'href="/project/{pid}"' in html[action:]
+    store.close()
+
+
 def test_overview_nav_now_links_to_projects(tmp_path):
     """Projects is functional as of this task, so the shared shell's nav must
     grow to include it (no dead ends) rather than staying Milestone 1's

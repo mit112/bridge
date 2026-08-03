@@ -8,7 +8,9 @@
 {% endblock %}
 {% block content %}
 
-<section class="history" aria-labelledby="settings-appearance-title">
+<div class="settings-layout">
+<div class="settings-preferences" aria-label="Browser preferences">
+<section class="history settings-group" aria-labelledby="settings-appearance-title">
   <h2 id="settings-appearance-title">Appearance</h2>
   <p class="launch__field">
     <label class="launch__label" for="settings-theme">Theme</label>
@@ -20,7 +22,7 @@
   </p>
 </section>
 
-<section class="history" aria-labelledby="settings-density-title">
+<section class="history settings-group" aria-labelledby="settings-density-title">
   <h2 id="settings-density-title">Density</h2>
   <p class="launch__field">
     <label class="launch__label" for="settings-density">Spacing</label>
@@ -31,7 +33,7 @@
   </p>
 </section>
 
-<section class="history" aria-labelledby="settings-launch-title">
+<section class="history settings-group settings-group--launch" aria-labelledby="settings-launch-title">
   <h2 id="settings-launch-title">Safe launch defaults</h2>
   <p class="card__note">Convenience defaults that prefill a new launch's model
     and effort selects and the schedule form's launch mode. They live only in
@@ -65,7 +67,9 @@
     never remembered here. Every launch band always starts on "Ask as usual",
     and Bridge never pre-sets a permission mode from this page.</p>
 </section>
+</div>
 
+<div class="settings-reference" aria-label="Read-only machine configuration">
 <section class="history" aria-labelledby="settings-effective-title">
   <h2 id="settings-effective-title">Effective configuration</h2>
   <div class="table-scroll" tabindex="0" role="region" aria-label="Effective configuration table">
@@ -131,6 +135,8 @@
   </ul>
   {% endif %}
 </section>
+</div>
+</div>
 
 {% endblock %}
 {% block scripts %}

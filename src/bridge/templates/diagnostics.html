@@ -2,17 +2,15 @@
 {% block page_title %}Diagnostics{% endblock %}
 {% block content %}
 {# Status is never colour alone: each row says what it is in words. #}
-<p class="{{ 'risk' if alert else 'muted' }}">
+<p class="diagnostics-status {{ 'diagnostics-status--risk' if alert else 'diagnostics-status--healthy' }}">
   {% if alert %}⚠ Bridge needs attention{% else %}Bridge is healthy{% endif %}
 </p>
 
 {# Same facts as before, regrouped for reading, not a new probe: `attention`
    is built from the very dict `Runtime`/`Indexing`/`Storage` read below. #}
-<section class="history" aria-labelledby="diag-attention-title">
+{% if attention %}
+<section class="history diagnostics-attention" aria-labelledby="diag-attention-title">
   <h2 id="diag-attention-title">Needs attention</h2>
-  {% if not attention %}
-    <p class="empty">Nothing needs attention.</p>
-  {% else %}
   <ul class="cards" data-diagnostics-attention>
     {% for item in attention %}
     <li class="card card--risk">
@@ -22,10 +20,11 @@
     </li>
     {% endfor %}
   </ul>
-  {% endif %}
 </section>
+{% endif %}
 
-<section class="history" aria-labelledby="diag-runtime-title">
+<div class="diagnostics-grid">
+<section class="history diagnostics-section" aria-labelledby="diag-runtime-title">
   <h2 id="diag-runtime-title">Runtime</h2>
   <div class="table-scroll" tabindex="0" role="region" aria-label="Runtime table">
   <table class="diag">
@@ -49,7 +48,20 @@
   </div>
 </section>
 
-<section class="history" aria-labelledby="diag-indexing-title">
+<section class="history diagnostics-section" aria-labelledby="diag-storage-title">
+  <h2 id="diag-storage-title">Storage</h2>
+  <div class="table-scroll" tabindex="0" role="region" aria-label="Storage table">
+  <table class="diag">
+    <tbody>
+      <tr><th scope="row">Queued handoffs</th><td>{{ diag.queued_handoffs }}</td></tr>
+      {# Undrained files only. `spool/drained/` is history, not backlog. #}
+      <tr><th scope="row">Spool depth</th><td>{{ diag.spool_depth }}</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section class="history diagnostics-section diagnostics-section--wide" aria-labelledby="diag-indexing-title">
   <h2 id="diag-indexing-title">Indexing</h2>
   {% if diag.last_index %}
   <div class="table-scroll" tabindex="0" role="region" aria-label="Indexing table">
@@ -69,19 +81,7 @@
     <p class="card__note">Nothing indexed yet.</p>
   {% endif %}
 </section>
-
-<section class="history" aria-labelledby="diag-storage-title">
-  <h2 id="diag-storage-title">Storage</h2>
-  <div class="table-scroll" tabindex="0" role="region" aria-label="Storage table">
-  <table class="diag">
-    <tbody>
-      <tr><th scope="row">Queued handoffs</th><td>{{ diag.queued_handoffs }}</td></tr>
-      {# Undrained files only. `spool/drained/` is history, not backlog. #}
-      <tr><th scope="row">Spool depth</th><td>{{ diag.spool_depth }}</td></tr>
-    </tbody>
-  </table>
-  </div>
-</section>
+</div>
 
 <p><a href="/">Back to the panel</a></p>
 {% endblock %}

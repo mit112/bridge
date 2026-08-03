@@ -221,6 +221,18 @@ def test_settings_route_renders_the_three_preference_groups(tmp_path):
         assert hook in resp.text, f"missing {hook}"
 
 
+def test_settings_route_composes_bounded_preferences_and_reference_facts(tmp_path):
+    client, _ = _route_client(tmp_path)
+
+    html = client.get("/settings").text
+
+    layout = html.index('class="settings-layout"')
+    preferences = html.index('class="settings-preferences"')
+    reference = html.index('class="settings-reference"')
+    assert layout <= preferences < reference
+    assert len(re.findall(r'class="history settings-group(?: |")', html)) == 3
+
+
 def test_settings_route_renders_effective_configuration_and_hook_status(tmp_path):
     client, cfg = _route_client(tmp_path)
 

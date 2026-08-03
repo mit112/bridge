@@ -355,6 +355,24 @@ def test_schedule_route_unknown_view_defaults_to_upcoming(tmp_path):
     assert 'data-scheduled-job="pending-1"' in r.text
 
 
+def test_schedule_route_empty_upcoming_is_one_useful_composed_state(tmp_path):
+    client, store = _client(tmp_path)
+
+    body = client.get("/schedule").text
+
+    assert body.count('class="schedule-empty"') == 1
+    assert "Nothing scheduled yet" in body
+    assert "Schedule work from a project" in body
+    assert 'href="/projects"' in body
+    for redundant in (
+        "Nothing needs attention.",
+        "Nothing scheduled.",
+        "Nothing launching right now.",
+    ):
+        assert redundant not in body
+    store.close()
+
+
 def test_schedule_route_history_paginates_with_prev_next_reflecting_total(tmp_path):
     client, store = _client(tmp_path)
     # 30 terminal rows -- one more page than the 25-row default page size --
