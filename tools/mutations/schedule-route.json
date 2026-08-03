@@ -1,9 +1,9 @@
 [
   {
-    "name": "stop normalizing an unknown view, so ?view=zzz falls through instead of defaulting to upcoming",
+    "name": "default an unrecognized view to history instead of upcoming, so ?view=zzz silently renders the wrong destination",
     "file": "src/bridge/schedule_view.py",
     "old": "    normalized_view = view if view in VALID_VIEWS else \"upcoming\"",
-    "new": "    normalized_view = view",
+    "new": "    normalized_view = view if view in VALID_VIEWS else \"history\"",
     "tests": [
       "tests/test_schedule_route.py::test_schedule_route_unknown_view_defaults_to_upcoming"
     ],
