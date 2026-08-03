@@ -367,7 +367,7 @@ function card(id) {
 }
 const cards = [card("1"), card("2")];
 const list = node();
-cards.forEach((item) => list.append(item));
+[cards[1], cards[0]].forEach((item) => list.append(item));
 const cardMap = Object.fromEntries(cards.map((item) => [item.getAttribute("data-project-card"), item]));
 
 const selectors = {
@@ -425,6 +425,7 @@ window.bridgeApplyDashboardUpdate({ schema: 1, kind: "patch", generated_at: 146,
 const stale = label.textContent;
 window.bridgeApplyDashboardUpdate(REFRESH_BODY);
 const changedIds = list.children.map((item) => item.getAttribute("data-project-card"));
+membership.textContent = "";
 window.bridgeApplyDashboardUpdate({ schema: 1, kind: "patch", generated_at: 147,
   generation: 2, freshness: { server: "available", index_at: 146, index_age_seconds: 1 },
   card_order: ["1", "3"], cards: {} });
