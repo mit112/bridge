@@ -199,8 +199,10 @@ def _card_update(card: Card) -> dict:
 def _unattributed(state: AgentsState, store: Store) -> list[dict]:
     paths = {row["path"] for row in store.projects()}
     out = []
+    seen = set()
     for session in state.sessions:
-        if session.cwd not in paths:
+        if session.cwd not in paths and session.cwd not in seen:
             out.append({"path": session.cwd, "status": session.status,
                         "started_at": session.started_at})
+            seen.add(session.cwd)
     return out

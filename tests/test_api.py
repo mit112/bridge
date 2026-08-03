@@ -80,7 +80,7 @@ def test_dashboard_renders_with_zero_projects(tmp_path):
 
 
 def test_project_detail_renders(client):
-    c, _, _ = client
+    c, _, pid = client
     r = c.get(f"/project/{pid}")
     assert r.status_code == 200
     assert "Did the work" in r.text
@@ -1480,7 +1480,7 @@ def test_a_single_sample_busy_to_idle_flap_never_reaches_the_wire(
         frames = _frames("".join(r.iter_text()))
     store.close()
 
-    assert frames[0][1]["live"]["/p/flap"]["status"] == "busy"
+    assert frames[0][1]["cards"]["1"]["live"]["status"] == "busy"
     assert [n for n, _ in frames] == ["snapshot"], (
         "the idle samples are inside the hold, so nothing changed to report"
     )
@@ -1523,8 +1523,8 @@ def test_the_hold_releases_so_idle_is_delayed_and_not_suppressed(
     assert [n for n, _ in frames] == ["snapshot", "update"], (
         "one delta, on the tick after the hold expired -- not two, and not none"
     )
-    assert frames[0][1]["live"]["/p/hold"]["status"] == "busy"
-    assert frames[1][1]["live"]["/p/hold"]["status"] == "idle"
+    assert frames[0][1]["cards"]["1"]["live"]["status"] == "busy"
+    assert frames[1][1]["cards"]["1"]["live"]["status"] == "idle"
 
 
 def test_the_unattributed_block_holds_the_same_status_the_cards_do(
@@ -1596,11 +1596,10 @@ def test_the_wire_payload_keys_unattributed_sessions_by_their_own_cwd(
         payload = _frames("".join(r.iter_text()))[0][1]
     store.close()
 
-    assert sorted(payload["live"]) == ["/p/real", "/somewhere/unregistered"]
-    # The sentinel itself must never reach the wire: it is a grouping key, not
-    # a path, and a client would try to patch a band named "\x00unattributed".
-    assert agents.UNATTRIBUTED not in payload["live"]
-    assert payload["unattributed"] == ["/somewhere/unregistered"]
+    assert payload["cards"]["1"]["live"]["status"] == "busy"
+    assert payload["unattributed"] == [{
+        "path": "/somewhere/unregistered", "status": "busy", "started_at": 0,
+    }]
 
 
 def test_the_stream_never_holds_the_store_lock_while_it_sleeps(client, monkeypatch):

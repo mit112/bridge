@@ -105,7 +105,7 @@
     <span data-git-dirty {% if card.git.status != "ok" or not card.git.dirty_count %}hidden{% endif %}> · {{ card.git.dirty_count }} dirty</span>
     <span data-git-ahead {% if card.git.status != "ok" or not card.git.ahead %}hidden{% endif %}> · {{ card.git.ahead }} ahead</span>
     <span class="risk" data-git-stale {% if not card.is_stale %}hidden{% endif %}
-          title="Uncommitted work exceeds the staleness threshold">⚠ uncommitted for {{ card.git.oldest_uncommitted_at | ago_epoch }}</span>
+          title="Uncommitted work exceeds the staleness threshold">{% if card.is_stale %}⚠ uncommitted for {{ card.git.oldest_uncommitted_at | ago_epoch }}{% endif %}</span>
     {# `ago_epoch`, not `ago`: `cached_at` is an epoch int, and `ago` takes an
        ISO-8601 string. Both emit a bare duration, so the word comes from here
        exactly as at every other call site. #}
@@ -113,8 +113,8 @@
           title="The git probe timed out; this is the last state Bridge saw">
       · as of {{ card.git.cached_at | ago_epoch }} ago
     </span>
-    <span class="card__note" data-git-status="not_a_repo" {% if card.git.status != "not_a_repo" %}hidden{% endif %}>not a git repo</span>
-    <span class="card__note" data-git-status="unavailable" {% if card.git.status != "unavailable" %}hidden{% endif %}>git unavailable</span>
+    <span class="card__note" data-git-status="not_a_repo" {% if card.git.status != "not_a_repo" %}hidden{% endif %}>{% if card.git.status == "not_a_repo" %}not a git repo{% endif %}</span>
+    <span class="card__note" data-git-status="unavailable" {% if card.git.status != "unavailable" %}hidden{% endif %}>{% if card.git.status == "unavailable" %}git unavailable{% endif %}</span>
   </p>
 
   {% if card.handoff %}

@@ -18,7 +18,7 @@
        carry. Undefined on pages that do not compute it, which Jinja treats as
        falsy -- so those pages simply omit it rather than erroring. #}
     <a class="risk" href="/diagnostics" data-diagnostics-alert
-       {% if not diag_alert %}hidden{% endif %}>⚠ Diagnostics</a>
+       {% if not diag_alert %}hidden{% endif %}>{% if diag_alert %}⚠ {% endif %}Diagnostics</a>
     {% block topbar %}{% endblock %}
   </header>
   <main>{% block content %}{% endblock %}</main>

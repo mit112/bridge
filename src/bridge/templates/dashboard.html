@@ -1,22 +1,22 @@
 {% extends "base.html" %}
 {% block topbar %}
 <dl class="totals">
-  <div class="total"><dt>projects</dt><dd data-dashboard-total="projects">{{ totals.projects }}</dd></div>
-  <div class="total"><dt>running</dt><dd data-dashboard-total="running">{{ totals.running }}</dd></div>
-  <div class="total"><dt>queued</dt><dd data-dashboard-total="queued">{{ totals.queued }}</dd></div>
+  <div class="total" data-dashboard-total="projects"><dt>projects</dt><dd>{{ totals.projects }}</dd></div>
+  <div class="total" data-dashboard-total="running"><dt>running</dt><dd>{{ totals.running }}</dd></div>
+  <div class="total" data-dashboard-total="queued"><dt>queued</dt><dd>{{ totals.queued }}</dd></div>
   {# `data-topbar-scheduled` is the one hook `schedule.js` has to keep this
      number honest after a create/cancel/run-now in the same session -- the
      server only ever renders it once, on load. #}
   <div class="total" data-dashboard-total="scheduled"><dt>scheduled</dt><dd data-topbar-scheduled>{{ totals.scheduled }}</dd></div>
-  <div class="total"><dt>tokens today</dt><dd data-dashboard-total="today">{{ totals.today | kilo }}</dd></div>
-  <div class="total"><dt>last 5h</dt><dd data-dashboard-total="last_5h">{{ totals.last_5h | kilo }}</dd></div>
+  <div class="total" data-dashboard-total="today"><dt>tokens today</dt><dd>{{ totals.today | kilo }}</dd></div>
+  <div class="total" data-dashboard-total="last_5h"><dt>last 5h</dt><dd>{{ totals.last_5h | kilo }}</dd></div>
   {# A rate over the measured window, never a share of a cap: the plan
      publishes no total, so a percentage would have no denominator and a gauge
      would be inventing one. The unit is written out for the same reason. #}
-  <div class="total"><dt>burn</dt><dd data-dashboard-total="burn_rate">{{ totals.burn_rate | kilo }}/h</dd></div>
+  <div class="total" data-dashboard-total="burn_rate"><dt>burn</dt><dd>{{ totals.burn_rate | kilo }}/h</dd></div>
   {# "never" rather than a blank: an empty cell reads as a rendering fault,
      and a fresh install genuinely has not indexed yet. #}
-  <div class="total"><dt>indexed</dt><dd data-dashboard-total="last_index">{{ (totals.last_index | ago_epoch) or "never" }}</dd></div>
+  <div class="total" data-dashboard-total="last_index"><dt>indexed</dt><dd>{{ (totals.last_index | ago_epoch) or "never" }}</dd></div>
 </dl>
 {% set freshness = dashboard_update.freshness %}
 {% set freshness_state = "unavailable" if freshness.server == "unavailable" or freshness.index_at is none else ("stale" if freshness.index_age_seconds >= 45 else "connected") %}

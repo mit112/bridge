@@ -478,6 +478,7 @@ def create_app(
         debouncer=debouncer,
         hook_state=hook_state,
         agents_fn=lambda: agents.probe(),
+        now_fn=now_epoch,
     )
 
     @app.post("/api/hooks")
