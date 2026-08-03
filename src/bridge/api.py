@@ -28,6 +28,7 @@ from bridge.cards import FIVE_HOURS, LivenessDebouncer, build_cards, spark_point
 from bridge.config import Config
 from bridge.indexer import reindex
 from bridge.models import AgentsState, Handoff, ScheduledRun
+from bridge.refresh import RefreshCoordinator
 from bridge.registry import display_name, resolve_project
 from bridge.store import Store, now_epoch
 
@@ -426,9 +427,13 @@ def _fire_claimed_job(store: Store, cfg: Config, row, launch_fn: LaunchFn):
 
 
 def create_app(
-    store: Store, cfg: Config, launch_fn: LaunchFn = launcher.launch
+    store: Store, cfg: Config, launch_fn: LaunchFn = launcher.launch,
+    refresh_coordinator: RefreshCoordinator | None = None,
 ) -> FastAPI:
     app = FastAPI(title="Bridge")
+    if refresh_coordinator is None:
+        refresh_coordinator = RefreshCoordinator(store, cfg)
+    app.state.refresh_coordinator = refresh_coordinator
 
     # Drain before serving. Under the manual-`bridge serve` uptime model this is
     # the main way handoffs arrive, so it runs on every boot.

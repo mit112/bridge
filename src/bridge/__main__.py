@@ -16,6 +16,7 @@ from pathlib import Path
 from bridge import schedspool, spool
 from bridge.config import load
 from bridge.indexer import reindex
+from bridge.refresh import RefreshCoordinator
 from bridge.store import SCHEDULED_RUN_RETENTION_DAYS, Store, now_epoch
 
 log = logging.getLogger(__name__)
@@ -150,20 +151,29 @@ def run_db_command(argv: list[str] | None = None) -> int:
     # suite builds apps directly for route tests, and none of them may spawn a
     # background thread that claims and fires real scheduled runs.
     stop = threading.Event()
+    refresh_coordinator = RefreshCoordinator(store, cfg)
+    refresh_thread = threading.Thread(
+        target=refresh_coordinator.run_periodic, args=(stop,), daemon=True
+    )
+    refresh_thread.start()
     t = threading.Thread(
         target=scheduler.run_scheduler, args=(store, cfg, stop), daemon=True
     )
     t.start()
 
     try:
-        uvicorn.run(create_app(store, cfg), host="127.0.0.1", port=cfg.port)
+        uvicorn.run(
+            create_app(store, cfg, refresh_coordinator=refresh_coordinator),
+            host="127.0.0.1", port=cfg.port,
+        )
     finally:
-        _shutdown_scheduler(stop, t, store)
+        _shutdown_scheduler(stop, t, store, refresh_thread)
     return 0
 
 
 def _shutdown_scheduler(
     stop: threading.Event, t: threading.Thread, store: Store,
+    refresh_thread: threading.Thread | None = None,
     join_timeout: float = 30.0,
 ) -> None:
     """Stop the scheduler thread, then close the store -- but only once the
@@ -178,7 +188,9 @@ def _shutdown_scheduler(
     """
     stop.set()
     t.join(timeout=join_timeout)
-    if not t.is_alive():
+    if refresh_thread is not None:
+        refresh_thread.join(timeout=join_timeout)
+    if not t.is_alive() and (refresh_thread is None or not refresh_thread.is_alive()):
         store.close()
 
 

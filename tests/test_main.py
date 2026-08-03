@@ -235,3 +235,36 @@ def test_shutdown_closes_the_store_once_the_thread_has_terminated():
     _shutdown_scheduler(stop, t, store, join_timeout=0.01)
 
     assert store.closed
+
+
+def test_shutdown_waits_for_refresh_worker_before_closing_store():
+    stop = threading.Event()
+    scheduler_thread = _FakeThread(alive=False)
+    refresh_thread = _FakeThread(alive=True)
+    store = _FakeStore()
+
+    _shutdown_scheduler(
+        stop, scheduler_thread, store, refresh_thread=refresh_thread, join_timeout=0.01
+    )
+
+    assert not store.closed
+    assert refresh_thread.joined_with == 0.01
+
+
+def test_serve_starts_the_in_process_refresh_worker(serve_cfg, monkeypatch):
+    from bridge import __main__ as entry
+
+    calls = []
+
+    class FakeCoordinator:
+        def __init__(self, store, cfg):
+            calls.append((store, cfg))
+
+        def run_periodic(self, stop):
+            calls.append(stop)
+            stop.wait(0.01)
+
+    monkeypatch.setattr(entry, "RefreshCoordinator", FakeCoordinator)
+    assert main(["serve"]) == 0
+    assert len(calls) == 2
+    assert isinstance(calls[1], threading.Event)
