@@ -2328,21 +2328,40 @@ globalThis.localStorage = {
   setItem() {}, removeItem() {},
 };
 
-function makeSelect(initialValue, options) {
-  return { value: initialValue, options: options.map((value) => ({ value })) };
+// Each select can resolve its `[data-launch]` band via `closest`, exactly as a
+// real select nested inside the band does. `band` is null for a schedule-mode
+// select (no enclosing launch band), a handoff-free band, or a band that
+// carries a handoff suggestion.
+function makeBand(handoffId) {
+  return { getAttribute: (name) => (name === "data-launch-handoff" ? handoffId : null) };
+}
+function makeSelect(initialValue, options, band) {
+  return {
+    value: initialValue,
+    options: options.map((value) => ({ value })),
+    closest: (sel) => (sel === "[data-launch]" ? (band ?? null) : null),
+  };
 }
 
-const model = makeSelect("claude-sonnet-4-6", ["claude-sonnet-4-6", "claude-opus-4-8"]);
-const effort = makeSelect("medium", ["low", "medium", "high", "xhigh"]);
-const scheduleMode = makeSelect("terminal", ["terminal", "background"]);
-const perm = makeSelect("", ["", "acceptEdits", "bypassPermissions"]);
-// A SECOND band whose model catalog does NOT include the stored default, so
-// the "valid option only" guard must leave it untouched.
-const modelNoMatch = makeSelect("claude-haiku", ["claude-haiku"]);
+const bandPlain = makeBand(null);
+const bandHandoff = makeBand("h1");
+
+// A handoff-free band takes the stored default.
+const model = makeSelect("claude-sonnet-4-6", ["claude-sonnet-4-6", "claude-opus-4-8"], bandPlain);
+const effort = makeSelect("medium", ["low", "medium", "high", "xhigh"], bandPlain);
+// A band carrying a handoff SUGGESTION must keep its server-selected value --
+// the contextual suggestion wins over the generic browser-wide default.
+const modelHandoff = makeSelect("claude-sonnet-4-6", ["claude-sonnet-4-6", "claude-opus-4-8"], bandHandoff);
+const effortHandoff = makeSelect("low", ["low", "medium", "high", "xhigh"], bandHandoff);
+// A handoff-free band whose catalog does NOT include the stored default: the
+// "valid option only" guard must leave it untouched.
+const modelNoMatch = makeSelect("claude-haiku", ["claude-haiku"], bandPlain);
+const scheduleMode = makeSelect("terminal", ["terminal", "background"], null);
+const perm = makeSelect("", ["", "acceptEdits", "bypassPermissions"], bandPlain);
 
 const plural = {
-  "[data-launch-model]": [model, modelNoMatch],
-  "[data-launch-effort]": [effort],
+  "[data-launch-model]": [model, modelHandoff, modelNoMatch],
+  "[data-launch-effort]": [effort, effortHandoff],
   "[data-schedule-mode]": [scheduleMode],
 };
 const singular = {
@@ -2370,8 +2389,10 @@ const body = window.bridgeLaunchBody("launch-1", "/Users/mitsheth/dev/demo");
 
 console.log(JSON.stringify({
   modelValue: model.value,
+  modelHandoffValue: modelHandoff.value,
   modelNoMatchValue: modelNoMatch.value,
   effortValue: effort.value,
+  effortHandoffValue: effortHandoff.value,
   scheduleModeValue: scheduleMode.value,
   permValue: perm.value,
   permissionModeSent: body.permission_mode,
@@ -2392,10 +2413,14 @@ def _run_launch_prefill_harness(tmp_path) -> dict:
 @pytest.mark.skipif(_node() is None, reason="node is not installed")
 def test_launch_js_prefills_the_band_from_stored_defaults_but_never_the_permission(tmp_path):
     got = _run_launch_prefill_harness(tmp_path)
-    # A stored default that matches an option is applied.
+    # A handoff-free band with a matching option takes the stored default.
     assert got["modelValue"] == "claude-opus-4-8"
     assert got["effortValue"] == "xhigh"
     assert got["scheduleModeValue"] == "background"
+    # A band carrying a handoff suggestion keeps its server-selected value even
+    # though the same stored defaults are a valid option -- the suggestion wins.
+    assert got["modelHandoffValue"] == "claude-sonnet-4-6"
+    assert got["effortHandoffValue"] == "low"
     # A stored default with no matching option is skipped, not forced on.
     assert got["modelNoMatchValue"] == "claude-haiku"
     # The permission control is never touched, and the request it feeds stays

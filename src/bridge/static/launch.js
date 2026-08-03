@@ -207,16 +207,24 @@ document.addEventListener("click", async (event) => {
   }
   if (!store) return;
 
-  const applyStored = (selector, value) => {
+  const applyStored = (selector, value, respectHandoff) => {
     if (value === null) return;
     document.querySelectorAll(selector).forEach((el) => {
+      // A band that carries a handoff keeps its server-selected suggestion:
+      // the contextual model/effort the handoff proposed wins over the generic
+      // browser-wide default. Only handoff-free bands take the stored default.
+      if (respectHandoff) {
+        const band = el.closest && el.closest("[data-launch]");
+        if (band && band.getAttribute("data-launch-handoff") !== null) return;
+      }
       if (Array.prototype.some.call(el.options || [], (opt) => opt.value === value)) {
         el.value = value;
       }
     });
   };
 
-  applyStored("[data-launch-model]", store.getItem("bridge.launch.model"));
-  applyStored("[data-launch-effort]", store.getItem("bridge.launch.effort"));
-  applyStored("[data-schedule-mode]", store.getItem("bridge.launch.mode"));
+  applyStored("[data-launch-model]", store.getItem("bridge.launch.model"), true);
+  applyStored("[data-launch-effort]", store.getItem("bridge.launch.effort"), true);
+  // Mode has no per-band handoff suggestion, so it applies unconditionally.
+  applyStored("[data-schedule-mode]", store.getItem("bridge.launch.mode"), false);
 })();
