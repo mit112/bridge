@@ -36,7 +36,7 @@
   {% endif %}
 {% endblock %}
 {% block content %}
-<div class="overview-command-strip" aria-label="System at a glance">
+<div class="overview-command-strip" role="group" aria-label="System at a glance">
   <div class="command-cell{% if model.totals.running %} is-live{% endif %}">
     <span class="command-cell__num">{{ model.totals.running }}</span>
     <span class="command-cell__label">Running</span>

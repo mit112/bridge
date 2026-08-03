@@ -404,6 +404,11 @@ def test_overview_route_renders_command_strip_with_hot_and_cold_branches(tmp_pat
     for label in ("Running", "Needs attention", "Queued", "Dirty trees", "Scheduled", "Projects"):
         assert label in html
 
+    assert re.search(
+        r'<div class="overview-command-strip" role="group" aria-label="[^"]*">',
+        html,
+    )
+
     assert "is-hot" in html
     assert "is-live" not in html
 
