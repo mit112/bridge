@@ -48,7 +48,6 @@
   --bg: var(--canvas); --fg: var(--text); --muted: var(--text-secondary);
   --line: var(--rule); --card: var(--surface); --accent: var(--work);
   --risk-fg: var(--risk); --risk-bg: var(--risk-soft);
-  --queued-fg: var(--work); --queued-bg: var(--work-soft); --queued-line: var(--work);
 
   /* Spacing scale, 4px base. */
   --space-1: .25rem; --space-2: .5rem; --space-3: .75rem; --space-4: 1rem;
@@ -499,7 +498,7 @@ main { width: min(100%, 68rem); margin-inline: auto; padding: var(--space-6); }
 
 /* --- Phase 3: the launch band ---------------------------------------------- */
 
-/* Outside the handoff block, so on the card surface rather than --queued-bg. */
+/* Outside the handoff block, so on the card surface rather than --handoff-bg. */
 .launch {
   display: flex;
   align-items: flex-end;

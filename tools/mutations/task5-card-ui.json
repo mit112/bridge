@@ -27,13 +27,14 @@
     ]
   },
   {
-    "name": "weaken the queued foreground colour below AA",
+    "name": "weaken the work-soft surface so work-blue foreground drops below AA",
     "file": "src/bridge/static/app.css",
-    "old": "  --queued-fg: var(--work);",
-    "new": "  --queued-fg: #9ba9ad;",
+    "old": "  --p-work-soft: #dcecef;",
+    "new": "  --p-work-soft: #176579;",
     "tests": [
       "tests/test_contrast.py"
-    ]
+    ],
+    "expect_count": 2
   },
   {
     "name": "remove the live region from the copy confirmation",
