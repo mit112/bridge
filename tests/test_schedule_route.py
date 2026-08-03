@@ -171,6 +171,53 @@ def test_history_view_paginates_terminal_rows_with_total(tmp_path):
     assert "still-pending" not in all_history_ids
 
 
+def test_history_includes_cancelled_runs_and_they_are_not_retryable(tmp_path):
+    """Locks the decided behavior: History is the full terminal record, so a
+    `cancelled` run appears there (and counts toward `history_total`) even
+    though it's deliberately excluded from `attention`/Overview's failure
+    ladder -- cancelled means the user said not to, not that something is
+    still owed. A cancelled run is also never `retryable`."""
+    cfg = _cfg(tmp_path)
+    store = Store(cfg.db_path)
+    store.upsert_project("/p/proj", "proj")
+
+    store.restore_scheduled_run(_run(
+        id="cancelled-1", scheduled_for=100, created_at=50,
+        status="cancelled", completed_at=200,
+    ))
+    store.restore_scheduled_run(_run(
+        id="fired-1", scheduled_for=90, created_at=40,
+        status="fired", completed_at=190, fired_at=190,
+    ))
+
+    model = build_schedule(store, view="history", page=0, page_size=25)
+    assert model.history_total == 2
+    history_ids = [row.id for row in model.history]
+    assert "cancelled-1" in history_ids
+
+    cancelled_row = next(row for row in model.history if row.id == "cancelled-1")
+    assert cancelled_row.retryable is False
+
+
+def test_history_out_of_range_page_returns_empty_without_raising(tmp_path):
+    cfg = _cfg(tmp_path)
+    store = Store(cfg.db_path)
+    store.upsert_project("/p/proj", "proj")
+
+    store.restore_scheduled_run(_run(
+        id="term-1", scheduled_for=100, created_at=50,
+        status="fired", completed_at=200, fired_at=200,
+    ))
+    store.restore_scheduled_run(_run(
+        id="term-2", scheduled_for=110, created_at=60,
+        status="fired", completed_at=210, fired_at=210,
+    ))
+
+    model = build_schedule(store, view="history", page=99, page_size=25)
+    assert model.history == []
+    assert model.history_total == 2
+
+
 def test_build_schedule_returns_frozen_model(tmp_path):
     cfg = _cfg(tmp_path)
     store = Store(cfg.db_path)
