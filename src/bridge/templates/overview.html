@@ -1,10 +1,3 @@
-{# The calm Overview: "what needs my attention", plus a quiet look at recent
-   projects and what is coming up. Renders `bridge.overview.OverviewModel`
-   (`model` in this template) -- no per-project git/burn/sparkline leaves, no
-   compose/launch/handoff surface, no scheduled/hidden-projects detail. Those
-   surfaces are the Project workspace's (`/project/{id}?tab=current`), the
-   Projects index's (`/projects`), and the Schedule page's (`/schedule`) to
-   own; this page only links to them. #}
 {% extends "base.html" %}
 {% from "_shell.html" import freshness_status %}
 {% from "_components.html" import project_summary_row, schedule_row, empty_state %}
@@ -12,7 +5,7 @@
 {% block page_summary %}
 <p class="page-lede">
   {% if model.attention_total %}
-    {{ model.attention_total }} item{{ "" if model.attention_total == 1 else "s" }} need{{ "s" if model.attention_total == 1 else "" }} your attention.{% if model.attention_total > model.attention | length %} Showing the {{ model.attention | length }} highest priority.{% endif %}
+    {{ model.attention_total }} item{{ "" if model.attention_total == 1 else "s" }} need{{ "s" if model.attention_total == 1 else "" }} your attention. Everything else can wait.
   {% else %}
     Nothing needs your attention right now.
   {% endif %}
@@ -29,83 +22,130 @@
   <span class="card__note" data-refresh-status role="status" aria-live="polite"></span>
 {% endcall %}
 {% endblock %}
+{% block shell_status %}
+  {% if model.freshness.server != "unavailable" and model.freshness.index_at is not none %}
+    <span class="shell-status__label"><span class="shell-status__signal" aria-hidden="true"></span>Connected</span>
+    <span class="shell-status__detail">Indexed {{ model.freshness.index_at | ago_epoch }} ago</span>
+  {% elif model.freshness.server == "unavailable" %}
+    <span class="shell-status__label">Unavailable</span>
+    <span class="shell-status__detail">Refresh to reconnect</span>
+  {% else %}
+    <span class="shell-status__label">Connected</span>
+    <span class="shell-status__detail">Not indexed yet</span>
+  {% endif %}
+{% endblock %}
 {% block content %}
-<div class="overview-layout">
-<section class="overview-primary" aria-labelledby="overview-attention-title">
+<section class="overview-attention" aria-labelledby="overview-attention-title">
   <div class="overview-section-head">
-    <h2 id="overview-attention-title">Needs attention</h2>
-    <a href="/projects">View all projects</a>
+    <div>
+      <h2 id="overview-attention-title">Needs attention</h2>
+      <p>Running work, queued handoffs, failures, and stale projects only.</p>
+    </div>
+    <nav class="overview-section-links" aria-label="All attention destinations">
+      <a href="/projects">View all projects</a>
+      <a href="/schedule">Open schedule</a>
+    </nav>
   </div>
+
   {% if not model.attention %}
     {{ empty_state("Nothing needs attention.") }}
   {% else %}
-  <ul class="attention-list" data-overview-attention>
-    {% for item in model.attention %}
-    <li class="attention-row attention-row--{{ item.kind }}">
-      <div class="attention-row__body">
-        <span class="attention-row__kind">{% if item.kind in ("stale", "schedule_failure") %}⚠ {% endif %}{{ item.kind | replace("_", " ") }}</span>
-        <h3>{{ item.title }}</h3>
-        <p class="attention-row__summary">{{ item.summary }}</p>
+    {% set primary = model.attention[0] %}
+    <div class="overview-attention-stage" data-overview-attention>
+      <article class="attention-primary attention-primary--{{ primary.kind }}">
+        <div class="attention-primary__top">
+          <div>
+            <p class="attention-kicker">{{ primary.meta.project_name or primary.title }} · {{ primary.kind | replace("_", " ") }}</p>
+            <h3>{{ primary.title }}</h3>
+            <p class="attention-primary__summary">{{ primary.summary }}</p>
+          </div>
+          <span class="pill {{ 'pill--risk' if primary.kind in ('stale', 'schedule_failure') else 'pill--work' }}">
+            {% if primary.kind == "handoff" %}Ready to continue{% elif primary.kind == "running" %}Working now{% else %}Needs review{% endif %}
+          </span>
+        </div>
+        {% if primary.kind == "handoff" and primary.meta.has_span %}
+        <div class="attention-span" aria-label="Continuation path">
+          <span class="attention-span__node attention-span__node--done" aria-hidden="true">✓</span>
+          <span class="attention-span__rail" aria-hidden="true"></span>
+          <span class="attention-span__node attention-span__node--ready" aria-hidden="true">•</span>
+          <span class="attention-span__rail" aria-hidden="true"></span>
+          <span class="attention-span__node" aria-hidden="true">›</span>
+        </div>
+        <div class="attention-span__labels"><span>Session ended</span><span>Handoff ready</span><span>Next session</span></div>
+        {% endif %}
+        <div class="attention-primary__actions">
+          <a class="btn btn--primary" href="{{ primary.primary_action.href }}">{{ primary.primary_action.label }}</a>
+          {% if primary.kind == "handoff" %}<a class="btn" href="{{ primary.primary_action.href }}">Review handoff</a>{% endif %}
+          <span class="attention-primary__meta">
+            {% if primary.meta.branch %}{{ primary.meta.branch }}{% endif %}
+            {% if primary.meta.dirty_count %} · {{ primary.meta.dirty_count }} dirty{% endif %}
+            {% if primary.meta.created_at %} · {{ primary.meta.created_at | ago_epoch }} ago{% endif %}
+          </span>
+        </div>
+      </article>
+
+      {% if model.attention | length > 1 %}
+      <div class="attention-secondary-stack">
+        {% for item in model.attention[1:] %}
+        <article class="attention-secondary attention-secondary--{{ item.kind }}">
+          <span class="pill {{ 'pill--risk' if item.kind in ('stale', 'schedule_failure') else 'pill--work' }}">
+            {% if item.kind == "handoff" %}Ready{% elif item.kind == "running" %}Working now{% else %}Needs review{% endif %}
+          </span>
+          <h3>{{ item.meta.project_name or item.title }}</h3>
+          <p>{{ item.summary }}</p>
+          <div class="attention-secondary__foot">
+            <span>{% if item.meta.created_at %}{{ item.meta.created_at | ago_epoch }} ago{% elif item.meta.dirty_count %}{{ item.meta.dirty_count }} files changed{% endif %}</span>
+            <a href="{{ item.primary_action.href }}">{{ item.primary_action.label }}</a>
+          </div>
+        </article>
+        {% endfor %}
       </div>
-      <a class="btn" href="{{ item.primary_action.href }}">{{ item.primary_action.label }}</a>
-    </li>
-    {% endfor %}
-  </ul>
+      {% endif %}
+    </div>
   {% endif %}
 </section>
 
-<aside class="overview-secondary" aria-label="Recent and upcoming work">
-<section class="overview-panel" aria-labelledby="overview-recent-title">
-  <h2 id="overview-recent-title">Recent projects</h2>
-  {% if not model.recent %}
-    {{ empty_state("No other projects yet.") }}
-  {% else %}
-  {# `.projects-list`/`.projects-list__item` are `projects.html`'s own list
-     treatment around this exact macro -- reused rather than duplicated. #}
-  <ul class="projects-list">
-    {% for row in model.recent %}<li class="projects-list__item">{{ project_summary_row(row) }}</li>{% endfor %}
-  </ul>
-  {% endif %}
-  {# Kept even though Overview renders no per-card membership list of its
-     own: live.js's project-list-changed announcement (`applyCardOrder`)
-     still looks this hook up by name. #}
-  <p class="card__note" data-project-membership-status role="status" aria-live="polite"></p>
-</section>
-
-<section class="overview-panel" aria-labelledby="overview-up-next-title">
-  <h2 id="overview-up-next-title">Up next</h2>
-  {% if not model.up_next %}
-    {{ empty_state("Nothing scheduled.") }}
-  {% else %}
-  {# `.scheduled`'s own descendant selectors (`.scheduled ul`/`li`) give this
-     preview the identical row layout the Schedule page already uses, for
-     free -- the same reuse `schedule.html` itself relies on (see its own
-     comment at the top of `.scheduled` in app.css). #}
-  <div class="scheduled overview-up-next">
-    <ul>
-      {% for row in model.up_next %}{{ schedule_row(row, interactive=False) }}{% endfor %}
+<section class="overview-lower-grid" aria-label="Recent and upcoming work">
+  <section class="overview-panel overview-recent" aria-labelledby="overview-recent-title">
+    <div class="overview-section-head">
+      <div><h2 id="overview-recent-title">Recent projects</h2><p>Continue where you last left off.</p></div>
+      <a href="/projects">All projects</a>
+    </div>
+    {% if not model.recent %}
+      {{ empty_state("No other projects yet.") }}
+    {% else %}
+    <ul class="projects-list">
+      {% for row in model.recent %}<li class="projects-list__item">{{ project_summary_row(row) }}</li>{% endfor %}
     </ul>
-  </div>
-  {% endif %}
-  <p><a href="/schedule">See the full schedule</a></p>
-</section>
-</aside>
-</div>
+    {% endif %}
+    <p class="card__note" data-project-membership-status role="status" aria-live="polite"></p>
+  </section>
 
-{# Keep every live-update leaf, but move the dashboard strip into one quiet,
-   collapsed usage disclosure rather than making eight metrics compete with
-   the page question. Hooks live on <dd> so a tick never erases its <dt>. #}
-<details class="overview-usage">
-  <summary>Usage and index details</summary>
-  <dl class="totals overview-metrics">
-    <div class="total"><dt>projects</dt><dd data-dashboard-total="projects">{{ model.totals.projects }}</dd></div>
-    <div class="total"><dt>running</dt><dd data-dashboard-total="running">{{ model.totals.running }}</dd></div>
-    <div class="total"><dt>queued</dt><dd data-dashboard-total="queued">{{ model.totals.queued }}</dd></div>
-    <div class="total"><dt>scheduled</dt><dd data-dashboard-total="scheduled" data-topbar-scheduled>{{ model.totals.scheduled }}</dd></div>
-    <div class="total"><dt>tokens today</dt><dd data-dashboard-total="today">{{ model.totals.today | kilo }}</dd></div>
-    <div class="total"><dt>last 5h</dt><dd data-dashboard-total="last_5h">{{ model.totals.last_5h | kilo }}</dd></div>
-    <div class="total"><dt>burn</dt><dd data-dashboard-total="burn_rate">{{ model.totals.burn_rate | kilo }}/h</dd></div>
-    <div class="total"><dt>indexed</dt><dd data-dashboard-total="last_index">{{ (model.totals.last_index | ago_epoch) or "never" }}</dd></div>
-  </dl>
-</details>
+  <aside class="overview-panel overview-up-next-panel" aria-labelledby="overview-up-next-title">
+    <div class="overview-section-head">
+      <div><h2 id="overview-up-next-title">Up next</h2><p>Scheduled sessions.</p></div>
+      <a href="/schedule">Open schedule</a>
+    </div>
+    {% if not model.up_next %}
+      {{ empty_state("Nothing scheduled.") }}
+    {% else %}
+    <div class="scheduled overview-up-next">
+      <ul>{% for row in model.up_next %}{{ schedule_row(row, interactive=False) }}{% endfor %}</ul>
+    </div>
+    {% endif %}
+    <details class="overview-usage">
+      <summary>Usage and index details</summary>
+      <dl class="totals overview-metrics">
+        <div class="total"><dt>projects</dt><dd data-dashboard-total="projects">{{ model.totals.projects }}</dd></div>
+        <div class="total"><dt>running</dt><dd data-dashboard-total="running">{{ model.totals.running }}</dd></div>
+        <div class="total"><dt>queued</dt><dd data-dashboard-total="queued">{{ model.totals.queued }}</dd></div>
+        <div class="total"><dt>scheduled</dt><dd data-dashboard-total="scheduled" data-topbar-scheduled>{{ model.totals.scheduled }}</dd></div>
+        <div class="total"><dt>tokens today</dt><dd data-dashboard-total="today">{{ model.totals.today | kilo }}</dd></div>
+        <div class="total"><dt>last 5h</dt><dd data-dashboard-total="last_5h">{{ model.totals.last_5h | kilo }}</dd></div>
+        <div class="total"><dt>burn</dt><dd data-dashboard-total="burn_rate">{{ model.totals.burn_rate | kilo }}/h</dd></div>
+        <div class="total"><dt>indexed</dt><dd data-dashboard-total="last_index">{{ (model.totals.last_index | ago_epoch) or "never" }}</dd></div>
+      </dl>
+    </details>
+  </aside>
+</section>
 {% endblock %}

@@ -1,21 +1,16 @@
 {% extends "base.html" %}
 {% block title %}{{ model.project.name }} — Bridge{% endblock %}
-{% block page_title %}{{ model.project.name }}{% endblock %}
-{% block content %}
-{# "Projects" is a real link (spec:394's no-dead-end rule): the route it
-   points at already exists, so this is never a link to nowhere. #}
+{% block page_eyebrow %}
 <nav class="breadcrumb" aria-label="Breadcrumb">
   <a href="/projects">Projects</a>
   <span class="breadcrumb__sep" aria-hidden="true">/</span>
   <span aria-current="page">{{ model.project.name }}</span>
 </nav>
-<p class="card__path"><code>{{ model.project.path }}</code></p>
-
-{# Pin and Hide, spelled out as explicit actions rather than folded into a
-   menu -- the same hooks and wording `_card.html` uses on the dashboard, so
-   `projects.js`'s delegated listeners drive both without knowing which page
-   they are on. #}
-<p class="workspace__actions">
+{% endblock %}
+{% block page_title %}{{ model.project.name }}{% endblock %}
+{% block page_summary %}<p class="card__path project-path"><code>{{ model.project.path }}</code></p>{% endblock %}
+{% block page_actions %}
+<div class="workspace__actions">
   <button type="button" class="btn btn--pin" data-project-pin="{{ model.card.project_id }}"
           aria-pressed="{{ 'true' if model.card.pinned else 'false' }}"
           aria-label="Pin {{ model.project.name }} above every other project"
@@ -25,18 +20,16 @@
           title="Hide from the dashboard">Hide</button>
   <span class="card__hide-status" role="status" aria-live="polite"
         data-project-status="{{ model.card.project_id }}"></span>
-</p>
-
-{# A real link per tab, not a client-side switch: a full page load keeps
-   Back/Forward predictable and the URL shareable. Unknown `?tab=` values
-   normalize to `current` in `build_workspace`, so `model.tab` is always one
-   of the four below -- there is no fifth, unhighlighted state. No per-tab
-   count badges: the model only ever loads the SELECTED tab's list (the other
-   two stay empty, unfetched), so a count would need a new query this task
-   does not add. #}
+</div>
+{% endblock %}
+{% block shell_status %}
+  <span class="shell-status__label">Project state</span>
+  <span class="shell-status__detail">{% if model.git and model.git.cached_at %}Git checked {{ model.git.cached_at | ago_epoch }} ago{% else %}Repository access · read only{% endif %}</span>
+{% endblock %}
+{% block content %}
 <nav class="workspace-tabs" aria-label="Project sections">
   <a class="workspace-tabs__link" href="/project/{{ model.card.project_id }}?tab=current"
-     {% if model.tab == "current" %}aria-current="page"{% endif %}>Current</a>
+     {% if model.tab == "current" %}aria-current="page"{% endif %}>Current work</a>
   <a class="workspace-tabs__link" href="/project/{{ model.card.project_id }}?tab=sessions"
      {% if model.tab == "sessions" %}aria-current="page"{% endif %}>Sessions</a>
   <a class="workspace-tabs__link" href="/project/{{ model.card.project_id }}?tab=handoffs"

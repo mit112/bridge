@@ -12,8 +12,8 @@
   {
     "name": "drop the behind row, so the count probed on every card build renders nowhere again",
     "file": "src/bridge/templates/_workspace_current.html",
-    "old": "    {% if git.behind %}<span>{{ git.behind }} behind</span>{% endif %}",
-    "new": "",
+    "old": "{% if git and git.behind %}{{ git.behind }} behind{% elif git and git.ahead %}{{ git.ahead }} ahead{% else %}Synced{% endif %}",
+    "new": "{% if git and git.ahead %}{{ git.ahead }} ahead{% else %}Synced{% endif %}",
     "tests": [
       "tests/test_api.py::test_the_project_page_shows_the_cached_git_log"
     ],
@@ -22,8 +22,8 @@
   {
     "name": "print the last-commit label with no summary, so the commit the cache holds is not shown",
     "file": "src/bridge/templates/_workspace_current.html",
-    "old": "last commit: {{ git.last_commit_summary }}",
-    "new": "last commit:",
+    "old": "<p>{{ git.last_commit_summary }}<time>",
+    "new": "<p><time>",
     "tests": [
       "tests/test_api.py::test_the_project_page_shows_the_cached_git_log"
     ],

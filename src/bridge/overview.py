@@ -27,13 +27,9 @@ from bridge.store import Store, now_epoch, to_epoch
 # Overview shows only the highest-value subset; the full lists live on
 # Projects/Schedule. Small enough to read in one glance, per the spec's "calm"
 # requirement for this page.
-ATTENTION_LIMIT = 6
+ATTENTION_LIMIT = 3
 RECENT_LIMIT = 5
 UP_NEXT_LIMIT = 3
-# A long unretried-failure history must not dominate "Needs attention"; the
-# same cap-and-truncate treatment `recent`/`up_next` already get.
-SCHEDULE_FAILURE_LIMIT = 5
-
 # Terminal, non-cancelled scheduled-run statuses: something Bridge promised to
 # do and did not, as opposed to `fired` (it happened) or `cancelled` (the user
 # said not to).
@@ -214,7 +210,8 @@ def _attention_from_cards(cards: list[Card]) -> list[AttentionItem]:
             items.append(AttentionItem(
                 kind="handoff",
                 project_id=card.project_id,
-                title=card.name,
+                title=(card.session.title if card.session and card.session.title
+                       else card.name),
                 summary=(
                     card.handoff.get("summary")
                     or card.handoff.get("next_prompt", "")
@@ -222,7 +219,14 @@ def _attention_from_cards(cards: list[Card]) -> list[AttentionItem]:
                 primary_action=Action(
                     "Continue in Terminal", f"/project/{card.project_id}?tab=current",
                 ),
-                meta={"handoff_id": card.handoff.get("id")},
+                meta={
+                    "handoff_id": card.handoff.get("id"),
+                    "project_name": card.name,
+                    "created_at": card.handoff.get("created_at"),
+                    "has_span": bool(card.session),
+                    "branch": card.git.branch,
+                    "dirty_count": card.git.dirty_count,
+                },
             ))
         elif card.live is not None:
             items.append(AttentionItem(
@@ -233,7 +237,12 @@ def _attention_from_cards(cards: list[Card]) -> list[AttentionItem]:
                 primary_action=Action(
                     "Open project", f"/project/{card.project_id}",
                 ),
-                meta={"live_status": card.live.status},
+                meta={
+                    "live_status": card.live.status,
+                    "project_name": card.name,
+                    "branch": card.git.branch,
+                    "dirty_count": card.git.dirty_count,
+                },
             ))
         elif card.is_stale:
             items.append(AttentionItem(
@@ -244,7 +253,11 @@ def _attention_from_cards(cards: list[Card]) -> list[AttentionItem]:
                 primary_action=Action(
                     "Review project state", f"/project/{card.project_id}",
                 ),
-                meta={"dirty_count": card.git.dirty_count},
+                meta={
+                    "dirty_count": card.git.dirty_count,
+                    "project_name": card.name,
+                    "branch": card.git.branch,
+                },
             ))
     return items
 
@@ -262,8 +275,9 @@ def _schedule_failures(store: Store, by_path: dict[str, Card]) -> list[Attention
     r["retry_of"]}`) before deciding what may still offer a Retry action.
     Without this, a failure that was already retried would re-surface here
     forever, since the original row's status never changes once retried.
-    Capped to `SCHEDULE_FAILURE_LIMIT`, newest-completed first, so a long
-    unretried-failure history cannot dominate the section.
+    Kept complete for `attention_total`, newest-completed first. Only the final
+    composed Overview list is sliced to `ATTENTION_LIMIT`, so the visible count
+    stays honest even when Projects/Schedule carry the omitted rows.
     """
     rows = store.scheduled_runs()
     retried = {r["retry_of"] for r in rows if r["retry_of"]}
@@ -274,7 +288,7 @@ def _schedule_failures(store: Store, by_path: dict[str, Card]) -> list[Attention
     failures.sort(key=lambda r: (r["completed_at"] or 0), reverse=True)
 
     out: list[AttentionItem] = []
-    for row in failures[:SCHEDULE_FAILURE_LIMIT]:
+    for row in failures:
         card = by_path.get(row["project_path"])
         if card is not None:
             project_id, title = card.project_id, card.name

@@ -287,7 +287,7 @@ def test_stale_project_shows_warning_glyph_and_text(tmp_path):
         # (`bridge.overview._attention_from_cards`) uses its own summary text
         # for the same fact -- still a word, never colour alone.
         assert "47 uncommitted change(s)" in text
-        assert "⚠" in text
+        assert "Needs review" in text
         assert "uncommitted" in text.lower()
     finally:
         cards_mod.gitprobe.probe = orig
@@ -636,7 +636,7 @@ def test_the_card_shows_the_handoff_and_a_labelled_copy_affordance(handoff_app):
 
     html = c.get(f"/project/{pid}?tab=current").text
 
-    assert "Next step queued" in html
+    assert "Queued handoff" in html
     assert "a summary" in html
     # The button says what it does, and the confirmation is a live region so it
     # is announced without moving focus.
@@ -1257,7 +1257,7 @@ def test_a_stale_git_probe_renders_the_last_good_state_and_its_age(tmp_path):
     text = c.get(f"/project/{pid}").text
 
     assert "cached-branch" in text, "the last good branch was not shown"
-    assert "git checked" in text
+    assert "Git checked" in text
     assert "ago" in text
     store.close()
 

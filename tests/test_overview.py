@@ -9,7 +9,6 @@ from bridge.config import load
 from bridge.models import GitState, Handoff, LiveSession, ScheduledRun, SessionRecord
 from bridge.overview import (
     RECENT_LIMIT,
-    SCHEDULE_FAILURE_LIMIT,
     UP_NEXT_LIMIT,
     build_overview,
 )
@@ -43,7 +42,7 @@ def test_attention_ladder_orders_kinds_and_pins_correct_hrefs(tmp_path):
 
     stale_id = store.upsert_project("/p/stale", "stale-project")
 
-    failure_target_id = store.upsert_project("/p/failure-target", "failure-target")
+    store.upsert_project("/p/failure-target", "failure-target")
     store.restore_scheduled_run(ScheduledRun(
         id="run-failed", project_path="/p/failure-target", prompt="do the thing",
         mode="interactive", scheduled_for=now - 100, created_at=now - 200,
@@ -66,9 +65,10 @@ def test_attention_ladder_orders_kinds_and_pins_correct_hrefs(tmp_path):
     model = build_overview(store, cfg, now=now, probe_fn=probe, agents_fn=agents_fn)
 
     kinds = [item.kind for item in model.attention]
-    assert kinds == ["handoff", "running", "stale", "schedule_failure"]
+    assert kinds == ["handoff", "running", "stale"]
+    assert model.attention_total == 4
 
-    handoff_item, running_item, stale_item, failure_item = model.attention
+    handoff_item, running_item, stale_item = model.attention
 
     assert handoff_item.project_id == handoff_id
     assert handoff_item.primary_action.label == "Continue in Terminal"
@@ -82,10 +82,6 @@ def test_attention_ladder_orders_kinds_and_pins_correct_hrefs(tmp_path):
     assert stale_item.primary_action.label == "Review project state"
     assert stale_item.primary_action.href == f"/project/{stale_id}"
 
-    assert failure_item.project_id == failure_target_id
-    assert failure_item.primary_action.label == "Review scheduled run"
-    assert failure_item.primary_action.href == "/schedule"
-
     store.close()
 
 
@@ -95,7 +91,7 @@ def test_attention_is_bounded_without_repeating_omitted_risks_as_recent(tmp_path
     cfg = _cfg(tmp_path)
     store = Store(cfg.db_path)
     now = 100_000
-    expected_limit = 6
+    expected_limit = 3
     for i in range(expected_limit + 2):
         store.upsert_project(f"/p/stale-{i}", f"stale-{i}")
     quiet_id = store.upsert_project("/p/quiet", "quiet")
@@ -161,11 +157,11 @@ def test_schedule_failure_excludes_already_retried_originals(tmp_path):
     store.close()
 
 
-def test_schedule_failure_limit_and_newest_completed_first(tmp_path):
+def test_schedule_failures_keep_true_total_and_show_newest_three_first(tmp_path):
     cfg = _cfg(tmp_path)
     store = Store(cfg.db_path)
     now = 10_000
-    completed_ats = [100, 500, 300, 700, 200, 600, 400]  # 7 > SCHEDULE_FAILURE_LIMIT
+    completed_ats = [100, 500, 300, 700, 200, 600, 400]
     for i, completed_at in enumerate(completed_ats):
         path = f"/p/fail{i}"
         store.upsert_project(path, f"fail-project-{i}")
@@ -182,14 +178,17 @@ def test_schedule_failure_limit_and_newest_completed_first(tmp_path):
     )
 
     failures = [item for item in model.attention if item.kind == "schedule_failure"]
-    assert len(failures) == SCHEDULE_FAILURE_LIMIT
+    assert len(failures) == 3
+    assert model.attention_total == len(completed_ats)
     completed_order = [item.meta["run_id"] for item in failures]
     expected_order = [
         f"fail-{i}" for i, _ in sorted(
             enumerate(completed_ats), key=lambda p: p[1], reverse=True,
         )
-    ][:SCHEDULE_FAILURE_LIMIT]
+    ][:3]
     assert completed_order == expected_order
+    assert all(item.primary_action.label == "Review scheduled run" for item in failures)
+    assert all(item.primary_action.href == "/schedule" for item in failures)
 
     store.close()
 
@@ -388,24 +387,40 @@ def test_overview_route_shows_attention_recent_link_and_freshness(tmp_path):
 
 
 def test_overview_route_uses_compact_primary_and_secondary_composition(tmp_path):
-    """Replacing the bounded row composition with generic full-size cards must
-    fail before the landing page can become a second Projects index again."""
+    """The approved stage is one focal object plus at most two compact cards.
+
+    Rendering every attention item as an equal row recreates the pre-approved
+    wall even when the model is bounded, so source structure is part of the
+    regression contract here.
+    """
     c, store, _ = _route_client(tmp_path)
-    pid = store.upsert_project("/p/handoff", "handoff-project")
-    store.create_handoff(Handoff(
-        id="h1", project_path="/p/handoff", next_prompt="keep going",
-        summary="Finish the queued work", created_at=1,
-    ), pid)
+    for index in range(5):
+        path = f"/p/handoff-{index}"
+        pid = store.upsert_project(path, f"handoff-project-{index}")
+        store.upsert_session(SessionRecord(
+            session_id=f"s{index}", transcript_path=f"/t/s{index}",
+            title=f"Narrative next step {index}", ended_at=_ended(index + 1),
+        ), pid)
+        store.create_handoff(Handoff(
+            id=f"h{index}", project_path=path, next_prompt="keep going",
+            source_session_id=f"s{index}", summary=f"Finish queued work {index}",
+            created_at=index + 1,
+        ), pid)
 
     html = c.get("/").text
 
-    assert 'class="overview-layout"' in html
-    assert 'class="attention-list"' in html
-    assert 'class="attention-row attention-row--handoff"' in html
-    attention = html[html.index('<section class="overview-primary"'):]
-    attention = attention[:attention.index("</section>")]
+    assert html.count('class="attention-primary ') == 1
+    assert html.count('class="attention-secondary ') == 2
+    assert 'class="overview-attention-stage"' in html
+    assert 'class="overview-lower-grid"' in html
+    attention = html[html.index('<section class="overview-attention"'):]
+    attention = attention[:attention.index('<section class="overview-lower-grid"')]
     assert '<a href="/projects">View all projects</a>' in attention
-    assert attention.index("Finish the queued work") < attention.index("Continue in Terminal")
+    assert '<a href="/schedule">Open schedule</a>' in attention
+    assert attention.index("Narrative next step 0") < attention.index("Continue in Terminal")
+    assert html.index('class="overview-attention-stage"') < html.index(
+        'class="overview-lower-grid"'
+    )
     store.close()
 
 

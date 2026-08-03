@@ -410,11 +410,12 @@ def test_the_current_tab_never_carries_history_table_markup(tmp_path):
     store.close()
 
 
-def test_history_tabs_never_carry_the_current_tabs_workspace_state_panel(tmp_path):
+def test_history_tabs_never_carry_the_current_tabs_context_rail(tmp_path):
     c, store, pid = _client(tmp_path)
     for tab in ("sessions", "handoffs", "launches"):
         html = c.get(f"/project/{pid}?tab={tab}").text
-        assert 'class="workspace-state"' not in html
+        assert 'class="workspace-rail"' not in html
+        assert 'workspace-side-card--state' not in html
     store.close()
 
 
@@ -544,7 +545,7 @@ def test_current_tab_leads_with_the_real_continuation_span_and_primary_action(tm
 
     continuation = html.index('class="continuation-panel"')
     primary = html.index("btn--primary")
-    state = html.index('class="workspace-state"')
+    state = html.index('class="workspace-side-card workspace-side-card--state"')
 
     assert continuation < primary < state
     for label in ("Session ended", "Handoff ready", "Next session"):
@@ -555,15 +556,56 @@ def test_current_tab_leads_with_the_real_continuation_span_and_primary_action(tm
     store.close()
 
 
+def test_current_tab_matches_the_approved_continuation_and_right_rail_structure(
+    tmp_path,
+):
+    """Equal-weight telemetry and a plaintext prompt are the known visual
+    regression; this protects the focal card, nested prompt, and structured
+    supporting rail without asserting pixel values.
+    """
+    c, store, pid = _client_with_handoff(tmp_path)
+    html = c.get(f"/project/{pid}?tab=current").text
+
+    assert '<h2 class="workspace-current__title">Next session</h2>' in html
+    assert "Saved from the last handoff and ready to continue." in html
+    assert 'class="pill pill--work continuation-status"' in html
+    assert 'class="handoff-prompt"' in html
+    assert "Saved prompt" in html
+    assert 'class="workspace-side-card workspace-side-card--state"' in html
+    assert '<h2>Project state</h2>' in html
+    assert 'class="workspace-side-card workspace-side-card--activity"' in html
+    assert '<h2>Recent activity</h2>' in html
+    assert html.index('class="continuation-panel"') < html.index("btn--primary")
+    assert html.index("btn--primary") < html.index(
+        'class="workspace-side-card workspace-side-card--state"'
+    )
+    for label in ("Session ended", "Handoff ready", "Next session"):
+        assert label in html
+    store.close()
+
+
+def test_project_header_is_contextual_and_current_tab_uses_approved_label(tmp_path):
+    c, store, pid = _client_with_handoff(tmp_path)
+    html = c.get(f"/project/{pid}?tab=current").text
+
+    page_head = html[html.index('<header class="page-head"'):html.index("</header>")]
+    assert 'class="breadcrumb"' in page_head
+    assert 'class="card__path project-path"' in page_head
+    assert f'data-project-pin="{pid}"' in page_head
+    assert f'data-project-hide="{pid}"' in page_head
+    assert ">Current work</a>" in html
+    store.close()
+
+
 def test_queued_handoff_shows_its_age_beside_the_summary(tmp_path):
     """Spec line 180: the queued handoff shows its summary AND its age, so a
     stale next step reads as stale. `created_at` is on every handoff row."""
     c, store, pid = _client_with_handoff(tmp_path)
     html = c.get(f"/project/{pid}?tab=current").text
-    summary = html.split('class="handoff__summary"', 1)[1].split("</p>", 1)[0]
-    assert "finish the thing" in summary, "the summary still renders"
-    assert 'class="handoff__age' in summary, "the age sits beside the summary"
-    assert "queued" in summary and "ago" in summary
+    handoff = html.split('class="handoff"', 1)[1].split("</section>", 1)[0]
+    assert "finish the thing" in handoff, "the summary still renders"
+    assert 'class="handoff__kicker"' in handoff
+    assert "Queued handoff" in handoff and "ago" in handoff
     store.close()
 
 

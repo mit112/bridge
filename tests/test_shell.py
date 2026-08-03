@@ -50,6 +50,24 @@ def test_shell_renders_structural_bridge_mark_and_status_slot(tmp_path):
     assert re.search(r'<svg[^>]*class="bridge-mark"[^>]*aria-hidden="true"', html)
 
 
+def test_overview_shell_footer_uses_real_connection_and_index_freshness(tmp_path):
+    cfg = load({"db_path": tmp_path / "fresh.db", "spool_dir": tmp_path / "spool"})
+    store = Store(cfg.db_path)
+    store.record_index_run(
+        {"files_seen": 1, "files_scanned": 1, "lines_parsed": 1,
+         "sessions_upserted": 1, "parse_errors": 0},
+        ran_at=1,
+        duration_ms=1,
+    )
+    html = TestClient(create_app(store, cfg)).get("/").text
+    footer = html[html.index('class="shell-status"'):]
+    footer = footer[:footer.index("</div>")]
+    assert "Connected" in footer
+    assert "Indexed" in footer
+    assert "Local control plane" not in footer
+    store.close()
+
+
 def test_active_nav_marks_aria_current(tmp_path):
     html = _client(tmp_path).get("/").text
     assert re.search(r'href="/"[^>]*aria-current="page"', html) or \
@@ -144,7 +162,7 @@ def test_responsive_layers_cover_every_breakpoint_with_no_dead_zone():
     assert "@media (max-width: 767px)" in css
     assert "@media (min-width: 768px) and (max-width: 1023px)" in css
     # main stays bounded-width regardless of viewport.
-    assert "width: min(100%, 68rem)" in css
+    assert "width: min(100%, 74rem)" in css
 
 
 def test_narrow_touch_targets_reach_44px():

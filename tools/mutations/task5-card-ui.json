@@ -20,8 +20,8 @@
   {
     "name": "render the handoff block even with no handoff",
     "file": "src/bridge/templates/_launch.html",
-    "old": "  {% if card.handoff %}\n    {% set hid = \"handoff-\" ~ card.handoff.id %}",
-    "new": "  {% if True %}\n    {% set hid = \"handoff-\" ~ card.handoff.id %}",
+    "old": "{% macro handoff_block(card, totals, collapse_prompt=False, show_span_line=False) %}\n  {% if card.handoff %}\n    {% set hid = \"handoff-\" ~ card.handoff.id %}",
+    "new": "{% macro handoff_block(card, totals, collapse_prompt=False, show_span_line=False) %}\n  {% if True %}\n    {% set hid = \"handoff-\" ~ card.handoff.id %}",
     "tests": [
       "tests/test_api.py::test_a_card_with_no_handoff_shows_no_empty_affordance"
     ]

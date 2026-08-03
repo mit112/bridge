@@ -49,13 +49,16 @@
       </div>
       {{ app_nav(active) }}
       <div class="shell-status">
-        <span class="shell-status__label">Local control plane</span>
-        <span class="shell-status__detail">Repository access · read only</span>
+        {% block shell_status %}
+          <span class="shell-status__label">Local control plane</span>
+          <span class="shell-status__detail">Repository access · read only</span>
+        {% endblock %}
       </div>
     </aside>
     <div class="shell__body">
       <header class="page-head">
         <div class="page-head__text">
+          {% block page_eyebrow %}{% endblock %}
           <h1 class="page-title">{% block page_title %}Bridge{% endblock %}</h1>
           {% block page_summary %}{% endblock %}
         </div>

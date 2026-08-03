@@ -1,59 +1,59 @@
-{# The Current tab: what is running or queued for this project right now.
-   Task 3.2 landed the tab shell with the project's live/git state. Task 3.3
-   rehomes the full continuation surface (compose/handoff/launch/schedule)
-   here via the shared macros in `_launch.html` -- the SAME macros
-   `_card.html` calls for the dashboard, so every hook and id scheme (keyed
-   off `card.project_id`, never a handoff id) is identical in both places. #}
-{% from "_launch.html" import compose_box, handoff_block, launch_band %}
-{% from "_components.html" import live_status, token_burn %}
+{% from "_launch.html" import compose_box, handoff_block, handoff_actions, launch_band %}
 {% set card = model.card %}
 {% set git = model.git %}
+{% set live_state = card.live.status if card.live else ("unknown" if card.live_unavailable else "ended") %}
 
 <div class="workspace-current">
-<div class="workspace-current__main">
-<div class="continuation-panel">
-{# Always rendered, `hidden` toggled by which state applies -- the same
-   "shell rendered either way, `hidden` flips it" pattern `dashboard.html`
-   already uses for its own scheduled/hidden-projects sections. `launch.js`'s
-   dismiss handler reveals this and hides the handoff section below it,
-   without a reload and without ever replacing either node's markup. #}
-<p class="empty" data-handoff-empty="{{ card.project_id }}" {% if card.handoff %}hidden{% endif %}>
-  No session in progress for this project.
-</p>
+  <div class="workspace-current__main">
+    <header class="workspace-current__head">
+      <h2 class="workspace-current__title">Next session</h2>
+      <p>Saved from the last handoff and ready to continue.</p>
+    </header>
 
-{{ handoff_block(card, totals, collapse_prompt=True, show_dismiss=True, show_span_line=True) }}
+    <section class="continuation-panel" aria-label="Next session">
+      <p class="empty" data-handoff-empty="{{ card.project_id }}" {% if card.handoff %}hidden{% endif %}>
+        No session in progress for this project.
+      </p>
 
-{{ launch_band(card, primary=True, collapse_options=(card.handoff is not none)) }}
-</div>
+      {{ handoff_block(card, totals, collapse_prompt=True, show_span_line=True) }}
 
-{{ compose_box(card, totals, collapsed=(card.handoff is not none)) }}
-</div>
+      <div class="continuation-actions">
+        {{ launch_band(card, primary=True, collapse_options=(card.handoff is not none)) }}
+        {{ handoff_actions(card, totals, show_dismiss=True) }}
+      </div>
+    </section>
 
-<aside class="workspace-state" aria-label="Project state">
-  {% if git and git.status == "ok" %}
-  <section class="card__git detail-git" aria-label="Recent git state">
-    {% if git.branch %}<span>{{ git.branch }}</span>{% endif %}
-    {% if git.dirty_count %}<span>{{ git.dirty_count }} dirty</span>{% endif %}
-    {% if git.ahead %}<span>{{ git.ahead }} ahead</span>{% endif %}
-    {% if git.behind %}<span>{{ git.behind }} behind</span>{% endif %}
-    {% if git.last_commit_summary %}
-    <span class="detail-git__commit">last commit: {{ git.last_commit_summary }}{% if git.last_commit_at %} · {{ git.last_commit_at | ago_epoch }} ago{% endif %}</span>
-    {% endif %}
-    {# Freshness: the same "as of ... ago" cache age the dashboard card
-       shows, plus the same staleness risk flag -- both read off `model.git`
-       / `card.is_stale`, never a fresh probe. #}
-    {% if git.cached_at %}<span class="card__meta">git checked {{ git.cached_at | ago_epoch }} ago</span>{% endif %}
-    {% if card.is_stale %}<span class="risk" title="Uncommitted work exceeds the staleness threshold">⚠ uncommitted for {{ git.oldest_uncommitted_at | ago_epoch }}</span>{% endif %}
-  </section>
-  {% endif %}
-  {% if card.session %}
-  <p class="workspace-state__session">
-    {{ card.session.title or "Untitled session" }}
-    <time datetime="{{ card.session.ended_at }}" title="{{ card.session.ended_at }}">{{ card.session.ended_at | ago }} ago</time>
-    {% if card.session.interrupted %}<span class="card__note">interrupted</span>{% endif %}
-  </p>
-  {% endif %}
-  {{ live_status(card) }}
-  {{ token_burn(card) }}
-</aside>
+    {{ compose_box(card, totals, collapsed=(card.handoff is not none)) }}
+  </div>
+
+  <aside class="workspace-rail" aria-label="Project context">
+    <section class="workspace-side-card workspace-side-card--state">
+      <h2>Project state</h2>
+      <dl>
+        <div class="workspace-fact"><dt>Session</dt><dd><span class="workspace-session" data-live-parent="{{ card.path }}"><span data-live-path="{{ card.path }}" data-live-status>{{ live_state }}</span><span data-live-age>{% if card.live %} · {{ card.live.started_at | ago_epoch }}{% elif card.session %} {{ card.session.ended_at | ago }} ago{% endif %}</span><span class="visually-hidden" data-live-model>{% if card.session and card.session.model %}{{ card.session.model }}{% endif %}</span><span class="visually-hidden" data-live-effort>{% if card.session and card.session.effort %}{{ card.session.effort }}{% endif %}</span></span></dd></div>
+        <div class="workspace-fact"><dt>Branch</dt><dd class="mono"{% if git and git.branch %} title="{{ git.branch }}"{% endif %}>{{ git.branch if git and git.branch else "Unavailable" }}</dd></div>
+        <div class="workspace-fact"><dt>Working tree</dt><dd{% if git and git.dirty_count %} class="workspace-fact--risk"{% endif %}>{% if git and git.dirty_count %}{{ git.dirty_count }} file{{ "" if git.dirty_count == 1 else "s" }} changed{% else %}Clean{% endif %}</dd></div>
+        <div class="workspace-fact"><dt>Remote</dt><dd>{% if git and git.behind %}{{ git.behind }} behind{% elif git and git.ahead %}{{ git.ahead }} ahead{% else %}Synced{% endif %}</dd></div>
+        <div class="workspace-fact"><dt>Usage today</dt><dd class="mono" data-burn-today>{{ card.tokens_today | kilo }} today</dd></div>
+        <div class="workspace-fact"><dt>Last 5h</dt><dd class="mono"><span data-burn-last-5h>{{ card.tokens_5h | kilo }} last 5h</span><svg class="workspace-spark" viewBox="0 0 72 20" width="72" height="20" aria-hidden="true" focusable="false"><polyline data-sparkline points="{{ card.spark | spark_points }}" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/></svg></dd></div>
+      </dl>
+    </section>
+
+    <section class="workspace-side-card workspace-side-card--activity">
+      <h2>Recent activity</h2>
+      {% if card.handoff %}
+      <div class="workspace-activity"><span class="workspace-activity__rail" aria-hidden="true"></span><p>Handoff saved<time>{{ card.handoff.created_at | ago_epoch }} ago</time></p></div>
+      {% endif %}
+      {% if card.session %}
+      <div class="workspace-activity"><span class="workspace-activity__rail" aria-hidden="true"></span><p>{{ card.session.title or "Session ended" }}<time>{{ card.session.ended_at | ago }} ago</time></p></div>
+      {% endif %}
+      {% if git and git.last_commit_summary %}
+      <div class="workspace-activity"><span class="workspace-activity__rail" aria-hidden="true"></span><p>{{ git.last_commit_summary }}<time>{% if git.last_commit_at %}{{ git.last_commit_at | ago_epoch }} ago{% else %}Last recorded commit{% endif %}</time></p></div>
+      {% endif %}
+      {% if git and git.cached_at %}
+      <div class="workspace-activity"><span class="workspace-activity__rail" aria-hidden="true"></span><p>Project state indexed<time>{{ git.cached_at | ago_epoch }} ago</time></p></div>
+      {% endif %}
+      {% if not card.handoff and not card.session and not (git and git.cached_at) %}<p class="empty">No recent activity.</p>{% endif %}
+    </section>
+  </aside>
 </div>
