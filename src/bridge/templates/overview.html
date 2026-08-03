@@ -65,8 +65,9 @@
 <section class="overview-attention" aria-labelledby="overview-attention-title">
   <div class="overview-section-head">
     <div>
+      <p class="overview-section-head__num">01</p>
       <h2 id="overview-attention-title">Needs attention</h2>
-      <p>Running work, queued handoffs, failures, and stale projects only.</p>
+      <p class="overview-section-head__hint">Running work, queued handoffs, failures &amp; stale projects.</p>
     </div>
     <nav class="overview-section-links" aria-label="All attention destinations">
       <a href="/projects">View all projects</a>
@@ -77,18 +78,28 @@
   {% if not model.attention %}
     {{ empty_state("Nothing needs attention.") }}
   {% else %}
+    {#- Status is never colour-only: each kind carries a text label (the pill), a
+        mono slug (on the kicker), and a colour (the card's top border). The
+        fourth element is the "Waiting on" line -- kind-derived, not telemetry;
+        `running` is deliberately empty because no per-session waiting reason
+        exists to read, so that row is omitted. -#}
+    {% set status_map = {
+      "handoff": ("st-attention", "Ready to continue", "queued", "Your input to continue"),
+      "running": ("st-run", "Working now", "running", ""),
+      "stale": ("st-review", "Needs review", "stale", "A commit or cleanup"),
+      "schedule_failure": ("st-risk", "Failed", "failed", "Review of the failed run"),
+    } %}
     {% set primary = model.attention[0] %}
+    {% set pcls, plabel, pslug, wait = status_map.get(primary.kind, ("st-attention", "Ready to continue", primary.kind, "")) %}
     <div class="overview-attention-stage" data-overview-attention>
-      <article class="attention-primary attention-primary--{{ primary.kind }}">
+      <article class="attention-primary attention-primary--{{ pcls }}">
         <div class="attention-primary__top">
           <div>
-            <p class="attention-kicker">{{ primary.meta.project_name or primary.title }} · {{ primary.kind | replace("_", " ") }}</p>
+            <p class="attention-kicker">{{ primary.meta.project_name or primary.title }} · <span class="attention-kicker__slug">{{ pslug }}</span></p>
             <h3>{{ primary.title }}</h3>
             <p class="attention-primary__summary">{{ primary.summary }}</p>
           </div>
-          <span class="pill {{ 'pill--risk' if primary.kind in ('stale', 'schedule_failure') else 'pill--work' }}">
-            {% if primary.kind == "handoff" %}Ready to continue{% elif primary.kind == "running" %}Working now{% else %}Needs review{% endif %}
-          </span>
+          <span class="pill pill--{{ pcls }}">{{ plabel }}</span>
         </div>
         {% if primary.kind == "handoff" and primary.meta.has_span %}
         <div class="attention-span" aria-label="Continuation path">
@@ -100,24 +111,41 @@
         </div>
         <div class="attention-span__labels"><span>Session ended</span><span>Handoff ready</span><span>Next session</span></div>
         {% endif %}
+        {#- The list itself is guarded too: a `running` hero has neither a
+            handoff timestamp nor a waiting reason, and an empty `<dl>` would
+            still spend its top margin. -#}
+        {% if primary.meta.created_at or wait %}
+        <dl class="attention-detail">
+          {% if primary.meta.created_at %}
+          <div class="attention-detail__row">
+            <dt>Last activity</dt>
+            <dd>{{ primary.meta.created_at | ago_epoch }} ago{% if primary.meta.branch %} · {{ primary.meta.branch }}{% endif %}{% if primary.meta.dirty_count %} · {{ primary.meta.dirty_count }} dirty{% endif %}</dd>
+          </div>
+          {% endif %}
+          {% if wait %}
+          <div class="attention-detail__row">
+            <dt>Waiting on</dt><dd>{{ wait }}</dd>
+          </div>
+          {% endif %}
+        </dl>
+        {% endif %}
         <div class="attention-primary__actions">
           <a class="btn btn--primary" href="{{ primary.primary_action.href }}">{{ primary.primary_action.label }}</a>
-          {% if primary.kind == "handoff" %}<a class="btn" href="{{ primary.primary_action.href }}">Review handoff</a>{% endif %}
-          <span class="attention-primary__meta">
-            {% if primary.meta.branch %}{{ primary.meta.branch }}{% endif %}
-            {% if primary.meta.dirty_count %} · {{ primary.meta.dirty_count }} dirty{% endif %}
-            {% if primary.meta.created_at %} · {{ primary.meta.created_at | ago_epoch }} ago{% endif %}
-          </span>
+          {% if primary.kind == "handoff" %}
+            <a class="btn" href="{{ primary.primary_action.href }}">Review handoff</a>
+          {% elif primary.project_id %}
+            <a class="btn" href="/project/{{ primary.project_id }}?tab=current">View session</a>
+          {% endif %}
         </div>
+        {% if primary.meta.path %}<p class="attention-primary__path">{{ primary.meta.path }}</p>{% endif %}
       </article>
 
       {% if model.attention | length > 1 %}
       <div class="attention-secondary-stack">
         {% for item in model.attention[1:] %}
-        <article class="attention-secondary attention-secondary--{{ item.kind }}">
-          <span class="pill {{ 'pill--risk' if item.kind in ('stale', 'schedule_failure') else 'pill--work' }}">
-            {% if item.kind == "handoff" %}Ready{% elif item.kind == "running" %}Working now{% else %}Needs review{% endif %}
-          </span>
+        {% set scls, slabel = status_map.get(item.kind, ("st-attention", "Ready to continue"))[:2] %}
+        <article class="attention-secondary attention-secondary--{{ scls }}">
+          <span class="pill pill--{{ scls }}">{{ slabel }}</span>
           <h3>{{ item.meta.project_name or item.title }}</h3>
           <p>{{ item.summary }}</p>
           <div class="attention-secondary__foot">
@@ -135,7 +163,11 @@
 <section class="overview-lower-grid" aria-label="Recent and upcoming work">
   <section class="overview-panel overview-recent" aria-labelledby="overview-recent-title">
     <div class="overview-section-head">
-      <div><h2 id="overview-recent-title">Recent projects</h2><p>Continue where you last left off.</p></div>
+      <div>
+        <p class="overview-section-head__num">02</p>
+        <h2 id="overview-recent-title">Recent projects</h2>
+        <p class="overview-section-head__hint">Continue where you last left off.</p>
+      </div>
       <a href="/projects">All projects</a>
     </div>
     {% if not model.recent %}

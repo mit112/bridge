@@ -226,6 +226,7 @@ def _attention_from_cards(cards: list[Card]) -> list[AttentionItem]:
                     "has_span": bool(card.session),
                     "branch": card.git.branch,
                     "dirty_count": card.git.dirty_count,
+                    "path": card.path,
                 },
             ))
         elif card.live is not None:
@@ -242,6 +243,7 @@ def _attention_from_cards(cards: list[Card]) -> list[AttentionItem]:
                     "project_name": card.name,
                     "branch": card.git.branch,
                     "dirty_count": card.git.dirty_count,
+                    "path": card.path,
                 },
             ))
         elif card.is_stale:
@@ -257,6 +259,7 @@ def _attention_from_cards(cards: list[Card]) -> list[AttentionItem]:
                     "dirty_count": card.git.dirty_count,
                     "project_name": card.name,
                     "branch": card.git.branch,
+                    "path": card.path,
                 },
             ))
     return items

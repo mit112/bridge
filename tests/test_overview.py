@@ -73,6 +73,7 @@ def test_attention_ladder_orders_kinds_and_pins_correct_hrefs(tmp_path):
     assert handoff_item.project_id == handoff_id
     assert handoff_item.primary_action.label == "Continue in Terminal"
     assert handoff_item.primary_action.href == f"/project/{handoff_id}?tab=current"
+    assert model.attention[0].meta["path"] == "/p/handoff"  # hero renders a path footer
 
     assert running_item.project_id == running_id
     assert running_item.primary_action.label == "Open project"
