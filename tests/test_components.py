@@ -206,7 +206,10 @@ def test_schedule_row_interactive_pending_shows_run_now_edit_cancel():
     assert "data-scheduled-retry=" not in html
 
 
-def test_schedule_row_interactive_launching_omits_run_now_but_keeps_edit_cancel():
+def test_schedule_row_interactive_launching_omits_run_now_edit_and_cancel():
+    """A `launching` row is already claimed: `run-now`, `patch_schedule`, and
+    `delete_schedule` all 409 on it, so Run now, Edit and Cancel would be dead
+    controls. None of them render -- only the row itself and its status."""
     row = ScheduleRow(
         id="s4",
         project_id=7,
@@ -219,9 +222,10 @@ def test_schedule_row_interactive_launching_omits_run_now_but_keeps_edit_cancel(
         scheduled_for_iso="2025-01-01T00:00:00+00:00",
     )
     html = _module().schedule_row(row, interactive=True)
+    assert 'data-scheduled-job="s4"' in html, "the row itself still renders"
     assert "data-scheduled-run-now" not in html
-    assert 'data-scheduled-edit-toggle="s4"' in html
-    assert 'data-scheduled-cancel="s4"' in html
+    assert "data-scheduled-edit-toggle" not in html
+    assert "data-scheduled-cancel" not in html
 
 
 def test_schedule_row_interactive_terminal_retryable_shows_retry_with_label():

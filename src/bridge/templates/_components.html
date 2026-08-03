@@ -118,12 +118,12 @@
   {% endif %}
   {% if row.error %}<span class="schedule-row__error card__note"{% if interactive %} data-scheduled-error{% endif %}>{{ row.error }}</span>{% endif %}
   {% if interactive %}
-    {% if row.status in ("pending", "launching") %}
-      {# `run-now` claims a `pending` row; a `launching` one is already
-         claimed, so clicking it there would only 409. #}
-      {% if row.status == "pending" %}
+    {% if row.status == "pending" %}
+      {# Run now, Edit and Cancel are ALL pending-only: `run-now` claims a
+         pending row, and `patch_schedule`/`delete_schedule` 409 on anything
+         that is no longer pending. A `launching` row is already claimed, so
+         every one of these controls would only 409 there -- render none. #}
       <button type="button" class="btn" data-scheduled-run-now="{{ row.id }}">Run now</button>
-      {% endif %}
       <button type="button" class="btn" data-scheduled-edit-toggle="{{ row.id }}"
               aria-expanded="false" aria-controls="scheduled-edit-{{ row.id }}">Edit</button>
       <button type="button" class="btn" data-scheduled-cancel="{{ row.id }}">Cancel</button>

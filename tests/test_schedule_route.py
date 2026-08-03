@@ -300,6 +300,23 @@ def test_schedule_route_pending_row_exposes_run_now_edit_cancel(tmp_path):
     assert 'data-scheduled-edit-when="pending-1"' in body
 
 
+def test_schedule_route_launching_row_omits_edit_and_cancel(tmp_path):
+    """`patch_schedule`/`delete_schedule` 409 on any row that is no longer
+    pending, so Edit and Cancel are dead controls on a `launching` row -- they
+    must not render there (they still do on the pending row above)."""
+    client, store = _client(tmp_path)
+    store.restore_scheduled_run(_run(
+        id="launching-1", scheduled_for=700, created_at=10,
+        status="launching", claimed_at=690,
+    ))
+
+    body = client.get("/schedule").text
+    assert 'data-scheduled-job="launching-1"' in body, "the row itself still renders"
+    assert 'data-scheduled-edit-toggle="launching-1"' not in body
+    assert 'data-scheduled-cancel="launching-1"' not in body
+    assert 'data-scheduled-run-now="launching-1"' not in body
+
+
 def test_schedule_route_terminal_retryable_row_exposes_retry(tmp_path):
     client, store = _client(tmp_path)
     store.restore_scheduled_run(_run(
