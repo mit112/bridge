@@ -50,6 +50,15 @@
           <span class="sidebar__label">Diagnostics</span>
         </a>
       </li>
+      <li>
+        <a class="sidebar__link" href="/settings"{% if active == "settings" %} aria-current="page"{% endif %}>
+          <svg class="sidebar__icon" aria-hidden="true" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3.2" />
+            <path d="M12 4.2v2.4M12 17.4v2.4M4.2 12h2.4M17.4 12h2.4M6.5 6.5l1.7 1.7M15.8 15.8l1.7 1.7M17.5 6.5l-1.7 1.7M8.2 15.8l-1.7 1.7" />
+          </svg>
+          <span class="sidebar__label">Settings</span>
+        </a>
+      </li>
     </ul>
   </div>
 </nav>

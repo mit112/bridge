@@ -1953,3 +1953,198 @@ def test_shell_js_menu_toggle_collapses_and_restores_the_nav(tmp_path):
     assert got["afterFirstClickHidden"] is True
     assert got["afterSecondClickExpanded"] == "true"
     assert got["afterSecondClickHidden"] is False
+
+
+# --- Task 5.2: settings.js — theme/density apply + the never-arms-launch seam
+
+SETTINGS_JS = Path(__file__).resolve().parent.parent / "src" / "bridge" / "static" / "settings.js"
+
+# `settings.js` runs top-level (no wrapper) on load, exactly like launch.js:
+# it applies theme/density immediately, registers a matchMedia "change"
+# listener, then binds each `data-settings-*` select. The harness stubs just
+# enough of `document`/`localStorage`/`matchMedia` to observe all of that, plus
+# an `__INTERACTIONS__` placeholder for post-load steps a specific test needs
+# (firing a select's "change" listener, or a simulated OS theme change).
+SETTINGS_HARNESS = """
+globalThis.window = globalThis;
+
+let prefersDark = __PREFERS_DARK__;
+const changeHandlers = [];
+globalThis.matchMedia = () => ({
+  matches: prefersDark,
+  addEventListener(type, fn) { if (type === "change") changeHandlers.push(fn); },
+});
+
+const store = __STORAGE__;
+const setCalls = [];
+globalThis.localStorage = {
+  getItem(key) {
+    return Object.prototype.hasOwnProperty.call(store, key) ? store[key] : null;
+  },
+  setItem(key, value) { store[key] = value; setCalls.push([key, value]); },
+  removeItem(key) { delete store[key]; },
+};
+
+const themeSetCalls = [];
+const documentElement = {
+  attrs: {},
+  setAttribute(name, value) {
+    this.attrs[name] = value;
+    if (name === "data-theme") themeSetCalls.push(value);
+  },
+  removeAttribute(name) { delete this.attrs[name]; },
+  getAttribute(name) { return this.attrs[name] ?? null; },
+};
+
+function makeSelect(initialValue) {
+  return {
+    value: initialValue,
+    listeners: [],
+    addEventListener(type, fn) { if (type === "change") this.listeners.push(fn); },
+  };
+}
+
+const selects = {
+  '[data-settings-theme]': makeSelect("system"),
+  '[data-settings-density]': makeSelect("comfortable"),
+  '[data-settings-launch-model]': makeSelect("opus"),
+  '[data-settings-launch-effort]': makeSelect("low"),
+  '[data-settings-launch-mode]': makeSelect(""),
+  // Present in the harness so a mistaken query for the LIVE launch band's
+  // permission control would resolve to something observable instead of
+  // silently returning null and masking the bug.
+  '[data-launch-perm="launch-1"]': makeSelect("bypassPermissions"),
+};
+
+const queried = [];
+globalThis.document = {
+  documentElement,
+  querySelector(sel) { queried.push(sel); return selects[sel] ?? null; },
+};
+
+const fs = require("fs");
+eval(fs.readFileSync(process.argv[2], "utf8"));
+
+__INTERACTIONS__
+
+console.log(JSON.stringify({
+  themeAttr: documentElement.attrs["data-theme"] ?? null,
+  densityAttr: documentElement.attrs["data-density"] ?? null,
+  hasDensityAttr: Object.prototype.hasOwnProperty.call(documentElement.attrs, "data-density"),
+  setCalls,
+  queried,
+  changeHandlersCount: changeHandlers.length,
+  themeSetCalls,
+  selectValues: Object.fromEntries(Object.entries(selects).map(([k, v]) => [k, v.value])),
+}));
+"""
+
+
+def _run_settings_harness(
+    tmp_path, storage: dict, prefers_dark: bool = False, interactions: str = "",
+) -> dict:
+    harness = tmp_path / "settings_harness.js"
+    text = (
+        SETTINGS_HARNESS
+        .replace("__STORAGE__", json.dumps(storage))
+        .replace("__PREFERS_DARK__", "true" if prefers_dark else "false")
+        .replace("__INTERACTIONS__", interactions)
+    )
+    harness.write_text(text)
+    proc = subprocess.run(
+        [_node(), str(harness), str(SETTINGS_JS)], capture_output=True, text=True
+    )
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout)
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_settings_js_applies_a_stored_theme_and_density_on_load(tmp_path):
+    got = _run_settings_harness(
+        tmp_path, {"bridge.appearance": "dark", "bridge.density": "compact"},
+    )
+    assert got["themeAttr"] == "dark"
+    assert got["densityAttr"] == "compact"
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_settings_js_comfortable_density_leaves_the_attribute_unset(tmp_path):
+    got = _run_settings_harness(tmp_path, {"bridge.density": "comfortable"})
+    assert got["hasDensityAttr"] is False
+
+
+@pytest.mark.parametrize("prefers_dark,expected", [(True, "dark"), (False, "light")])
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_settings_js_system_theme_follows_the_os_preference(tmp_path, prefers_dark, expected):
+    got = _run_settings_harness(tmp_path, {}, prefers_dark=prefers_dark)
+    assert got["themeAttr"] == expected
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_settings_js_system_theme_updates_live_when_the_os_changes(tmp_path):
+    """No reload: a change event fired after load must be enough to flip the
+    already-applied theme, proving the matchMedia listener actually re-applies
+    rather than only reading the OS preference once at startup."""
+    got = _run_settings_harness(
+        tmp_path, {"bridge.appearance": "system"}, prefers_dark=False,
+        interactions="prefersDark = true; changeHandlers.forEach((fn) => fn());",
+    )
+    assert got["themeAttr"] == "dark"
+    assert got["changeHandlersCount"] >= 1
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_settings_js_an_explicit_theme_choice_ignores_a_later_os_change(tmp_path):
+    """Only "System" is live -- a user who picked Light must not be silently
+    flipped to Dark just because the OS changed. The resulting value would be
+    "light" either way (an explicit choice short-circuits before matchMedia is
+    even consulted), so the guard is only observable through whether it
+    re-applies AT ALL: the change handler must be a no-op for an explicit
+    choice, not just a same-value one."""
+    got = _run_settings_harness(
+        tmp_path, {"bridge.appearance": "light"}, prefers_dark=False,
+        interactions="prefersDark = true; changeHandlers.forEach((fn) => fn());",
+    )
+    assert got["themeAttr"] == "light"
+    # Exactly the one call from the initial `applyTheme()` at load -- the OS
+    # change interaction above must not have re-applied at all.
+    assert got["themeSetCalls"] == ["light"]
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_settings_js_restores_stored_launch_defaults_into_their_own_selects(tmp_path):
+    got = _run_settings_harness(
+        tmp_path,
+        {
+            "bridge.launch.model": "claude-opus-4-8",
+            "bridge.launch.effort": "xhigh",
+            "bridge.launch.mode": "dontAsk",
+        },
+    )
+    assert got["selectValues"]['[data-settings-launch-model]'] == "claude-opus-4-8"
+    assert got["selectValues"]['[data-settings-launch-effort]'] == "xhigh"
+    assert got["selectValues"]['[data-settings-launch-mode]'] == "dontAsk"
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_settings_js_changing_a_select_persists_and_reapplies(tmp_path):
+    got = _run_settings_harness(
+        tmp_path, {},
+        interactions=(
+            'const el = selects["[data-settings-theme]"];'
+            'el.value = "dark";'
+            'el.listeners.forEach((fn) => fn());'
+        ),
+    )
+    assert ["bridge.appearance", "dark"] in got["setCalls"]
+    assert got["themeAttr"] == "dark"
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_settings_js_never_queries_the_live_launch_permission_control(tmp_path):
+    """Regression seam for Task 5.3: no code path in settings.js may reach for
+    `data-launch-perm` (or any other `data-launch-*` selector) -- the safe
+    launch defaults it stores are for THIS page's own selects only, and must
+    never be able to arm the live launch band's permission control."""
+    got = _run_settings_harness(tmp_path, {"bridge.launch.mode": "bypassPermissions"})
+    assert not any("data-launch" in sel for sel in got["queried"])

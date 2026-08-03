@@ -1,0 +1,32 @@
+[
+  {
+    "name": "render settings.html with the wrong active key, so the sidebar's Settings entry never gets aria-current",
+    "file": "src/bridge/api.py",
+    "old": "            request, \"settings.html\", {\"model\": model, \"active\": \"settings\"},",
+    "new": "            request, \"settings.html\", {\"model\": model, \"active\": \"overview\"},",
+    "tests": [
+      "tests/test_settings.py::test_settings_route_marks_nav_entry_current"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "always set compact density regardless of the stored preference, so Comfortable is unreachable",
+    "file": "src/bridge/static/settings.js",
+    "old": "  if (pref === \"compact\") {",
+    "new": "  if (true) {",
+    "tests": [
+      "tests/test_static_js.py::test_settings_js_comfortable_density_leaves_the_attribute_unset"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "let a later OS theme change override an explicit Light/Dark choice, not just System",
+    "file": "src/bridge/static/settings.js",
+    "old": "    if ((localStorage.getItem(APPEARANCE_KEY) || \"system\") === \"system\") applyTheme();",
+    "new": "    applyTheme();",
+    "tests": [
+      "tests/test_static_js.py::test_settings_js_an_explicit_theme_choice_ignores_a_later_os_change"
+    ],
+    "expect_count": 1
+  }
+]

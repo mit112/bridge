@@ -99,6 +99,44 @@ def never_touch_the_real_bridge_dir(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def guarded_claude_settings_path(tmp_path, monkeypatch):
+    """Refuse `GET /settings`'s default read of the real `~/.claude/settings.json`.
+
+    `build_settings(cfg)` only resolves that real path when `settings_path` is
+    omitted (`settings_view.py:96-97`), and the route added in Task 5.2 calls
+    it exactly that way -- so without this guard every test that hits `GET
+    /settings` would read whatever hooks the developer's own machine happens
+    to have installed. That is the same non-hermetic-default hazard
+    `never_touch_the_real_bridge_dir` above already refuses for the
+    spool/launcher paths, just one layer up: there is no directory argument to
+    inspect here, only a function that reaches for a real path when told
+    nothing else.
+
+    `api.py` imports the function by name (`from bridge.settings_view import
+    build_settings`), so the reference that actually matters at the route's
+    call site lives on `bridge.api`, not `bridge.settings_view` -- patching
+    the latter would leave the route's already-bound global untouched.
+
+    Returns the stand-in path substituted whenever `settings_path` is
+    omitted, so a test that wants to exercise a specific hook_status can
+    write its fixture JSON there and still exercise the *route's* real
+    default-path code path rather than passing `settings_path` itself.
+    """
+    import bridge.api as api_module
+
+    stand_in = tmp_path / "guarded-unused-claude-settings.json"
+    orig = api_module.build_settings
+
+    def guarded(cfg, *, settings_path=None):
+        if settings_path is None:
+            settings_path = stand_in
+        return orig(cfg, settings_path=settings_path)
+
+    monkeypatch.setattr(api_module, "build_settings", guarded)
+    return stand_in
+
+
+@pytest.fixture(autouse=True)
 def never_read_the_real_config_file(tmp_path, monkeypatch):
     """Point `config.load` at a file that does not exist, for every test.
 

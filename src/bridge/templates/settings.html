@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+{% block title %}Settings — Bridge{% endblock %}
+{% block page_title %}Settings{% endblock %}
+{% block page_summary %}
+<p class="card__note">Appearance, density, and safe launch defaults live only in this
+  browser — nothing here is written back to the panel. Everything below the
+  preferences is read-only, straight off the machine's own configuration.</p>
+{% endblock %}
+{% block content %}
+
+<section class="history" aria-labelledby="settings-appearance-title">
+  <h2 id="settings-appearance-title">Appearance</h2>
+  <p class="launch__field">
+    <label class="launch__label" for="settings-theme">Theme</label>
+    <select class="launch__select" id="settings-theme" data-settings-theme>
+      <option value="system" selected>System</option>
+      <option value="light">Light</option>
+      <option value="dark">Dark</option>
+    </select>
+  </p>
+</section>
+
+<section class="history" aria-labelledby="settings-density-title">
+  <h2 id="settings-density-title">Density</h2>
+  <p class="launch__field">
+    <label class="launch__label" for="settings-density">Spacing</label>
+    <select class="launch__select" id="settings-density" data-settings-density>
+      <option value="comfortable" selected>Comfortable</option>
+      <option value="compact">Compact</option>
+    </select>
+  </p>
+</section>
+
+<section class="history" aria-labelledby="settings-launch-title">
+  <h2 id="settings-launch-title">Safe launch defaults</h2>
+  <p class="card__note">Convenience defaults for a new launch's model and effort
+    selects. The permission mode a launch actually uses is never remembered —
+    every launch band always starts on "Ask as usual", regardless of what is
+    picked here.</p>
+  <p class="launch__field">
+    <label class="launch__label" for="settings-launch-model">Default model</label>
+    <select class="launch__select" id="settings-launch-model" data-settings-launch-model>
+      {%- for m in model.launch_defaults.models %}
+      <option value="{{ m.value }}"{% if loop.first %} selected{% endif %}>{{ m.label }}</option>
+      {%- endfor %}
+    </select>
+  </p>
+  <p class="launch__field">
+    <label class="launch__label" for="settings-launch-effort">Default effort</label>
+    <select class="launch__select" id="settings-launch-effort" data-settings-launch-effort>
+      {%- for e in model.launch_defaults.efforts %}
+      <option value="{{ e }}"{% if loop.first %} selected{% endif %}>{{ e }}</option>
+      {%- endfor %}
+    </select>
+  </p>
+  <p class="launch__field">
+    <label class="launch__label" for="settings-launch-mode">Default permission mode</label>
+    <select class="launch__select" id="settings-launch-mode" data-settings-launch-mode>
+      {%- for p in model.launch_defaults.permission_modes %}
+      <option value="{{ p.value }}"{% if p.danger %} class="launch__option--danger"{% endif %}{% if loop.first %} selected{% endif %}>{{ p.label }}</option>
+      {%- endfor %}
+    </select>
+  </p>
+</section>
+
+<section class="history" aria-labelledby="settings-effective-title">
+  <h2 id="settings-effective-title">Effective configuration</h2>
+  <div class="table-scroll" tabindex="0" role="region" aria-label="Effective configuration table">
+  <table class="diag">
+    <caption class="muted">Read-only. Machine configuration stays out of the
+      browser and out of this page's control — edit config.toml to change it.</caption>
+    <tbody>
+      <tr><th scope="row">Config file</th><td>{{ model.config_path }}</td></tr>
+      <tr><th scope="row">Claude projects dir</th><td>{{ model.claude_projects_dir }}</td></tr>
+      <tr><th scope="row">Session metadata dir</th><td>{{ model.session_meta_dir }}</td></tr>
+      <tr><th scope="row">Stale after</th><td>{{ model.stale_hours }} hours</td></tr>
+      <tr><th scope="row">Database</th><td>{{ model.db_path }}</td></tr>
+      <tr><th scope="row">Port</th><td>{{ model.port }}</td></tr>
+      <tr>
+        <th scope="row">Aliases</th>
+        <td>
+          {%- if model.aliases -%}
+            {%- for src, dest in model.aliases.items() %}{{ src }} → {{ dest }}{% if not loop.last %}, {% endif %}{% endfor -%}
+          {%- else -%}none{%- endif -%}
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">Archived paths</th>
+        <td>{% if model.archived_paths %}{{ model.archived_paths | join(", ") }}{% else %}none{% endif %}</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section class="history" aria-labelledby="settings-hooks-title">
+  <h2 id="settings-hooks-title">Hook status</h2>
+  <p class="{{ 'risk' if model.hook_status.state != 'present' else 'muted' }}">
+    {% if model.hook_status.state == "present" %}
+      ✓ All three Claude Code hooks are installed.
+    {% elif model.hook_status.state == "partial" %}
+      ⚠ Some Claude Code hooks are missing.
+    {% else %}
+      ⚠ Claude Code hooks are not installed.
+    {% endif %}
+  </p>
+  <div class="table-scroll" tabindex="0" role="region" aria-label="Hook status table">
+  <table class="diag">
+    <tbody>
+      {% for event in model.hook_status.events %}
+      <tr>
+        <th scope="row">{{ event.name }}</th>
+        <td>{{ "✓ installed" if event.installed else "✗ not installed" }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% if model.hook_status.issues %}
+  <ul class="cards" data-settings-hook-issues>
+    {% for item in model.hook_status.issues %}
+    <li class="card card--risk">
+      <div class="card__head"><h3>{{ item.label }}</h3></div>
+      <p class="card__note">{{ item.cause }}</p>
+      <p class="card__note"><strong>Next:</strong> {{ item.next_action }}</p>
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</section>
+
+{% endblock %}
+{% block scripts %}
+<script src="/static/settings.js" defer></script>
+{% endblock %}

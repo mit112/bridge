@@ -33,6 +33,7 @@ from bridge.projects_view import build_projects
 from bridge.refresh import RefreshCoordinator
 from bridge.registry import display_name, resolve_project
 from bridge.schedule_view import build_schedule
+from bridge.settings_view import build_settings
 from bridge.store import Store, now_epoch
 from bridge.workspace import build_workspace
 
@@ -835,6 +836,18 @@ def create_app(
         model = build_schedule(store, view=view, page=page)
         return templates.TemplateResponse(
             request, "schedule.html", {"model": model, "active": "schedule"},
+        )
+
+    @app.get("/settings", response_class=HTMLResponse)
+    def settings_route(request: Request):
+        # Read-only page (spec: no new write API) -- `build_settings` only
+        # reads `cfg` and, for status purposes only, the real
+        # `~/.claude/settings.json`; no `settings_path` override here, so a
+        # test hitting this route relies on the conftest guard to keep that
+        # read off the developer's real file.
+        model = build_settings(cfg)
+        return templates.TemplateResponse(
+            request, "settings.html", {"model": model, "active": "settings"},
         )
 
     @app.get("/api/projects")

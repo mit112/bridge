@@ -6,10 +6,15 @@ model section exercises `build_schedule` before its route half exists.
 """
 
 import json
+import re
 from pathlib import Path
 
+from fastapi.testclient import TestClient
+
+from bridge.api import create_app
 from bridge.config import load
 from bridge.settings_view import build_settings
+from bridge.store import Store
 
 
 def _cfg(tmp_path, **overrides):
@@ -160,3 +165,109 @@ def test_default_settings_path_never_reads_the_real_claude_settings(tmp_path, mo
 
     assert model.hook_status.state == "absent"
     assert not (tmp_path / ".claude" / "settings.json").exists()
+
+
+# --- Task 5.2: the `/settings` route --------------------------------------
+
+
+def _route_client(tmp_path, **cfg_overrides):
+    cfg = _cfg(tmp_path, **cfg_overrides)
+    store = Store(cfg.db_path)
+    return TestClient(create_app(store, cfg)), cfg
+
+
+def test_settings_route_returns_200_with_exactly_one_h1(tmp_path):
+    client, _ = _route_client(tmp_path)
+
+    resp = client.get("/settings")
+
+    assert resp.status_code == 200
+    assert len(re.findall(r"<h1[ >]", resp.text)) == 1
+
+
+def test_settings_route_renders_the_three_preference_groups(tmp_path):
+    client, _ = _route_client(tmp_path)
+
+    resp = client.get("/settings")
+
+    for hook in (
+        "data-settings-theme", "data-settings-density",
+        "data-settings-launch-model", "data-settings-launch-effort",
+        "data-settings-launch-mode",
+    ):
+        assert hook in resp.text, f"missing {hook}"
+
+
+def test_settings_route_renders_effective_configuration_and_hook_status(tmp_path):
+    client, cfg = _route_client(tmp_path)
+
+    resp = client.get("/settings")
+
+    assert str(cfg.db_path) in resp.text
+    assert str(cfg.claude_projects_dir) in resp.text
+    assert str(cfg.stale_hours) in resp.text
+    # No settings.json written -- the guarded default path is empty, so the
+    # fresh-install "absent" wording and guidance must show up.
+    assert "not installed" in resp.text.lower()
+
+
+def test_settings_route_marks_nav_entry_current(tmp_path):
+    client, _ = _route_client(tmp_path)
+
+    resp = client.get("/settings")
+
+    assert re.search(r'href="/settings"\s+aria-current="page"', resp.text)
+    # The nav entry only lights up on its own page, not on another route.
+    other = client.get("/")
+    assert not re.search(r'href="/settings"\s+aria-current="page"', other.text)
+
+
+def test_settings_route_has_no_write_endpoint(tmp_path):
+    client, _ = _route_client(tmp_path)
+
+    for method in (client.post, client.put, client.patch, client.delete):
+        resp = method("/settings")
+        assert resp.status_code == 405, f"{method.__name__} unexpectedly allowed"
+
+
+def test_settings_route_never_reads_the_real_claude_settings_json(tmp_path, monkeypatch):
+    """Proves the conftest guard is actually wired in for the ROUTE's own
+    call, not just for a test that remembers to pass `settings_path` itself:
+    even with `Path.read_text` spying on the developer's real file, hitting
+    the route never touches it."""
+    real_path = Path.home() / ".claude" / "settings.json"
+    touched = []
+    orig_read_text = Path.read_text
+
+    def spy(self, *args, **kwargs):
+        if self == real_path:
+            touched.append(self)
+        return orig_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", spy)
+    client, _ = _route_client(tmp_path)
+
+    resp = client.get("/settings")
+
+    assert resp.status_code == 200
+    assert not touched, "GET /settings read the developer's real ~/.claude/settings.json"
+
+
+def test_settings_route_reflects_hook_status_from_the_guarded_default_path(
+    tmp_path, guarded_claude_settings_path,
+):
+    """The guard substitutes a stand-in path rather than skipping the read
+    altogether -- writing hooks to that exact path must still show up as
+    "present" through the route, proving the route's real (unpatched)
+    default-path code path is what ran, not a short-circuit."""
+    client, cfg = _route_client(tmp_path, port=9321)
+    url = f"http://127.0.0.1:{cfg.port}/api/hooks"
+    hooks = {
+        name: {"hooks": [{"type": "http", "url": url, "timeout": 2}]}
+        for name in ("Notification", "SessionStart", "SessionEnd")
+    }
+    guarded_claude_settings_path.write_text(json.dumps({"hooks": hooks}))
+
+    resp = client.get("/settings")
+
+    assert "not installed" not in resp.text.lower()

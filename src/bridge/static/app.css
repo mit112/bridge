@@ -156,6 +156,18 @@
   --surface-raised: var(--p-raised);
 }
 
+/* Density override (Settings task): SPACING tokens only, mirroring the
+   :root[data-theme="..."] attribute-selector pattern above. Deliberately does
+   NOT touch --control-min (or anything else that sets a control's height) --
+   that keeps every existing height floor (e.g. the 44px mobile rule at
+   .sidebar__link below) exactly as protective under compact density as under
+   comfortable, with nothing here able to shrink a touch target. */
+:root[data-density="compact"] {
+  --space-1: .125rem; --space-2: .375rem; --space-3: .5rem; --space-4: .75rem;
+  --space-5: .875rem; --space-6: 1rem; --space-7: 1.25rem; --space-8: 1.5rem;
+  --space-9: 1.75rem; --space-10: 2rem;
+}
+
 /* --- Bundled fonts. No CDN: every file lives under static/fonts/, with an
    OFL licence beside it and its provenance recorded in fonts/PROVENANCE.md.
    `font-display: swap` keeps content visible in a system fallback while the

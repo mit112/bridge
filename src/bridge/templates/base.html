@@ -8,6 +8,26 @@
   <meta name="theme-color" content="#12191b" media="(prefers-color-scheme: dark)">
   <title>{% block title %}Bridge{% endblock %}</title>
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  {# Synchronous and inline on purpose -- FOUC guard. Reads the two Settings
+     preferences and sets data-theme/data-density on <html> BEFORE the
+     stylesheet below is parsed, so first paint already matches. Must never
+     become `defer`/`async` or move into a loaded file: either would run after
+     paint, which is the exact flash this exists to avoid. Kept a tiny,
+     dependency-free duplicate of settings.js's own apply logic rather than
+     loading that file here, since every page (not just /settings) needs this. #}
+  <script>
+  (function () {
+    try {
+      var theme = localStorage.getItem('bridge.appearance') || 'system';
+      var dark = theme === 'dark' || (theme !== 'light' &&
+        window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+      document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+      if (localStorage.getItem('bridge.density') === 'compact') {
+        document.documentElement.setAttribute('data-density', 'compact');
+      }
+    } catch (e) {}
+  })();
+  </script>
   <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
@@ -50,5 +70,6 @@
   <script src="/static/schedule.js" defer></script>
   <script src="/static/live.js" defer></script>
   <script src="/static/projects.js" defer></script>
+  {% block scripts %}{% endblock %}
 </body>
 </html>
