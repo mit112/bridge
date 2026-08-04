@@ -273,9 +273,14 @@ body {
    only survives the document it was injected into, which is why an earlier
    probe was inconclusive.
 
-   The named animations below DO declare keyframes, so they are guarded under
-   `prefers-reduced-motion` at the end of this file. */
-@view-transition { navigation: auto; }
+   The opt-in itself is gated on `no-preference` rather than switching the
+   animations off further down. A full-viewport luminance change on every
+   navigation is a WCAG flash concern, not a taste one, so the right response to
+   a stated motion preference is to have no transition at all rather than a
+   transition whose parts have been individually neutralised. */
+@media (prefers-reduced-motion: no-preference) {
+  @view-transition { navigation: auto; }
+}
 
 /* Name the chrome that is byte-identical on every page. A `view-transition-name`
    lifts an element OUT of the `root` snapshot into its own group, so naming the
@@ -305,6 +310,14 @@ body {
    swap -- naming the rail alone would have cross-faded the whole 95%-identical
    column to animate one line of text. */
 .shell-status { view-transition-name: app-rail-status; }
+/* A named element is REMOVED from the root snapshot and captured separately, so
+   whatever it does not paint itself is transparent in its own snapshot -- there
+   is no page behind it to show through. `.sidebar` already declares `--nav`, but
+   the masthead and the rail footer inherited their fill from the page and the
+   rail respectively, which as unnamed elements was free and as named ones is a
+   hole. Declared explicitly; the colours are the ones they already rendered. */
+.page-head { background-color: var(--bg); }
+.shell-status { background-color: var(--nav); }
 
 /* Make the swap QUICKER, but never author its opacity curves. This is the
    whole fix for the flash, and the reason is arithmetic.
@@ -2254,14 +2267,4 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
   /* The collapse still happens, it just happens instantly -- the width change
      is the feedback, the slide is only continuity. */
   .shell { transition: none; }
-  /* The page swap still happens, it just cuts. Chrome skips its own default
-     cross-fade under reduced motion and the block above now only retimes that
-     default rather than replacing it, so this is belt-and-braces -- kept
-     explicit so a future authored keyframe cannot slip past the guard. */
-  ::view-transition-old(root),
-  ::view-transition-new(root),
-  ::view-transition-old(app-masthead),
-  ::view-transition-old(app-rail-status),
-  ::view-transition-new(app-rail-status),
-  ::view-transition-new(app-masthead) { animation: none; }
 }

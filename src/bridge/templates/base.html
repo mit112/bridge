@@ -46,6 +46,22 @@
     } catch (e) {}
   })();
   </script>
+  {# Literal colours, inline, before the stylesheet. `app.css` already sets
+     `html { background: var(--bg) }`, but `--bg` is DEFINED in that sheet -- so
+     for any frame where it has not been applied yet, the root has no background
+     and the browser paints its own default white. The theme script above only
+     prevents the WRONG theme flashing; it cannot prevent an unstyled one.
+
+     `@layer` is what makes this safe rather than a duplicate source of truth:
+     unlayered styles beat layered ones at equal specificity, so `app.css`'s own
+     rule always wins once it lands and this is only ever the pre-paint
+     fallback. The two values match the `theme-color` metas above; they are the
+     only place in this file that hardcodes a palette colour, and they are
+     hardcoded on purpose -- a custom property cannot be its own fallback. #}
+  <style>@layer bridge-boot {
+    html { background-color: #f5efe3; }
+    html[data-theme="dark"] { background-color: #1b1714; }
+  }</style>
   <link rel="preload" href="/static/fonts/fraunces-semibold-600.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/static/app.css">
   {# Fetch the next page while the pointer is still travelling to the link.
