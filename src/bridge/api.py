@@ -430,6 +430,46 @@ def _fire_claimed_job(store: Store, cfg: Config, row, launch_fn: LaunchFn):
     return final
 
 
+class CachedStaticFiles(StaticFiles):
+    """`StaticFiles` that answers with a `Cache-Control`, which it otherwise omits.
+
+    Starlette sends only `etag`/`last-modified`, which gives the browser no
+    freshness lifetime at all -- so every navigation re-requests the
+    render-blocking 95KB `/static/app.css` AND all six woff2 faces just to be
+    told 304. Seven conditional round trips in front of first paint, for bytes
+    already on disk.
+
+    The max-ages are deliberately SHORT because these URLs are unversioned and
+    Bridge is a local panel whose only user edits this CSS by hand. `immutable`
+    or a multi-day age would mean an `app.css` edit stops appearing until a hard
+    reload -- exactly the trap already recorded against this repo ("browsers
+    cache app.css even though the server re-reads it"). A minute covers a burst
+    of clicks through the nav and expires well inside an edit-and-reload cycle;
+    `must-revalidate` forbids ever serving it stale past that.
+
+    Fonts get a day: their content genuinely never changes -- a different weight
+    is a different filename, so a stale hit is impossible rather than merely
+    unlikely. Still revalidatable, not `immutable`, for the same reason as
+    above: nothing here is worth a cache that cannot be cleared by a reload.
+    """
+
+    ASSET_CACHE_CONTROL = "public, max-age=60, must-revalidate"
+    FONT_CACHE_CONTROL = "public, max-age=86400, must-revalidate"
+
+    def file_response(self, full_path, stat_result, scope, status_code=200):
+        response = super().file_response(full_path, stat_result, scope, status_code)
+        # Set after `super()` so the 304 branch is covered too: `cache-control`
+        # is one of the headers Starlette carries onto a `NotModifiedResponse`,
+        # and a revalidation that answered without one would re-arm the same
+        # header-less loop on the very next navigation.
+        response.headers["cache-control"] = (
+            self.FONT_CACHE_CONTROL
+            if Path(full_path).suffix == ".woff2"
+            else self.ASSET_CACHE_CONTROL
+        )
+        return response
+
+
 def create_app(
     store: Store, cfg: Config, launch_fn: LaunchFn = launcher.launch,
     refresh_coordinator: RefreshCoordinator | None = None,
@@ -455,7 +495,7 @@ def create_app(
     templates.env.filters["ago_epoch"] = _ago_epoch
     templates.env.filters["kilo"] = _kilo
     templates.env.filters["spark_points"] = spark_points
-    app.mount("/static", StaticFiles(directory=str(HERE / "static")), name="static")
+    app.mount("/static", CachedStaticFiles(directory=str(HERE / "static")), name="static")
 
     # One debouncer for the whole app, because the busy -> idle hold is state
     # ACROSS requests: a per-request instance would have nothing to remember

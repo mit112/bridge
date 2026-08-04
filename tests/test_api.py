@@ -134,6 +134,63 @@ def test_html_pages_have_one_page_heading_home_navigation_and_metadata(client):
     assert c.get("/static/favicon.svg").status_code == 200
 
 
+def test_static_assets_carry_a_short_revalidating_cache_control(client):
+    """No `Cache-Control` at all means no freshness lifetime, so the browser
+    re-requests the render-blocking stylesheet on EVERY navigation. It must be
+    short and revalidating, though: these URLs are unversioned and hand-edited,
+    so a long or `immutable` age would strand Mit's own CSS edits."""
+    c, _, _ = client
+    r = c.get("/static/app.css")
+    assert r.status_code == 200
+    cache_control = r.headers["cache-control"]
+    assert "must-revalidate" in cache_control
+    assert "immutable" not in cache_control
+    max_age = int(re.search(r"max-age=(\d+)", cache_control).group(1))
+    assert 0 < max_age <= 300
+
+
+def test_static_fonts_are_cached_longer_than_the_editable_stylesheet(client):
+    """A woff2's content never changes -- a new weight is a new filename -- so
+    it can outlive the CSS's max-age without risking a stale hit. Still
+    revalidatable, never `immutable`."""
+    c, _, _ = client
+    font = c.get("/static/fonts/atkinson-hyperlegible-next-regular-400.woff2")
+    assert font.status_code == 200
+    css_max_age = int(re.search(
+        r"max-age=(\d+)", c.get("/static/app.css").headers["cache-control"]).group(1))
+    font_cache_control = font.headers["cache-control"]
+    assert "must-revalidate" in font_cache_control
+    assert "immutable" not in font_cache_control
+    assert int(re.search(r"max-age=(\d+)", font_cache_control).group(1)) > css_max_age
+
+
+def test_static_revalidation_replies_carry_the_cache_control_too(client):
+    """A 304 that answers without one re-arms the header-less loop on the very
+    next navigation, undoing the whole point."""
+    c, _, _ = client
+    etag = c.get("/static/app.css").headers["etag"]
+    r = c.get("/static/app.css", headers={"If-None-Match": etag})
+    assert r.status_code == 304
+    assert "max-age" in r.headers["cache-control"]
+
+
+def test_first_paint_font_faces_are_preloaded(client):
+    """The stylesheet is what discovers the fonts, so without a preload each
+    face waits on a 95KB render-blocking download before it even starts."""
+    c, _, _ = client
+    html = c.get("/").text
+    for face in ("atkinson-hyperlegible-next-regular-400",
+                 "ibm-plex-mono-regular-400",
+                 "fraunces-semibold-600"):
+        assert (f'<link rel="preload" href="/static/fonts/{face}.woff2" '
+                'as="font" type="font/woff2" crossorigin>') in html, face
+    # Faces that may not appear on the first screen stay unpreloaded: an unused
+    # preload spends bandwidth ahead of the ones that are used, and warns.
+    for unused in ("atkinson-hyperlegible-next-bold-700",
+                   "ibm-plex-mono-semibold-600", "fraunces-italic-400"):
+        assert f'rel="preload" href="/static/fonts/{unused}' not in html, unused
+
+
 def test_project_and_diagnostics_tables_are_keyboard_scroll_regions(client):
     c, store, pid = client
     store.record_index_run({"parse_errors": 0, "files_seen": 1},
