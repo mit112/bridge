@@ -1,9 +1,11 @@
+import dataclasses
 import re
 from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
 
+import bridge.api as api_mod
 import bridge.cards as cards_mod
 from bridge import agents
 from bridge.agents import AgentsState
@@ -423,6 +425,65 @@ def test_overview_route_renders_command_strip_with_hot_and_cold_branches(tmp_pat
     store.close()
 
 
+# Mutually distinct and none of them 0/1, so no cell can borrow another cell's
+# number and still look right. Order is the strip's own source order.
+COMMAND_STRIP_CELLS = (
+    (7, "Running"),
+    (11, "Needs attention"),
+    (13, "Queued"),
+    (17, "Dirty trees"),
+    (19, "Scheduled"),
+    (23, "Projects"),
+)
+
+
+def test_command_strip_binds_every_label_to_its_own_total(tmp_path, monkeypatch):
+    """Pins WHICH total lands in WHICH cell.
+
+    A naturally seeded Overview produces totals of 0, 1, 1, 0, 0, 1 -- every
+    value is shared with at least one other cell, so swapping two of the six
+    template expressions (`totals.dirty` for `totals.projects`, say) leaves the
+    whole suite green while the strip reports the wrong numbers. Six mutually
+    distinct values, each asserted immediately beside its own label, is what
+    makes that swap fail.
+
+    Injected rather than seeded: `dirty` counts cards with a dirty worktree and
+    `running` counts live agent sessions, so a route-level fixture cannot set
+    either to an arbitrary number without a real dirty git repo and a real
+    running agent. Everything else on the page still renders from the real
+    store -- only the six numerals are substituted.
+    """
+    c, store, _ = _route_client(tmp_path)
+    pid = store.upsert_project("/p/strip", "strip-project")
+    store.create_handoff(Handoff(
+        id="h1", project_path="/p/strip", next_prompt="keep going", created_at=1,
+    ), pid)
+    real_build_overview = api_mod.build_overview
+
+    def with_distinct_totals(*args, **kwargs):
+        model = real_build_overview(*args, **kwargs)
+        attention_total, = [v for v, label in COMMAND_STRIP_CELLS
+                            if label == "Needs attention"]
+        return dataclasses.replace(
+            model,
+            attention_total=attention_total,
+            totals={**model.totals, "running": 7, "queued": 13, "dirty": 17,
+                    "scheduled": 19, "projects": 23},
+        )
+
+    monkeypatch.setattr(api_mod, "build_overview", with_distinct_totals)
+
+    html = c.get("/").text
+
+    for value, label in COMMAND_STRIP_CELLS:
+        assert re.search(
+            rf'<span class="command-cell__num">{value}</span>\s*'
+            rf'<span class="command-cell__label">{label}</span>',
+            html,
+        ), f'the "{label}" cell did not render {value}'
+    store.close()
+
+
 def test_overview_route_uses_compact_primary_and_secondary_composition(tmp_path):
     """The approved stage is one focal object plus at most two compact cards.
 
@@ -529,6 +590,28 @@ def test_every_attention_kind_carries_all_three_status_cues(tmp_path, monkeypatc
     assert f'attention-primary--{cls}"' in hero, f"{kind}: no colour cue (card class)"
     assert f'class="pill pill--{cls}">{label}<' in hero, f"{kind}: no text cue (pill)"
     assert f'class="attention-kicker__slug">{slug}<' in hero, f"{kind}: no slug cue"
+    store.close()
+
+
+@pytest.mark.parametrize("kind", ["handoff", "running", "stale", "schedule_failure"])
+def test_every_attention_kind_gives_the_hero_a_path_footer(tmp_path, monkeypatch, kind):
+    """`overview.html` renders the hero's dotted path footer only `{% if
+    primary.meta.path %}`, so a kind that leaves `path` out of its meta drops
+    the footer with no other symptom -- and `schedule_failure` was that kind.
+    A schedule failure reaches the hero slot whenever nothing else needs a
+    human, which is exactly the state in which its path matters most.
+
+    Parametrized over every kind rather than only the one that regressed:
+    the template reads a single key, and nothing else in the suite would notice
+    a fifth kind repeating the same omission.
+    """
+    c, store, _ = _route_client(tmp_path, name=f"path-{kind}")
+    _seed_hero(store, monkeypatch, kind)
+
+    hero = _hero(c.get("/").text)
+
+    assert '<p class="attention-primary__path">/p/hero</p>' in hero, \
+        f"{kind}: hero rendered no path footer"
     store.close()
 
 

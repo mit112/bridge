@@ -308,7 +308,18 @@ def _schedule_failures(store: Store, by_path: dict[str, Card]) -> list[Attention
             title=title,
             summary=summary,
             primary_action=Action("Review scheduled run", "/schedule"),
-            meta={"run_id": row["id"], "status": row["status"]},
+            # `path` carries the hero card's dotted path footer, and this was
+            # the one kind that omitted it -- so a schedule failure promoted to
+            # hero (which happens whenever nothing else needs a human) rendered
+            # without one. Read off the row rather than the card: `by_path` is
+            # keyed BY `card.path`, so for a matched card the two are the same
+            # string, and for an unmatched one the row still knows the path
+            # while the card is None.
+            meta={
+                "run_id": row["id"],
+                "status": row["status"],
+                "path": row["project_path"],
+            },
         ))
     return out
 
