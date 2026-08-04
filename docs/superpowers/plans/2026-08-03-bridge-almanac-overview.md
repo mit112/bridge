@@ -782,7 +782,8 @@ git commit -m "Enrich Overview attention cards: status top-borders, three cues, 
 
 **Interfaces:**
 - Consumes: `project_summary_row` macro output (unchanged markup) inside `.overview-recent`. The macro renders `<a class="btn" ...>Open project</a>` (`_components.html:69`) — **not** "Open →".
-- Produces: hairline-ruled editorial rows — serif name (bumped to 20px, ≥19px display threshold) + mono path, branch/description, and an `Open project →` action. **CSS-only**: the accessible label stays "Open project" (an arrow alone is a poorer accessible name); the `→` is a decorative `::after`, so no template/markup change and no macro fork.
+- Produces: hairline-ruled editorial rows — serif name (bumped to 20px, ≥19px display threshold) + mono path, branch/description, and an `Open project →` action. **CSS-only**: the `→` is an `::after`, so no template/markup change and no macro fork.
+- **CORRECTION (verified against the live a11y tree, 2026-08-03).** This step originally claimed the accessible name "stays `Open project`" because the arrow is decorative CSS. That is **factually wrong**: CSS generated content participates in accessible-name computation (accname §2F), so Chrome reports these links as `link "Open project →"` — the attention-card ghosts, which have no `::after`, still report plain `link "Open project"`. Snapshot evidence: `.superpowers/sdd/2026-08-03-bridge-almanac-overview/a11y-recent-rows.txt`. Not a WCAG failure (the name still begins with the full, unambiguous label; nothing is name-less or arrow-only), so the arrow was kept — but whether to keep it is a design call, and it must be made knowing the arrow is announced, not silent.
 
 - [ ] **Step 1: Restyle the recent rows**
 
@@ -827,7 +828,7 @@ Replace the `.overview-recent` overrides (`app.css:1065-1068`) with the editoria
 - [ ] **Step 2: Verify + render**
 
 Run: `uv run pytest`
-Expected: PASS (CSS-only; no markup/behavior change — the button's accessible name stays "Open project").
+Expected: PASS (CSS-only; no markup change). Note the accessible name does **not** stay "Open project" — see the correction under Interfaces above; it becomes "Open project →".
 Restart the panel; headless-screenshot `/` (light) and Read the PNG. Confirm the recent list reads as editorial rows: serif 20px names, mono paths, hairline rules only (no full grid), quiet terracotta `Open project →`.
 
 - [ ] **Step 3: Commit**
