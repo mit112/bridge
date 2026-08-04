@@ -102,7 +102,7 @@ def test_no_module_scope_dom_capture(name):
 
 @pytest.mark.parametrize("name", [
     pytest.param(n, marks=pytestmark_known_red)
-    if n not in ("settings.js", "schedule.js", "projects.js") else n
+    if n not in ("settings.js", "schedule.js", "projects.js", "launch.js") else n
     for n in ["settings.js", "schedule.js", "projects.js", "launch.js", "live.js"]
 ])
 def test_per_page_behaviour_is_registered_on_the_registry(name):
@@ -112,7 +112,6 @@ def test_per_page_behaviour_is_registered_on_the_registry(name):
     )
 
 
-@pytestmark_known_red
 def test_launch_flushes_pending_edits_before_the_swap():
     """Removing a focused node does not fire focusout in ANY browser.
 

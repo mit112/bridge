@@ -33,10 +33,7 @@ window.bridgeLaunchBody = function bridgeLaunchBody(id, projectPath) {
 // Save an edited prompt when focus leaves the field, and only when the text
 // actually changed — `focusout` (which bubbles, unlike `blur`) fires on every
 // tab-through, and a PATCH per tab-through would re-journal an unchanged prompt.
-document.addEventListener("focusout", async (event) => {
-  const field = event.target.closest("[data-prompt-handoff]");
-  if (!field) return;
-
+async function savePrompt(field) {
   const handoffId = field.getAttribute("data-prompt-handoff");
   const saved = field.dataset.savedPrompt ?? field.defaultValue;
   if (field.value === saved) return;
@@ -57,6 +54,11 @@ document.addEventListener("focusout", async (event) => {
     console.error("bridge: saving the prompt failed", error);
     announce(key, "⚠ Not saved — use Copy prompt so the text is not lost");
   }
+}
+
+document.addEventListener("focusout", (event) => {
+  const field = event.target.closest("[data-prompt-handoff]");
+  if (field) savePrompt(field);
 });
 
 document.addEventListener("click", async (event) => {
@@ -223,7 +225,7 @@ document.addEventListener("click", async (event) => {
 // never persisted or pre-armed. A stored value is applied only when it matches
 // an existing `<option>`; anything else is skipped, and a missing control is a
 // no-op. Guarded so a sparser DOM (or a browser with no localStorage) is safe.
-(function prefillLaunchDefaults() {
+function prefillLaunchDefaults() {
   if (typeof document === "undefined" || !document.querySelectorAll) return;
   let store;
   try {
@@ -253,4 +255,19 @@ document.addEventListener("click", async (event) => {
   applyStored("[data-launch-effort]", store.getItem("bridge.launch.effort"), true);
   // Mode has no per-band handoff suggestion, so it applies unconditionally.
   applyStored("[data-schedule-mode]", store.getItem("bridge.launch.mode"), false);
-})();
+}
+
+// Detaching a focused node does NOT fire focusout in any browser -- a full
+// document navigation did, which is why this was safe before the shell
+// persisted. Without this flush an edit made and then navigated away from is
+// discarded silently, and the prompt cannot be rebuilt from transcripts.
+//
+// Deliberately not awaited: the swap must not be held up by the network, and
+// `savePrompt` already reports its own failure into the status line.
+if (window.bridgePage) {
+  window.bridgePage.onLeave(() => {
+    document.querySelectorAll("[data-prompt-handoff]").forEach(savePrompt);
+  });
+  window.bridgePage.onEnter(prefillLaunchDefaults);
+}
+if (!window.bridgePage) prefillLaunchDefaults();

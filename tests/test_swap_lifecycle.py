@@ -214,3 +214,50 @@ def test_view_toggle_reannounces_after_a_swap(tmp_path):
         'after a swap the grid is shown but the toggle still announces '
         '"List, pressed"'
     )
+
+
+def test_an_edited_prompt_is_saved_before_the_content_is_swapped(tmp_path):
+    """Removing a focused node does not fire focusout in any browser.
+
+    A full document navigation fires it, so this worked before the shell
+    persisted. Detaching the node does not, and the prompt is the one thing
+    Bridge cannot rebuild from transcripts -- so an unflushed edit is
+    unrecoverable data loss, not a cosmetic regression.
+    """
+    got = run_js(
+        """
+        const { El } = require(MINIDOM);
+        const field = new El("textarea", { "data-prompt-handoff": "7", id: "p7" });
+        field.defaultValue = "ORIGINAL";
+        field.value = "EDITED BY THE USER";
+        document.body.append(field);
+        window.bridgePage.leave();
+        report({ calls: globalThis.__calls.fetch });
+        """.replace("MINIDOM", json.dumps(str(MINIDOM))),
+        ["shell.js", "copy.js", "launch.js"],
+        tmp_path,
+    )
+    patches = [c for c in got["calls"] if c["opts"]["method"] == "PATCH"]
+    assert len(patches) == 1, (
+        "leaving the page discarded an edited prompt with no PATCH -- the user's "
+        "text is gone and nothing told them"
+    )
+    assert "EDITED BY THE USER" in patches[0]["opts"]["body"]
+
+
+def test_an_unchanged_prompt_is_not_patched_on_leave(tmp_path):
+    """A PATCH per navigation would re-journal an unchanged prompt every time."""
+    got = run_js(
+        """
+        const { El } = require(MINIDOM);
+        const field = new El("textarea", { "data-prompt-handoff": "7", id: "p7" });
+        field.defaultValue = "ORIGINAL";
+        field.value = "ORIGINAL";
+        document.body.append(field);
+        window.bridgePage.leave();
+        report({ calls: globalThis.__calls.fetch });
+        """.replace("MINIDOM", json.dumps(str(MINIDOM))),
+        ["shell.js", "copy.js", "launch.js"],
+        tmp_path,
+    )
+    assert got["calls"] == []
