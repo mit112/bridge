@@ -33,9 +33,24 @@
      from the persisted preference, the same way shell.js does for the rail. #}
   <div class="projects-views" role="group" aria-label="Project layout">
     <button type="button" class="btn projects-view" data-projects-view-button="list"
-            aria-pressed="true"><span aria-hidden="true">☰</span> List</button>
+            aria-pressed="true">
+      <svg class="projects-view__icon" aria-hidden="true" focusable="false"
+           viewBox="0 0 24 24" width="15" height="15" fill="none"
+           stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
+        <path d="M4 7h16M4 12h16M4 17h16" />
+      </svg>
+      List</button>
     <button type="button" class="btn projects-view" data-projects-view-button="grid"
-            aria-pressed="false"><span aria-hidden="true">▦</span> Grid</button>
+            aria-pressed="false">
+      <svg class="projects-view__icon" aria-hidden="true" focusable="false"
+           viewBox="0 0 24 24" width="15" height="15" fill="none"
+           stroke="currentColor" stroke-width="1.6" stroke-linejoin="round">
+        <rect x="4" y="4" width="7" height="7" rx="1.5" />
+        <rect x="13" y="4" width="7" height="7" rx="1.5" />
+        <rect x="4" y="13" width="7" height="7" rx="1.5" />
+        <rect x="13" y="13" width="7" height="7" rx="1.5" />
+      </svg>
+      Grid</button>
   </div>
   <p class="projects-count" data-projects-count role="status" aria-live="polite">
     {{ rows | length }} of {{ counts.all }} project{{ "" if counts.all == 1 else "s" }} shown</p>

@@ -1695,7 +1695,24 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
    `ch` tracks are deliberately NOT given a font of their own -- they have to
    resolve against the same inherited body font the rows resolve theirs
    against, or the two would drift apart. Hence the type sits on the labels. */
-.projects-view { font-family: var(--font-mono); font-size: var(--text-sm); font-variant-caps: all-small-caps; letter-spacing: .06em; padding: var(--space-2) var(--space-3); }
+/* Real SVG at `currentColor`, matching the sidebar toggle's own icon idiom --
+   the unicode glyphs this replaced rendered at whatever weight and baseline
+   each font happened to have and looked nothing like the rest of the chrome.
+   The word beside the icon is what carries the accessible name; the icon is
+   `aria-hidden` and purely a scanning aid. */
+.projects-view {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  font-variant-caps: all-small-caps;
+  letter-spacing: .06em;
+  padding: var(--space-2) var(--space-3);
+}
+/* Small caps drop the text's optical centre, so the icon needs nudging down to
+   sit on the same line rather than floating above it. */
+.projects-view__icon { flex: 0 0 auto; margin-top: .09em; }
 .projects-views { display: flex; gap: var(--space-2); }
 .projects-view[aria-pressed="true"] {
   background: var(--btn-primary-bg);
