@@ -106,6 +106,34 @@ def test_build_projects_counts_by_status(tmp_path):
     store.close()
 
 
+def test_queued_count_counts_handoffs_not_cards(tmp_path):
+    """Two queued handoffs on one project count as 2, not 1 -- the `queued`
+    count used to be "cards with a handoff" and silently hid a second queued
+    handoff on the same project."""
+    cfg = _cfg(tmp_path, "queued-count")
+    store = Store(cfg.db_path)
+    now = 10_000
+
+    pid = store.upsert_project("/proj/a", "project-a")
+    store.create_handoff(Handoff(
+        id="h1", project_path="/proj/a", next_prompt="plan", source_session_id="s1",
+        created_at=now,
+    ), pid)
+    store.create_handoff(Handoff(
+        id="h2", project_path="/proj/a", next_prompt="ui", source_session_id="s2",
+        created_at=now,
+    ), pid)
+
+    model = build_projects(
+        store, cfg,
+        probe_fn=lambda path: GitState(status="ok", branch="main"),
+        agents_fn=lambda: AgentsState(status="ok", sessions=[]),
+    )
+
+    assert model.counts["queued"] == 2
+    store.close()
+
+
 def test_build_projects_rows_keep_the_card_actionability_order(tmp_path):
     """`rows` is `[project_summary(card, now) for card in cards]` -- the exact
     order `build_cards`/`cards.sort_key` already produces (handoff first),

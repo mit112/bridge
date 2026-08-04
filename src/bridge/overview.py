@@ -212,29 +212,28 @@ def _attention_from_cards(cards: list[Card]) -> list[AttentionItem]:
     """
     items: list[AttentionItem] = []
     for card in cards:
-        if card.handoff:
-            items.append(AttentionItem(
-                kind="handoff",
-                project_id=card.project_id,
-                title=(card.session.title if card.session and card.session.title
-                       else card.name),
-                summary=(
-                    card.handoff.get("summary")
-                    or card.handoff.get("next_prompt", "")
-                ),
-                primary_action=Action(
-                    "Continue in Terminal", f"/project/{card.project_id}?tab=current",
-                ),
-                meta={
-                    "handoff_id": card.handoff.get("id"),
-                    "project_name": card.name,
-                    "created_at": card.handoff.get("created_at"),
-                    "has_span": bool(card.session),
-                    "branch": card.git.branch,
-                    "dirty_count": card.git.dirty_count,
-                    "path": card.path,
-                },
-            ))
+        if card.handoffs:
+            for h in card.handoffs:
+                items.append(AttentionItem(
+                    kind="handoff",
+                    project_id=card.project_id,
+                    title=(card.session.title if card.session and card.session.title
+                           else card.name),
+                    summary=(h.get("summary") or h.get("next_prompt", "")),
+                    primary_action=Action(
+                        "Continue in Terminal",
+                        f"/project/{card.project_id}?tab=current",
+                    ),
+                    meta={
+                        "handoff_id": h.get("id"),
+                        "project_name": card.name,
+                        "created_at": h.get("created_at"),
+                        "has_span": bool(card.session),
+                        "branch": card.git.branch,
+                        "dirty_count": card.git.dirty_count,
+                        "path": card.path,
+                    },
+                ))
         elif card.live is not None:
             items.append(AttentionItem(
                 kind="running",

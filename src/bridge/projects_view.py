@@ -79,10 +79,10 @@ def build_projects(
         # attention ladder surfaces it: a queued handoff, a live session, or
         # uncommitted work stale past the threshold.
         "needs_attention": sum(
-            1 for card in cards if card.handoff or card.live is not None or card.is_stale
+            1 for card in cards if card.handoffs or card.live is not None or card.is_stale
         ),
         "running": sum(1 for card in cards if card.live is not None),
-        "queued": sum(1 for card in cards if card.handoff),
+        "queued": sum(len(card.handoffs) for card in cards),
         "hidden": len(hidden),
     }
 

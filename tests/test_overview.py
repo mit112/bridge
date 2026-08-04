@@ -12,9 +12,11 @@ from bridge.agents import AgentsState
 from bridge.api import create_app
 from bridge.config import load
 from bridge.models import GitState, Handoff, LiveSession, ScheduledRun, SessionRecord
+from bridge.cards import build_cards
 from bridge.overview import (
     RECENT_LIMIT,
     UP_NEXT_LIMIT,
+    _attention_from_cards,
     build_overview,
 )
 from bridge.store import Store
@@ -346,6 +348,36 @@ def test_no_handoff_or_schedule_failure_yields_empty_attention(tmp_path):
     )
 
     assert model.attention == []
+
+    store.close()
+
+
+def test_attention_emits_one_item_per_handoff(tmp_path):
+    """A card with several queued handoffs used to collapse to the newest one
+    via the `card.handoff` property; every queued handoff is now its own
+    independently actionable attention item."""
+    cfg = _cfg(tmp_path)
+    store = Store(cfg.db_path)
+    now = 10_000
+
+    pid = store.upsert_project("/proj/a", "project-a")
+    store.create_handoff(Handoff(
+        id="h1", project_path="/proj/a", next_prompt="plan",
+        summary="Planned", source_session_id="s1", created_at=now,
+    ), pid)
+    store.create_handoff(Handoff(
+        id="h2", project_path="/proj/a", next_prompt="ui",
+        summary="UI work", source_session_id="s2", created_at=now,
+    ), pid)
+
+    cards = build_cards(
+        store, cfg,
+        probe_fn=lambda path: GitState(status="ok", branch="main"),
+        agents_fn=lambda: AgentsState(status="ok", sessions=[]),
+    )
+    items = _attention_from_cards(cards)
+    handoff_items = [i for i in items if i.kind == "handoff"]
+    assert {i.meta["handoff_id"] for i in handoff_items} == {"h1", "h2"}
 
     store.close()
 
