@@ -13,6 +13,32 @@
 (function () {
   if (!document.addEventListener) return;
 
+  // Bridge swaps only the content region on navigation, so these files are
+  // loaded ONCE and never re-executed -- launch.js, live.js and settings.js all
+  // declare top-level `const`, and re-evaluating any of them in the same realm
+  // throws SyntaxError and aborts the whole file. Anything that must run per
+  // page view therefore registers here instead of running at load.
+  //
+  // Hooks are isolated: one page's broken hook must not stop another page's
+  // from running, so each is called in its own try/catch.
+  const enterHooks = [];
+  const leaveHooks = [];
+  function runAll(hooks) {
+    for (const fn of hooks) {
+      try {
+        fn();
+      } catch (error) {
+        console.error("bridge: page hook failed", error);
+      }
+    }
+  }
+  window.bridgePage = {
+    onEnter(fn) { enterHooks.push(fn); },
+    onLeave(fn) { leaveHooks.push(fn); },
+    enter() { runAll(enterHooks); },
+    leave() { runAll(leaveHooks); },
+  };
+
   const root = document.documentElement;
 
   // The server cannot know a client-only preference, so the button ships
