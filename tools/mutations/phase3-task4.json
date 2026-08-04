@@ -47,7 +47,7 @@
     "new": "    return launch_fn(store, cfg, spec, None)",
     "tests": [
       "tests/test_api.py::test_a_successful_launch_consumes_the_handoff",
-      "tests/test_api.py::test_a_launch_with_no_prompt_uses_the_queued_handoff"
+      "tests/test_api.py::test_a_launch_with_an_explicit_handoff_id_and_no_prompt_uses_its_next_prompt"
     ],
     "expect_count": 1
   },
@@ -74,8 +74,8 @@
   {
     "name": "accept a made-up handoff id, surfacing a foreign-key traceback",
     "file": "src/bridge/api.py",
-    "old": "            raise HTTPException(status_code=404, detail=\"unknown handoff\")\n        title = body.title or launcher.default_title(",
-    "new": "            pass\n        title = body.title or launcher.default_title(",
+    "old": "            raise HTTPException(status_code=404, detail=\"unknown handoff\")\n        if prompt is None:\n            prompt = handoff[\"next_prompt\"]",
+    "new": "            pass\n        if prompt is None:\n            prompt = handoff[\"next_prompt\"]",
     "tests": [
       "tests/test_api.py::test_a_launch_naming_an_unknown_handoff_is_404_not_a_foreign_key_500"
     ],
