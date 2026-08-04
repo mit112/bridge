@@ -1,4 +1,4 @@
-{% extends "base.html" %}
+{% extends layout|default("base.html") %}
 {% from "_components.html" import project_summary_row, empty_state %}
 {% block page_title %}Projects{% endblock %}
 {% block page_summary %}

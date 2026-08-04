@@ -1,0 +1,33 @@
+{# The swap payload, and nothing else: no doctype, no <head>, no sidebar.
+   Bridge's router replaces exactly these two nodes and reads the title and the
+   active nav key off this response.
+
+   The `.shell__body` markup below is spelled out a second time -- base.html has
+   the same block structure, indentation included, so that the two literally
+   render identical bytes. Jinja blocks do not survive an `{% include %}`, so
+   the two layouts cannot share it by factoring. `test_fragment_routes.py`
+   asserts the two renders stay identical, which is what makes the duplication
+   safe rather than a drift waiting to happen. #}
+<title>{% block title %}Bridge{% endblock %}</title>
+<meta name="bridge-active" content="{{ active }}">
+    <div class="shell__body">
+      <header class="page-head">
+        <div class="page-head__text">
+          {% block page_eyebrow %}{% endblock %}
+          <h1 class="page-title">{% block page_title %}Bridge{% endblock %}</h1>
+          {% block page_summary %}{% endblock %}
+        </div>
+        <div class="page-actions">
+          <a class="risk" href="/diagnostics" data-diagnostics-alert
+             {% if not diag_alert %}hidden{% endif %}>{% if diag_alert %}⚠ {% endif %}Diagnostics</a>
+          {% block page_actions %}{% endblock %}
+        </div>
+      </header>
+      <main id="main" tabindex="-1">{% block content %}{% endblock %}</main>
+    </div>
+<div class="shell-status">
+  {% block shell_status %}
+    <span class="shell-status__label">Local control plane</span>
+    <span class="shell-status__detail">Repository access · read only</span>
+  {% endblock %}
+</div>

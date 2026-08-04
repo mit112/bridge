@@ -1,4 +1,4 @@
-{% extends "base.html" %}
+{% extends layout|default("base.html") %}
 {% block page_title %}Diagnostics{% endblock %}
 {% block content %}
 {# Status is never colour alone: each row says what it is in words. #}

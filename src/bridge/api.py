@@ -470,6 +470,18 @@ class CachedStaticFiles(StaticFiles):
         return response
 
 
+FRAGMENT_HEADER = "x-bridge-fragment"
+
+
+def _layout_for(request: Request) -> str:
+    """Which layout a page template extends.
+
+    A request without the header renders exactly what it always did, which is
+    what keeps the existing route tests a true statement about the app.
+    """
+    return "_fragment.html" if request.headers.get(FRAGMENT_HEADER) else "base.html"
+
+
 def create_app(
     store: Store, cfg: Config, launch_fn: LaunchFn = launcher.launch,
     refresh_coordinator: RefreshCoordinator | None = None,
@@ -802,6 +814,7 @@ def create_app(
                 "alert": _needs_attention(diag),
                 "attention": _attention_items(diag),
                 "active": "diagnostics",
+                "layout": _layout_for(request),
             },
         )
 
@@ -832,6 +845,7 @@ def create_app(
                 # the header disagree with the model it was computed from.
                 "diag_alert": model.diagnostics_alert,
                 "active": "overview",
+                "layout": _layout_for(request),
             },
         )
 
@@ -846,6 +860,7 @@ def create_app(
                 "counts": model.counts,
                 "hidden": model.hidden,
                 "active": "projects",
+                "layout": _layout_for(request),
             },
         )
 
@@ -890,7 +905,13 @@ def create_app(
         # route in the redesign follows.
         model = build_schedule(store, view=view, page=page)
         return templates.TemplateResponse(
-            request, "schedule.html", {"model": model, "active": "schedule"},
+            request,
+            "schedule.html",
+            {
+                "model": model,
+                "active": "schedule",
+                "layout": _layout_for(request),
+            },
         )
 
     @app.get("/settings", response_class=HTMLResponse)
@@ -902,7 +923,13 @@ def create_app(
         # read off the developer's real file.
         model = build_settings(cfg)
         return templates.TemplateResponse(
-            request, "settings.html", {"model": model, "active": "settings"},
+            request,
+            "settings.html",
+            {
+                "model": model,
+                "active": "settings",
+                "layout": _layout_for(request),
+            },
         )
 
     @app.get("/api/projects")

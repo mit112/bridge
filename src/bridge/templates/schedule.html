@@ -1,4 +1,4 @@
-{% extends "base.html" %}
+{% extends layout|default("base.html") %}
 {% from "_components.html" import schedule_row, empty_state %}
 {% block page_title %}Schedule{% endblock %}
 {% block page_summary %}

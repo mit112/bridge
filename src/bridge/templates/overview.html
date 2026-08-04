@@ -1,4 +1,4 @@
-{% extends "base.html" %}
+{% extends layout|default("base.html") %}
 {% from "_shell.html" import freshness_status %}
 {% from "_components.html" import project_summary_row, schedule_row, empty_state %}
 {% block page_title %}Overview{% endblock %}
