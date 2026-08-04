@@ -48,6 +48,29 @@
   </script>
   <link rel="preload" href="/static/fonts/fraunces-semibold-600.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/static/app.css">
+  {# Fetch the next page while the pointer is still travelling to the link.
+     `/` and `/projects` cost a few hundred ms server-side because they probe
+     every git worktree, and no amount of client polish hides latency that
+     starts when the click lands -- this moves the wait off the critical path
+     instead of trying to disguise it.
+
+     `moderate` is hover/pointerdown, not "everything on the page": these are
+     GET reads of the same pages the nav already links to, but each one does
+     real work on the machine, so eagerly warming all of them on load would
+     just move the cost rather than remove it.
+
+     prefetch, NOT prerender. Prerender would run the document -- including
+     live.js's polling and the whole probe cycle -- for a page that may never
+     be opened. Where speculation rules are unsupported the links are ordinary
+     links and behave exactly as before. #}
+  <script type="speculationrules">
+  {
+    "prefetch": [{
+      "where": { "href_matches": "/*" },
+      "eagerness": "moderate"
+    }]
+  }
+  </script>
 </head>
 <body>
   {% from "_shell.html" import app_nav %}

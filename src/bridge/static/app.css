@@ -249,10 +249,28 @@
 }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
+/* The canvas colour belongs on the root, not only on body. A browser paints
+   the viewport from the root's background before body is laid out, so with it
+   declared only on body there is a frame of UA-default white between one
+   document and the next -- the flash on every nav click. Body keeps its own
+   for the case where the two ever diverge. */
+html { background: var(--bg); }
 body {
   margin: 0; background: var(--bg); color: var(--fg);
   font: var(--text-body)/1.5 var(--font-sans);
 }
+
+/* Cross-document view transitions. Bridge is server-rendered, so every nav
+   click is a real document swap; without this the browser hard-cuts between
+   them. `navigation: auto` makes same-origin navigations cross-fade instead,
+   which is what removes the remaining flash. Native and declarative -- no
+   router, no client-side navigation, no framework.
+
+   Deliberately NOT wrapped in a `prefers-reduced-motion` guard: the default
+   cross-fade is the UA's own, and Chrome already skips it under reduced
+   motion. The named animations below are the ones that need guarding, and
+   there are none. */
+@view-transition { navigation: auto; }
 a { color: var(--accent); text-underline-offset: .16em; }
 :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 
