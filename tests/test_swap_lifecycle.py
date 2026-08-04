@@ -261,3 +261,70 @@ def test_an_unchanged_prompt_is_not_patched_on_leave(tmp_path):
         tmp_path,
     )
     assert got["calls"] == []
+
+
+def test_only_one_event_source_across_many_navigations(tmp_path):
+    """The surviving SSE connection is the concrete win of the persistent shell.
+
+    live.js opens EventSource("/events") per document today. If a page view ever
+    re-opened it, the panel would fan out N connections per tab instead of one.
+    """
+    got = run_js(
+        """
+        window.bridgePage.enter();
+        window.bridgePage.leave();
+        window.bridgePage.enter();
+        window.bridgePage.leave();
+        window.bridgePage.enter();
+        report({ sources: globalThis.__calls.eventSource.length,
+                 intervals: globalThis.__calls.interval });
+        """,
+        ["shell.js", "live.js"],
+        tmp_path,
+    )
+    assert got["sources"] == 1, f"{got['sources']} SSE connections for one tab"
+    assert got["intervals"] == 1, f"{got['intervals']} age tickers running at once"
+
+
+def test_the_freshness_strip_is_reseeded_after_returning_to_overview(tmp_path):
+    """announceConnectionState early-returns when the state matches its cache.
+
+    The SSE stream keeps delivering while the user is on a page with no strip, so
+    lastConnectionState drifts on while nothing is written. Coming back inserts a
+    fresh server-rendered strip, and the cached value then suppresses the very
+    write that would correct it -- the strip freezes at whatever the server
+    happened to render at swap time.
+    """
+    got = run_js(
+        """
+        const { El } = require(MINIDOM);
+        function strip(server) {
+          document.body.children.length = 0;
+          const s = new El("section", { "data-freshness-strip": "",
+                                        "data-index-at": "1754300000",
+                                        "data-server": server });
+          const label = new El("span", { "data-freshness-label": "" });
+          s.append(label); document.body.append(s);
+          return { s, label };
+        }
+        const first = strip("available");
+        window.bridgePage.enter();
+        const afterFirst = first.s.getAttribute("data-freshness-state");
+        // Away to a page with no strip, then back to a freshly rendered one.
+        window.bridgePage.leave();
+        document.body.children.length = 0;
+        window.bridgePage.enter();
+        const back = strip("available");
+        window.bridgePage.enter();
+        report({ afterFirst, afterReturn: back.s.getAttribute("data-freshness-state"),
+                 label: back.label.textContent });
+        """.replace("MINIDOM", json.dumps(str(MINIDOM))),
+        ["shell.js", "live.js"],
+        tmp_path,
+    )
+    assert got["afterFirst"], "the strip was never seeded on the first page view"
+    assert got["afterReturn"] == got["afterFirst"], (
+        "the strip inserted by a swap was never written to -- announceConnectionState's "
+        "cached state suppressed the correction"
+    )
+    assert got["label"] != ""

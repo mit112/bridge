@@ -53,10 +53,7 @@ def test_no_domcontentloaded_outside_the_router(name):
     )
 
 
-@pytest.mark.parametrize("name", [
-    pytest.param(n, marks=pytestmark_known_red) if n == "live.js" else n
-    for n in PAGE_SCRIPTS
-])
+@pytest.mark.parametrize("name", PAGE_SCRIPTS)
 def test_no_module_scope_dom_capture(name):
     """A node captured at load is detached forever after the first swap.
 
@@ -100,11 +97,9 @@ def test_no_module_scope_dom_capture(name):
     )
 
 
-@pytest.mark.parametrize("name", [
-    pytest.param(n, marks=pytestmark_known_red)
-    if n not in ("settings.js", "schedule.js", "projects.js", "launch.js") else n
-    for n in ["settings.js", "schedule.js", "projects.js", "launch.js", "live.js"]
-])
+@pytest.mark.parametrize(
+    "name", ["settings.js", "schedule.js", "projects.js", "launch.js", "live.js"]
+)
 def test_per_page_behaviour_is_registered_on_the_registry(name):
     assert "bridgePage.onEnter" in source(name), (
         f"{name} has per-page-view setup that must re-run after a swap, but "

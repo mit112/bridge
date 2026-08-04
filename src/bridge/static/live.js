@@ -278,18 +278,33 @@ if (document.addEventListener) {
   });
 }
 
-lastIndexAt = initialIndexAt();
-const initialStrip = query("[data-freshness-strip]");
-if (initialStrip) {
+// Re-seeded on every page view. The freshness strip only exists on the Overview
+// and each swap inserts a brand-new, server-rendered one, so the baselines below
+// have to be read again from the node that is actually on screen.
+function bootFreshness() {
+  lastIndexAt = initialIndexAt();
+  const strip = query("[data-freshness-strip]");
+  if (!strip) return;
   // `getAttribute` returns `null` for a missing attribute (Overview's strip
   // never renders `data-generation`), and `Number(null)` is 0 -- a real,
   // finite generation, not the "unknown" `patchFreshness` needs it to mean.
   // Reading the raw value first keeps "absent" and "present as 0" distinct.
-  const rawGeneration = initialStrip.getAttribute("data-generation");
+  const rawGeneration = strip.getAttribute("data-generation");
   const initialGeneration = rawGeneration == null ? NaN : Number(rawGeneration);
   lastGeneration = Number.isFinite(initialGeneration) ? initialGeneration : null;
-  announceConnectionState(connectionState(initialStrip.getAttribute("data-server"), Math.floor(Date.now() / 1000)));
+  // Clear the cached state FIRST. `announceConnectionState` returns early when
+  // the state it is handed matches the cache, and that cache drifts on while the
+  // user is on a page that has no strip at all -- so without this reset the
+  // freshly-swapped strip is never written to and freezes at whatever the server
+  // rendered.
+  lastConnectionState = null;
+  announceConnectionState(
+    connectionState(strip.getAttribute("data-server"), Math.floor(Date.now() / 1000)),
+  );
 }
+
+if (window.bridgePage) window.bridgePage.onEnter(bootFreshness);
+else bootFreshness();
 
 function connect() {
   const source = new EventSource("/events");
