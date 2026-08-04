@@ -585,6 +585,59 @@ def test_reinserting_a_consumed_handoff_does_not_resurrect_it(store):
     assert store.queued_handoff(pid) is None
 
 
+def test_two_sessions_coexist(store):
+    """Two sessions on one project each keep their own queued handoff."""
+    pid = store.upsert_project("/proj/a", "a")
+    store.create_handoff(
+        handoff("h1", project_path="/proj/a", next_prompt="plan",
+                source_session_id="sess-1"), pid)
+    store.create_handoff(
+        handoff("h2", project_path="/proj/a", next_prompt="ui",
+                source_session_id="sess-2"), pid)
+    ids = {r["id"] for r in store.queued_handoffs(pid)}
+    assert ids == {"h1", "h2"}
+
+
+def test_same_session_supersedes(store):
+    pid = store.upsert_project("/proj/a", "a")
+    store.create_handoff(
+        handoff("h1", project_path="/proj/a", next_prompt="v1",
+                source_session_id="sess-1"), pid)
+    store.create_handoff(
+        handoff("h2", project_path="/proj/a", next_prompt="v2",
+                source_session_id="sess-1"), pid)
+    rows = store.queued_handoffs(pid)
+    assert [r["id"] for r in rows] == ["h2"]
+    assert store.get_handoff("h1")["status"] == "superseded"
+
+
+def test_null_session_never_supersedes(store):
+    pid = store.upsert_project("/proj/a", "a")
+    store.create_handoff(
+        handoff("h1", project_path="/proj/a", next_prompt="a",
+                source_session_id=None), pid)
+    store.create_handoff(
+        handoff("h2", project_path="/proj/a", next_prompt="b",
+                source_session_id=None), pid)
+    ids = {r["id"] for r in store.queued_handoffs(pid)}
+    assert ids == {"h1", "h2"}
+
+
+def test_redrain_is_idempotent_and_leaves_siblings(store):
+    """Re-inserting an already-queued handoff (spool re-drain) must not
+    supersede a sibling from another session."""
+    pid = store.upsert_project("/proj/a", "a")
+    h = handoff("h1", project_path="/proj/a", next_prompt="plan",
+                source_session_id="sess-1")
+    store.create_handoff(h, pid)
+    store.create_handoff(
+        handoff("h2", project_path="/proj/a", next_prompt="ui",
+                source_session_id="sess-2"), pid)
+    store.create_handoff(h, pid)  # re-drain of h1
+    ids = {r["id"] for r in store.queued_handoffs(pid)}
+    assert ids == {"h1", "h2"}
+
+
 def test_handoffs_are_scoped_to_their_project(store):
     a = store.upsert_project("/a", "a")
     b = store.upsert_project("/b", "b")

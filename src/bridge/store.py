@@ -398,7 +398,14 @@ class Store:
     # --- `scheduled_runs` is the other authored table; see schedspool.py.
 
     def create_handoff(self, h: Handoff, project_id: int) -> str:
-        """Queue a handoff, superseding any already queued for the project.
+        """Queue a handoff, superseding any already queued for the SAME session.
+
+        Supersession is scoped to `source_session_id` so two different sessions on
+        one project each keep their queued handoff, while re-running the skill in the
+        same session still replaces that session's own prompt. A null session never
+        supersedes: anonymous handoffs have no identity to collapse against, so each
+        stands alone. The `id<>?` guard and `ON CONFLICT(id) DO NOTHING` keep a spool
+        re-drain idempotent exactly as before.
 
         Both statements run in one transaction: a crash between them would
         otherwise leave the project with its old handoff superseded and no new
@@ -411,11 +418,13 @@ class Store:
         insert, and a re-drain cannot resurrect one already consumed.
         """
         with self.transaction():
-            self.conn.execute(
-                "UPDATE handoffs SET status='superseded' "
-                "WHERE project_id=? AND status='queued' AND id<>?",
-                (project_id, h.id),
-            )
+            if h.source_session_id is not None:
+                self.conn.execute(
+                    "UPDATE handoffs SET status='superseded' "
+                    "WHERE project_id=? AND status='queued' "
+                    "AND source_session_id=? AND id<>?",
+                    (project_id, h.source_session_id, h.id),
+                )
             self.conn.execute(
                 "INSERT INTO handoffs(id, project_id, source_session_id, summary, "
                 "next_prompt, suggested_model, suggested_effort, status, created_at) "
@@ -428,13 +437,19 @@ class Store:
             )
         return h.id
 
-    def queued_handoff(self, project_id: int) -> sqlite3.Row | None:
+    def queued_handoffs(self, project_id: int) -> list[sqlite3.Row]:
         with self._lock:
-            return self.conn.execute(
+            return list(self.conn.execute(
                 "SELECT * FROM handoffs WHERE project_id=? AND status='queued' "
-                "ORDER BY created_at DESC LIMIT 1",
+                "ORDER BY created_at DESC",
                 (project_id,),
-            ).fetchone()
+            ))
+
+    def queued_handoff(self, project_id: int) -> sqlite3.Row | None:
+        """The newest queued handoff, or None. Retained for callers that still want
+        a single 'what's next'; `queued_handoffs` is the full set."""
+        rows = self.queued_handoffs(project_id)
+        return rows[0] if rows else None
 
     def handoffs(self, project_id: int, limit: int = 50) -> list[sqlite3.Row]:
         with self._lock:
