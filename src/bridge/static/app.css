@@ -291,8 +291,44 @@ a { color: var(--accent); text-underline-offset: .16em; }
 .skip-link:focus-visible { transform: translateY(0); }
 
 .shell { display: grid; grid-template-columns: minmax(0, 1fr); min-height: 100vh; }
+/* The rail is a fixed frame, not part of the scrolling document. Five
+   destinations plus a status line are a finite set that should stay exactly
+   where the eye left them while the page's content scrolls past, so
+   `.shell__body` -- not the document -- becomes the scroll container.
+   Deliberately desktop-only: below 1024px the sidebar stacks ABOVE the content
+   behind the Menu disclosure, where document scroll is the correct behaviour
+   and a 100vh cage would strand everything under it. `100vh` rather than
+   `100dvh` because a browser without `dvh` would drop the declaration and be
+   left with `overflow: hidden` over a `min-height: 100vh` grid, which clips
+   content away with no way to reach it -- and dynamic viewport units only earn
+   their keep on the mobile toolbars this range excludes anyway.
+   `.sidebar` keeps its own `overflow-y: auto` purely as a reachability floor:
+   at a short-but-wide viewport, or high zoom that still reports >=1024px, the
+   nav must scroll rather than be clipped. In normal use it never engages. */
 @media (min-width: 1024px) {
-  .shell { grid-template-columns: 208px minmax(0, 1fr); }
+  .shell {
+    grid-template-columns: 208px minmax(0, 1fr);
+    height: 100vh;
+    overflow: hidden;
+    transition: grid-template-columns 160ms ease;
+  }
+  .sidebar { overflow-y: auto; }
+  .shell__body { overflow-y: auto; }
+
+  /* Collapsed: the rail keeps ONLY the toggle. The nav does not survive as a
+     row of unlabelled icons -- an icon-only destination list is mystery-meat
+     navigation, and the whole point of collapsing here is content width, not a
+     second nav idiom to learn. The toggle stays in the rail at the same
+     position it occupies when expanded, so re-opening is a click where the
+     hand already is rather than a hunt. 3.5rem holds a --control-min (2.5rem)
+     button inside --space-2 padding exactly, and still clears it under compact
+     density. */
+  :root[data-nav="collapsed"] .shell { grid-template-columns: 3.5rem minmax(0, 1fr); }
+  :root[data-nav="collapsed"] .sidebar { padding: var(--space-2); }
+  :root[data-nav="collapsed"] .sidebar__head { justify-content: center; }
+  :root[data-nav="collapsed"] .sidebar__identity,
+  :root[data-nav="collapsed"] .sidebar__nav,
+  :root[data-nav="collapsed"] .shell-status { display: none; }
 }
 
 .sidebar {
@@ -333,6 +369,27 @@ a { color: var(--accent); text-underline-offset: .16em; }
   cursor: pointer;
 }
 @media (max-width: 1023px) { .menu-toggle { display: inline-flex; align-items: center; } }
+
+/* The inverse of .menu-toggle's breakpoint, so the two are never both exposed.
+   Square because it is a glyph-only control: the width floor matches the height
+   floor so the hit area stays square at every density (WCAG 2.5.8 wants 24px;
+   --control-min is 40px here). */
+.sidebar-toggle {
+  display: none;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--control-min);
+  min-height: var(--control-min);
+  padding: 0;
+  color: var(--nav-text-secondary);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+@media (min-width: 1024px) { .sidebar-toggle { display: inline-flex; } }
+.sidebar-toggle:hover { color: var(--nav-text); background: rgb(255 255 255 / 8%); }
 
 .sidebar__group + .sidebar__group { margin-top: var(--space-2); }
 .sidebar__group-title {
@@ -384,13 +441,16 @@ a { color: var(--accent); text-underline-offset: .16em; }
 
 /* The global focus ring uses `--focus` (`--p-work`), which flips with the
    theme -- on the always-dark nav rail that drops to 2.49:1 in light mode,
-   below WCAG 1.4.11's 3:1. These three are the only focusable elements
+   below WCAG 1.4.11's 3:1. These four are the only focusable elements
    inside `.sidebar`, so their ring colour alone is repointed at the
    theme-invariant `--p-nav-focus` (width/offset still come from the global
-   rule above). */
+   rule above). Note `.sidebar-toggle` is the one that stays focusable while
+   the rail is collapsed -- the nav links are `display: none` there -- so
+   without it the collapsed rail would have an unreachable focus ring. */
 .sidebar__link:focus-visible,
 .sidebar__brand:focus-visible,
-.menu-toggle:focus-visible {
+.menu-toggle:focus-visible,
+.sidebar-toggle:focus-visible {
   outline-color: var(--p-nav-focus);
 }
 
@@ -1647,4 +1707,7 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
   *, *::before, *::after { scroll-behavior: auto; }
   .skip-link { transition: none; }
   .btn { transition: none; }
+  /* The collapse still happens, it just happens instantly -- the width change
+     is the feedback, the slide is only continuity. */
+  .shell { transition: none; }
 }

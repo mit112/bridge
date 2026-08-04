@@ -191,6 +191,87 @@ def test_project_tabs_tighten_before_the_320px_reflow_boundary():
     assert narrow, "expected narrow workspace tabs to use the 12px gap"
 
 
+def test_sidebar_toggle_renders_on_every_shell_page_with_a_name_and_a_target(tmp_path):
+    """The collapse control is shell chrome, so it must exist on every page --
+    collapsing on Overview and navigating to Projects with no way back would
+    strand the nav.
+
+    Glyph-only, so the accessible name is the ONLY name: the `<svg>` is
+    aria-hidden and there is no text node. Asserted per-page rather than once
+    because base.html is shared but nothing else would notice a page that
+    overrode the `sidebar__head` block.
+    """
+    c = _client(tmp_path)
+    cfg = load({"db_path": tmp_path / "tog.db", "spool_dir": tmp_path / "spool-tog"})
+    store = Store(cfg.db_path)
+    pid = store.upsert_project("/Users/mitsheth/dev/demo", "demo")
+    store.close()
+    client = TestClient(create_app(Store(cfg.db_path), cfg))
+    for path in (
+        "/", "/diagnostics", "/projects", f"/project/{pid}", "/schedule", "/settings",
+    ):
+        html = client.get(path).text
+        button = re.search(r"<button[^>]*data-sidebar-toggle[^>]*>", html)
+        assert button, f"{path}: no sidebar toggle"
+        markup = button.group(0)
+        assert 'aria-label="Collapse sidebar"' in markup, f"{path}: toggle has no name"
+        assert 'aria-expanded="true"' in markup, f"{path}: toggle has no state"
+        assert 'aria-controls="primary-nav"' in markup, f"{path}: toggle controls nothing"
+        # The thing it claims to control has to be the thing that exists.
+        assert 'id="primary-nav"' in html, path
+    assert c  # the fixture client is exercised by the other tests in this module
+
+
+def test_collapsed_rail_hides_nav_rather_than_reducing_it_to_bare_icons():
+    """A collapsed rail must not become an icon-only destination list --
+    unlabelled icon navigation is mystery meat, and the toggle has to stay
+    focusable there or the collapsed rail has no way out.
+
+    Pinned in CSS because that is where the decision lives: `.sidebar__nav`
+    going `display: none` (rather than its labels being hidden) is what makes
+    the icon-rail variant impossible to reach by accident.
+    """
+    css = _app_css()
+    collapsed = re.search(
+        r':root\[data-nav="collapsed"\][^{]*\.sidebar__nav[^{]*\{[^}]*display:\s*none',
+        css,
+        re.DOTALL,
+    )
+    assert collapsed, "expected the collapsed rail to hide .sidebar__nav outright"
+    assert ".sidebar-toggle:focus-visible" in css
+    # The two disclosures must never both be exposed: inverse breakpoints.
+    assert re.search(
+        r"@media \(min-width: 1024px\) \{ \.sidebar-toggle \{ display: inline-flex",
+        css,
+    ), "expected .sidebar-toggle to appear only at >=1024px"
+
+
+def test_desktop_rail_is_fixed_and_the_body_scrolls_instead_of_the_document():
+    """The nav holds a finite set of destinations and must not scroll away with
+    the page: at >=1024px the shell is viewport-height and `.shell__body` owns
+    the scrolling.
+
+    Two things this deliberately does NOT do, both asserted so a later edit
+    cannot quietly undo the reasoning: the cage is scoped to >=1024px (below it
+    the sidebar stacks above the content, where a 100vh cage would strand
+    everything under it), and `.sidebar` keeps its own overflow so the nav is
+    reachable at a short viewport or high zoom rather than clipped.
+    """
+    css = _app_css()
+    desktop = re.search(
+        r"@media \(min-width: 1024px\) \{(.*?)\n\}", css, re.DOTALL,
+    )
+    assert desktop, "expected a min-width: 1024px block"
+    block = desktop.group(1)
+    assert "height: 100vh" in block
+    assert "overflow: hidden" in block
+    assert re.search(r"\.shell__body \{ overflow-y: auto", block)
+    assert re.search(r"\.sidebar \{ overflow-y: auto", block)
+    # 100dvh would be dropped by a browser without dvh support, leaving
+    # overflow:hidden over a min-height:100vh grid -- content clipped, no scroll.
+    assert "100dvh" not in block
+
+
 def test_reduced_motion_disables_btn_transitions():
     """Task 5.4: prefers-reduced-motion only covered scroll-behavior and the
     skip-link before this; extend it to the .btn transitions too."""
@@ -204,3 +285,6 @@ def test_reduced_motion_disables_btn_transitions():
     block = match.group(1)
     assert ".btn" in block
     assert "transition: none" in block
+    # The sidebar collapse animates grid-template-columns; under reduced motion
+    # it must snap instead.
+    assert ".shell { transition: none; }" in block

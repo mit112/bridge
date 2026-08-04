@@ -8,13 +8,19 @@
   <meta name="theme-color" content="#1b1714" media="(prefers-color-scheme: dark)">
   <title>{% block title %}Bridge{% endblock %}</title>
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
-  {# Synchronous and inline on purpose -- FOUC guard. Reads the two Settings
-     preferences and sets data-theme/data-density on <html> BEFORE the
+  {# Synchronous and inline on purpose -- FOUC guard. Reads the three client
+     preferences and sets data-theme/data-density/data-nav on <html> BEFORE the
      stylesheet below is parsed, so first paint already matches. Must never
      become `defer`/`async` or move into a loaded file: either would run after
      paint, which is the exact flash this exists to avoid. Kept a tiny,
      dependency-free duplicate of settings.js's own apply logic rather than
-     loading that file here, since every page (not just /settings) needs this. #}
+     loading that file here, since every page (not just /settings) needs this.
+
+     `bridge.nav` is here for a reason specific to this app: Bridge is
+     server-rendered and every nav click is a full page load, so a sidebar
+     collapse that lived only in memory would spring back open on every
+     navigation. Applying it pre-paint is what makes the collapse feel like a
+     persistent layout choice instead of a per-page toggle. #}
   <script>
   (function () {
     try {
@@ -24,6 +30,9 @@
       document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
       if (localStorage.getItem('bridge.density') === 'compact') {
         document.documentElement.setAttribute('data-density', 'compact');
+      }
+      if (localStorage.getItem('bridge.nav') === 'collapsed') {
+        document.documentElement.setAttribute('data-nav', 'collapsed');
       }
     } catch (e) {}
   })();
@@ -46,6 +55,25 @@
           </svg>
           <a class="sidebar__brand" href="/">Bridge</a>
         </div>
+        {# Two disclosures, one target, never both exposed: `.sidebar-toggle`
+           is display:none below 1024px and `.menu-toggle` is display:none at
+           and above it, so exactly one is in the accessibility tree at any
+           width and their `aria-expanded` states cannot disagree. Icon-only
+           on purpose (a sidebar-toggle is conventional chrome, cf. Safari and
+           ChatGPT) -- it is not navigation, so it does not fall under the
+           labelled-nav rule the nav links follow; it carries an aria-label and
+           a title, and shell.js keeps both in step with the state. #}
+        <button type="button" class="sidebar-toggle" data-sidebar-toggle
+                aria-expanded="true" aria-controls="primary-nav"
+                aria-label="Collapse sidebar" title="Collapse sidebar">
+          <svg class="sidebar-toggle__icon" aria-hidden="true" focusable="false"
+               viewBox="0 0 24 24" width="18" height="18" fill="none"
+               stroke="currentColor" stroke-width="1.6" stroke-linecap="round"
+               stroke-linejoin="round">
+            <rect x="3" y="4.5" width="18" height="15" rx="2.5" />
+            <path d="M9.5 4.5v15" />
+          </svg>
+        </button>
         <button type="button" class="menu-toggle" aria-expanded="true" aria-controls="primary-nav">Menu</button>
       </div>
       {{ app_nav(active) }}

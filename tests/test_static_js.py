@@ -2092,10 +2092,37 @@ const button = {
   setAttribute(name, value) { this.attrs[name] = value; },
   closest(sel) { return sel === ".menu-toggle" ? this : null; },
 };
+// The rail's collapse control. Matches ONLY its own selector so the two
+// disclosures can be exercised independently through the one click handler.
+const rail = {
+  attrs: {
+    "aria-expanded": "true", "aria-controls": "primary-nav",
+    "aria-label": "Collapse sidebar", "title": "Collapse sidebar",
+  },
+  getAttribute(name) { return this.attrs[name] ?? null; },
+  setAttribute(name, value) { this.attrs[name] = value; },
+  closest(sel) { return sel === "[data-sidebar-toggle]" ? this : null; },
+};
+const documentElement = {
+  attrs: __DATA_NAV__,
+  getAttribute(name) { return this.attrs[name] ?? null; },
+  setAttribute(name, value) { this.attrs[name] = value; },
+  removeAttribute(name) { delete this.attrs[name]; },
+};
+const store = {};
+globalThis.localStorage = {
+  getItem(key) {
+    return Object.prototype.hasOwnProperty.call(store, key) ? store[key] : null;
+  },
+  setItem(key, value) { store[key] = value; },
+  removeItem(key) { delete store[key]; },
+};
 let clickHandler = null;
 globalThis.document = {
+  documentElement,
   addEventListener(type, fn) { if (type === "click") clickHandler = fn; },
   getElementById: (id) => (id === "primary-nav" ? nav : null),
+  querySelectorAll: (sel) => (sel === "[data-sidebar-toggle]" ? [rail] : []),
 };
 
 const fs = require("fs");
@@ -2103,6 +2130,10 @@ eval(fs.readFileSync(process.argv[2], "utf8"));
 
 const beforeExpanded = button.attrs["aria-expanded"];
 const beforeHidden = nav.hasAttribute("hidden");
+const loadRailExpanded = rail.attrs["aria-expanded"];
+const loadRailLabel = rail.attrs["aria-label"];
+const loadRailTitle = rail.attrs["title"];
+const loadStored = globalThis.localStorage.getItem("bridge.nav");
 
 clickHandler({ target: button });
 const afterFirstClickExpanded = button.attrs["aria-expanded"];
@@ -2112,43 +2143,111 @@ clickHandler({ target: button });
 const afterSecondClickExpanded = button.attrs["aria-expanded"];
 const afterSecondClickHidden = nav.hasAttribute("hidden");
 
+clickHandler({ target: rail });
+const railNav1 = documentElement.getAttribute("data-nav");
+const railExpanded1 = rail.attrs["aria-expanded"];
+const railLabel1 = rail.attrs["aria-label"];
+const railStored1 = globalThis.localStorage.getItem("bridge.nav");
+const railNavHidden1 = nav.hasAttribute("hidden");
+
+clickHandler({ target: rail });
+const railNav2 = documentElement.getAttribute("data-nav");
+const railExpanded2 = rail.attrs["aria-expanded"];
+const railLabel2 = rail.attrs["aria-label"];
+const railStored2 = globalThis.localStorage.getItem("bridge.nav");
+
 console.log(JSON.stringify({
   beforeExpanded, beforeHidden,
+  loadRailExpanded, loadRailLabel, loadRailTitle, loadStored,
   afterFirstClickExpanded, afterFirstClickHidden,
   afterSecondClickExpanded, afterSecondClickHidden,
+  railNav1, railExpanded1, railLabel1, railStored1, railNavHidden1,
+  railNav2, railExpanded2, railLabel2, railStored2,
 }));
 """
 
 
-@pytest.mark.skipif(_node() is None, reason="node is not installed")
-def test_shell_js_does_nothing_on_load(tmp_path):
-    """With no JS -- or before any click -- the nav is exactly as the server
-    rendered it: visible, `hidden` absent. Loading shell.js must not itself
-    collapse the nav; only a click may."""
-    harness = tmp_path / "shell_load_harness.js"
-    harness.write_text(SHELL_HARNESS)
+def _run_shell_harness(tmp_path, name, data_nav="{}"):
+    harness = tmp_path / name
+    harness.write_text(SHELL_HARNESS.replace("__DATA_NAV__", data_nav))
     proc = subprocess.run(
         [_node(), str(harness), str(SHELL_JS)], capture_output=True, text=True
     )
     assert proc.returncode == 0, proc.stderr
-    got = json.loads(proc.stdout)
+    return json.loads(proc.stdout)
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_shell_js_does_not_touch_the_nav_on_load(tmp_path):
+    """With no JS -- or before any click -- the nav is exactly as the server
+    rendered it: visible, `hidden` absent. Loading shell.js must not itself
+    collapse the nav; only a click may.
+
+    NARROWED (sidebar collapse): shell.js is no longer strictly inert on load.
+    It now syncs the rail toggle's `aria-expanded`/`aria-label`/`title` to the
+    persisted `data-nav`, because that state is a localStorage preference the
+    server cannot see -- without the sync, loading a page with the rail already
+    collapsed would announce "Collapse sidebar, expanded" to a screen reader
+    while the rail sat visibly collapsed. The invariant this test defends is
+    unchanged and is the one that matters: the load-time work touches only the
+    toggle's own attributes, never the nav's visibility, and never storage.
+    """
+    got = _run_shell_harness(tmp_path, "shell_load_harness.js")
     assert got["beforeHidden"] is False
     assert got["beforeExpanded"] == "true"
+    # Load must not write a preference the user never expressed.
+    assert got["loadStored"] is None
 
 
 @pytest.mark.skipif(_node() is None, reason="node is not installed")
 def test_shell_js_menu_toggle_collapses_and_restores_the_nav(tmp_path):
-    harness = tmp_path / "shell_toggle_harness.js"
-    harness.write_text(SHELL_HARNESS)
-    proc = subprocess.run(
-        [_node(), str(harness), str(SHELL_JS)], capture_output=True, text=True
-    )
-    assert proc.returncode == 0, proc.stderr
-    got = json.loads(proc.stdout)
+    got = _run_shell_harness(tmp_path, "shell_toggle_harness.js")
     assert got["afterFirstClickExpanded"] == "false"
     assert got["afterFirstClickHidden"] is True
     assert got["afterSecondClickExpanded"] == "true"
     assert got["afterSecondClickHidden"] is False
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_shell_js_rail_toggle_collapses_persists_and_renames_itself(tmp_path):
+    """The rail collapse must do three things per click, or it is broken in a
+    way no HTML inspection would reveal: flip `data-nav` (what CSS reads),
+    write `bridge.nav` (what survives the next full page load -- every nav
+    click in Bridge is one), and rename itself, since a glyph-only control's
+    `aria-label` IS its only name and a stale one lies about the state.
+
+    It must also NOT reach for the nav's `hidden` attribute: the collapsed rail
+    hides the nav in CSS, and setting `hidden` here too would leave the
+    `.menu-toggle` path fighting it at the next breakpoint change.
+    """
+    got = _run_shell_harness(tmp_path, "shell_rail_harness.js")
+
+    assert got["railNav1"] == "collapsed"
+    assert got["railStored1"] == "collapsed"
+    assert got["railExpanded1"] == "false"
+    assert got["railLabel1"] == "Expand sidebar"
+    assert got["railNavHidden1"] is False, "the rail path must not set nav[hidden]"
+
+    assert got["railNav2"] is None, "expanding must remove data-nav, not blank it"
+    assert got["railStored2"] == "expanded"
+    assert got["railExpanded2"] == "true"
+    assert got["railLabel2"] == "Collapse sidebar"
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_shell_js_reports_a_persisted_collapse_on_load(tmp_path):
+    """Loading with `data-nav="collapsed"` already applied (base.html's inline
+    head script does that pre-paint) must leave the toggle describing the state
+    it is actually in -- collapsed, and offering to expand."""
+    got = _run_shell_harness(
+        tmp_path, "shell_collapsed_harness.js", data_nav='{"data-nav": "collapsed"}',
+    )
+    assert got["loadRailExpanded"] == "false"
+    assert got["loadRailLabel"] == "Expand sidebar"
+    assert got["loadRailTitle"] == "Expand sidebar"
+    # Still no storage write, and still no opinion about the nav itself.
+    assert got["loadStored"] is None
+    assert got["beforeHidden"] is False
 
 
 # --- Task 5.2: settings.js — theme/density apply + the never-arms-launch seam
