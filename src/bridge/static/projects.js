@@ -108,7 +108,10 @@ document.addEventListener("click", async (event) => {
       // silently doing nothing. On /projects the card is present, so the row
       // moves into the hidden list as before.
       if (!card) {
-        window.location.assign("/projects");
+        // Go through the router when it is present so the shell survives; a hard
+        // assign would tear down the SSE connection and reload every script.
+        if (window.bridgeNavigate) window.bridgeNavigate("/projects");
+        else window.location.assign("/projects");
         return;
       }
       const list = document.querySelector("[data-hidden-list]");
@@ -300,13 +303,17 @@ document.addEventListener("input", (event) => {
   if (event.target.closest("[data-projects-search]")) applyProjectsFilter();
 });
 
-// Runs once at load so the count and empty state reflect the server's own
-// render (the "all" filter, no query) rather than whatever text the server
-// happened to put there before this file executed.
-applyProjectsFilter();
-
-// The template always renders List as the pressed button, but the inline head
-// script may already have set the grid attribute from the stored preference.
-// Re-deriving both buttons from the attribute is what keeps the control from
-// announcing "List, pressed" over a grid.
-applyProjectsView(currentProjectsView());
+// Both run on every page view, not once at load. The server renders the "all"
+// filter with no query, and projects.html always renders List as the pressed
+// button -- these two calls are what reconcile that with the stored preference
+// and the live search box. Run once, a swapped navigation keeps the server's
+// text and announces the wrong button.
+if (window.bridgePage) {
+  window.bridgePage.onEnter(() => {
+    applyProjectsFilter();
+    applyProjectsView(currentProjectsView());
+  });
+} else {
+  applyProjectsFilter();
+  applyProjectsView(currentProjectsView());
+}

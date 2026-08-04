@@ -101,7 +101,8 @@ def test_no_module_scope_dom_capture(name):
 
 
 @pytest.mark.parametrize("name", [
-    pytest.param(n, marks=pytestmark_known_red) if n not in ("settings.js", "schedule.js") else n
+    pytest.param(n, marks=pytestmark_known_red)
+    if n not in ("settings.js", "schedule.js", "projects.js") else n
     for n in ["settings.js", "schedule.js", "projects.js", "launch.js", "live.js"]
 ])
 def test_per_page_behaviour_is_registered_on_the_registry(name):

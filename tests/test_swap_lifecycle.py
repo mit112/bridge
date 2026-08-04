@@ -178,3 +178,39 @@ def test_leave_hooks_run_on_leave_and_not_on_enter(tmp_path):
     )
     assert got["afterEnter"] == []
     assert got["afterLeave"] == ["left"]
+
+
+def test_view_toggle_reannounces_after_a_swap(tmp_path):
+    """projects.html always renders List as pressed and relies on JS to correct it.
+
+    Run once at load, the correction never happens on a swapped navigation: the
+    layout is grid and both buttons announce "List, pressed" -- permanently.
+    """
+    got = run_js(
+        """
+        const { El } = require(MINIDOM);
+        document.documentElement.setAttribute("data-projects-view", "grid");
+        function freshButtons() {
+          document.body.children.length = 0;
+          const list = new El("button", { "data-projects-view-button": "list",
+                                          "aria-pressed": "true" });
+          const grid = new El("button", { "data-projects-view-button": "grid",
+                                          "aria-pressed": "false" });
+          document.body.append(list); document.body.append(grid);
+          return { list, grid };
+        }
+        const first = freshButtons();
+        window.bridgePage.enter();
+        const afterFirst = first.grid.getAttribute("aria-pressed");
+        const second = freshButtons();
+        window.bridgePage.enter();
+        report({ afterFirst, afterSwap: second.grid.getAttribute("aria-pressed") });
+        """.replace("MINIDOM", json.dumps(str(MINIDOM))),
+        ["shell.js", "projects.js"],
+        tmp_path,
+    )
+    assert got["afterFirst"] == "true"
+    assert got["afterSwap"] == "true", (
+        'after a swap the grid is shown but the toggle still announces '
+        '"List, pressed"'
+    )
