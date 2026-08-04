@@ -20,7 +20,13 @@
      server-rendered and every nav click is a full page load, so a sidebar
      collapse that lived only in memory would spring back open on every
      navigation. Applying it pre-paint is what makes the collapse feel like a
-     persistent layout choice instead of a per-page toggle. #}
+     persistent layout choice instead of a per-page toggle.
+
+     `bridge.projectsView` rides along for exactly the same reason. It only
+     means anything on /projects, but it has to be applied HERE rather than in
+     projects.js: that file loads at the end of the body, so a grid preference
+     applied there would paint the list layout first and then jump. One
+     attribute on <html> costs nothing on the pages that ignore it. #}
   <script>
   (function () {
     try {
@@ -33,6 +39,9 @@
       }
       if (localStorage.getItem('bridge.nav') === 'collapsed') {
         document.documentElement.setAttribute('data-nav', 'collapsed');
+      }
+      if (localStorage.getItem('bridge.projectsView') === 'grid') {
+        document.documentElement.setAttribute('data-projects-view', 'grid');
       }
     } catch (e) {}
   })();

@@ -198,6 +198,29 @@ def test_get_projects_returns_200_with_search_filters_and_rows(tmp_path):
     store2.close()
 
 
+def test_projects_index_offers_a_labelled_list_and_grid_toggle(tmp_path):
+    """Both layout buttons carry a visible WORD, not just a glyph -- an
+    unlabelled icon pair is the mystery-meat control the nav rail already
+    refuses to ship -- and the glyphs are `aria-hidden` so the accessible name
+    stays the word. Server-renders List pressed; projects.js corrects it from
+    the stored preference on load."""
+    cfg = _cfg(tmp_path, "views")
+    store = Store(cfg.db_path)
+    client = TestClient(create_app(store, cfg))
+    html = client.get("/projects").text
+
+    for value in ("list", "grid"):
+        assert f'data-projects-view-button="{value}"' in html
+    assert ">List<" in html or "> List<" in html
+    assert ">Grid<" in html or "> Grid<" in html
+    # Exactly one pressed on the server render, and it is List.
+    group = html[html.index('class="projects-views"'):html.index("projects-count")]
+    assert group.count('aria-pressed="true"') == 1
+    assert 'data-projects-view-button="list"' in group
+    assert group.count('aria-hidden="true"') == 2
+    store.close()
+
+
 def test_projects_index_shows_an_empty_state_with_no_projects(tmp_path):
     cfg = _cfg(tmp_path, "empty")
     store = Store(cfg.db_path)

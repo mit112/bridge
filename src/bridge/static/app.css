@@ -1573,15 +1573,34 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
 .project-row__session { flex-basis: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .project-row__action { justify-self: end; }
 
+/* The controls are their own band, not a strip of loose parts. They sit clear
+   of the masthead's double rule above and clear of the column labels below,
+   with a hairline closing them off -- without that separation the search
+   label, the chips, the result count and the column heads all ran together as
+   one undifferentiated block of small text. The generous top padding is what
+   lets the double rule read as the masthead's own bottom edge rather than as
+   this band's top edge. */
 .projects-controls {
   display: flex;
   flex-wrap: wrap;
   align-items: flex-end;
-  gap: var(--space-4);
-  margin-bottom: var(--space-4);
+  gap: var(--space-4) var(--space-6);
+  padding: var(--space-6) 0 var(--space-5);
+  margin-bottom: var(--space-6);
+  border-bottom: 1px solid var(--rule);
 }
-.projects-search { display: flex; flex-direction: column; gap: var(--space-1); }
-.projects-search label { font-size: var(--text-sm); color: var(--text-secondary); }
+.projects-search { display: flex; flex-direction: column; gap: var(--space-2); }
+/* The field label joins the same small-caps mono vocabulary as the column
+   heads, so it reads as a deliberate label in the ledger's voice rather than
+   as a stray sentence floating above an underline. */
+.projects-search label {
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  font-variant-caps: all-small-caps;
+  letter-spacing: .12em;
+}
 /* Bottom-ruled rather than boxed, matching the almanac's ruled-form feel --
    the underline is the only chrome, and `--field-line` clears WCAG 1.4.11's
    3:1 against both canvas and surface. `--text-body` (16px) is deliberate:
@@ -1606,9 +1625,13 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
    filter announces stays the sentence-case string the template authored. */
 .projects-filter {
   font-family: var(--font-mono);
-  font-size: var(--text-xs);
+  /* One step up from the 12px floor: small caps sit visually smaller than
+     their nominal size, so 12px small-caps read as ~9px and were the worst
+     offender in the "everything is too small" header. */
+  font-size: var(--text-sm);
   font-variant-caps: all-small-caps;
   letter-spacing: .06em;
+  padding: var(--space-2) var(--space-3);
 }
 /* A toggle group, not radio buttons -- `aria-pressed` is the state, exactly
    as `.btn--pin` already reads it; only one is ever "true" at a time. */
@@ -1621,11 +1644,13 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
 /* Mono so the count sits with the chips it is counting. Styling only -- the
    `role="status" aria-live="polite"` on the element is what makes a filter
    change audible and nothing here may disturb it. */
+/* Pushed to the band's trailing edge so it reads as the band's own readout
+   rather than as a sixth chip that happens not to be clickable. */
 .projects-count {
-  margin: 0 0 var(--space-2);
+  margin: 0 0 0 auto;
   color: var(--text-secondary);
   font-family: var(--font-mono);
-  font-size: var(--text-xs);
+  font-size: var(--text-sm);
   font-variant-numeric: tabular-nums;
 }
 
@@ -1670,6 +1695,14 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
    `ch` tracks are deliberately NOT given a font of their own -- they have to
    resolve against the same inherited body font the rows resolve theirs
    against, or the two would drift apart. Hence the type sits on the labels. */
+.projects-view { font-family: var(--font-mono); font-size: var(--text-sm); font-variant-caps: all-small-caps; letter-spacing: .06em; padding: var(--space-2) var(--space-3); }
+.projects-views { display: flex; gap: var(--space-2); }
+.projects-view[aria-pressed="true"] {
+  background: var(--btn-primary-bg);
+  color: var(--btn-primary-fg);
+  border-color: var(--btn-primary-bg);
+}
+
 .projects-index { border-top: 1px solid var(--rule); }
 .projects-index-head {
   display: grid;
@@ -1790,14 +1823,26 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
    Sharing it did cost something real, though. It ellipsised 11 of 36 notes,
    one down to 40px of the 368px it needed, which is the same
    truncation-without-an-affordance the path treatment above exists to avoid.
-   Full width is therefore free and strictly better. */
+   Full width is therefore free and strictly better.
+
+   The note also carries the row's INK. The two activity lines hold different
+   kinds of thing -- line one is machine metadata (branch, counts), line two is
+   a human sentence someone wrote -- and rendering both in muted secondary made
+   them read as one indistinguishable block. Splitting them on face AND colour
+   (mono/muted for data, sans/ink for prose) is the same division the rest of
+   the Almanac already uses, applied inside the row. Colour does the work here
+   because size cannot: 12px is the floor and 13px is one step off it. */
 .projects-index .project-row__session {
   flex: 1 0 100%;
   min-width: 0;
   white-space: normal;
   overflow: visible;
   text-overflow: clip;
+  color: var(--text);
 }
+/* Line one is data, so it stays mono and muted -- and gets a little more air
+   beneath it than the flex `gap` alone gave, so the two lines read as two. */
+.projects-index .project-row__activity { row-gap: var(--space-1); }
 /* The activity column is exactly two lines: status/branch/dirty, then the
    note on its own full-width basis above. It wraps only at that one seam --
    the note's `flex-basis: 100%` is the sole thing that can start a new line,
@@ -1892,6 +1937,70 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
   font-size: var(--text-xs);
   vertical-align: .12em;
 }
+/* --- Grid layout -----------------------------------------------------------
+   Same markup, same hooks, same macro -- only the boxes move. Every rule below
+   hangs off `[data-projects-view="grid"]` on <html> (set pre-paint by
+   base.html) AND `.projects-index`, so it can only ever reach this page's list
+   and never the Overview's, which shares the class names but not the scope.
+
+   The card is the `<li>`: the row inside it stops being a three-track grid and
+   stacks, and the trailing controls come back onto one line at its foot. Auto-
+   fill with a `minmax` floor rather than a fixed column count -- the number of
+   columns should follow the width available, not a breakpoint guess, and it
+   collapses to one column on a phone without needing a media query of its own. */
+[data-projects-view="grid"] .projects-index {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(20rem, 1fr));
+  gap: var(--space-4);
+  border-top: 0;
+}
+/* `display: contents` on the row is what makes the card foot possible without
+   touching the shared macro: it dissolves `.project-row` as a box so its three
+   children become direct grid items of the `<li>`, alongside the `<details>`
+   that is the row's sibling rather than its child. Only then can `Open
+   project` and `Actions` -- which live in different parents -- be placed on
+   one line. Safe on a plain `<div>`: it carries no role for the box to take
+   with it. The `1fr` middle row is the spacer that pins that foot to the
+   bottom, so cards in a row share a baseline instead of each floating its
+   controls wherever its text happens to end. */
+[data-projects-view="grid"] .projects-index .project-row { display: contents; }
+[data-projects-view="grid"] .projects-index .projects-list__item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto auto 1fr;
+  grid-template-areas: "identity identity" "activity activity" "open actions";
+  gap: var(--space-2) var(--space-4);
+  padding: var(--space-4);
+  /* The status edge becomes the card's top border, which is the same signal in
+     the shape the Overview's attention cards already use -- so a card reads the
+     same on both pages. `border-bottom` is dropped: a card's own edge is its
+     separator, and keeping the row rule as well would be a third channel. */
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-md);
+  border-bottom: 1px solid var(--rule);
+}
+[data-projects-view="grid"] .projects-index .project-row__identity { grid-area: identity; }
+[data-projects-view="grid"] .projects-index .project-row__activity { grid-area: activity; align-content: start; }
+[data-projects-view="grid"] .projects-index .project-row__action {
+  grid-area: open;
+  justify-self: start;
+  align-self: end;
+}
+[data-projects-view="grid"] .projects-index .projects-list__actions {
+  grid-area: actions;
+  justify-self: end;
+  align-self: end;
+  padding: 0;
+}
+/* Top border instead of the inset left edge, and no left padding to reserve
+   for it. Order matters: this must follow the base state rules it overrides. */
+[data-projects-view="grid"] .projects-index .projects-list__item { padding-left: var(--space-4); box-shadow: none; }
+[data-projects-view="grid"] .projects-index .projects-list__item[data-project-state="running"] { border-top: 3px solid var(--run); }
+[data-projects-view="grid"] .projects-index .projects-list__item[data-project-state="stale"] { border-top: 3px solid var(--review); }
+[data-projects-view="grid"] .projects-index .projects-list__item[data-project-state="queued"] { border-top: 3px solid var(--work); }
+/* The column-header band describes tracks that no longer exist. */
+[data-projects-view="grid"] .projects-index-head { display: none; }
+
 
 .hidden-projects-section { margin-top: var(--space-8); }
 .hidden-projects-section h2 { font: 700 1rem/1.3 var(--font-sans); margin: 0 0 var(--space-2); }

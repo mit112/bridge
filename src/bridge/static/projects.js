@@ -137,6 +137,23 @@ document.addEventListener("click", async (event) => {
     return;
   }
 
+  const viewButton = event.target.closest("[data-projects-view-button]");
+  if (viewButton) {
+    applyProjectsView(viewButton.getAttribute("data-projects-view-button"));
+    // Persisted because Bridge is server-rendered: every nav click is a full
+    // page load, so a layout choice held only in memory would revert the next
+    // time the user came back to this page. base.html's inline head script is
+    // what reads it back, pre-paint.
+    try {
+      localStorage.setItem("bridge.projectsView", currentProjectsView());
+    } catch (error) {
+      // A blocked or full localStorage must not cost the user the toggle
+      // itself -- the view still changed, it just will not outlive the page.
+      console.error("bridge: remembering the projects layout failed", error);
+    }
+    return;
+  }
+
   // The way out of a zero-result state. Resets both inputs at once because
   // either one alone can be what emptied the list, and leaving the other set
   // would land the user on a second empty page.
@@ -168,6 +185,30 @@ document.addEventListener("click", async (event) => {
     say("[data-hidden-status]", "⚠ Not restored");
   }
 });
+
+// --- List / grid layout -----------------------------------------------------
+//
+// The layout itself is pure CSS hanging off `data-projects-view` on <html>;
+// this only moves the attribute and keeps the two buttons' `aria-pressed` in
+// agreement with it. `aria-pressed` is the state -- read from the DOM rather
+// than mirrored in a variable that could disagree with it -- matching how the
+// filter group and `.btn--pin` already work. No rows are rebuilt and nothing
+// is fetched, so switching layout cannot race a pin/hide PATCH in flight.
+
+function currentProjectsView() {
+  return document.documentElement.getAttribute("data-projects-view") === "grid"
+    ? "grid" : "list";
+}
+
+function applyProjectsView(view) {
+  const grid = view === "grid";
+  if (grid) document.documentElement.setAttribute("data-projects-view", "grid");
+  else document.documentElement.removeAttribute("data-projects-view");
+  document.querySelectorAll("[data-projects-view-button]").forEach((btn) => {
+    btn.setAttribute("aria-pressed",
+                     String(btn.getAttribute("data-projects-view-button") === view));
+  });
+}
 
 // --- Search + filter (progressive enhancement) ------------------------------
 //
@@ -263,3 +304,9 @@ document.addEventListener("input", (event) => {
 // render (the "all" filter, no query) rather than whatever text the server
 // happened to put there before this file executed.
 applyProjectsFilter();
+
+// The template always renders List as the pressed button, but the inline head
+// script may already have set the grid attribute from the stored preference.
+// Re-deriving both buttons from the attribute is what keeps the control from
+// announcing "List, pressed" over a grid.
+applyProjectsView(currentProjectsView());

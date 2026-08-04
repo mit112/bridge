@@ -24,6 +24,19 @@
     <button type="button" class="btn projects-filter" data-projects-filter="hidden"
             aria-pressed="false">Hidden <span class="projects-filter__count">{{ counts.hidden }}</span></button>
   </div>
+  {# A toggle group, matching the filters' `aria-pressed` idiom rather than
+     inventing a second state convention on the same bar. Both buttons carry a
+     visible word as well as their glyph -- an unlabelled pair of icons here
+     would be exactly the mystery-meat control the nav rail already refuses to
+     ship. The glyphs are `aria-hidden` so the accessible name stays the word.
+     Server-rendered as List-pressed; projects.js corrects both buttons on load
+     from the persisted preference, the same way shell.js does for the rail. #}
+  <div class="projects-views" role="group" aria-label="Project layout">
+    <button type="button" class="btn projects-view" data-projects-view-button="list"
+            aria-pressed="true"><span aria-hidden="true">☰</span> List</button>
+    <button type="button" class="btn projects-view" data-projects-view-button="grid"
+            aria-pressed="false"><span aria-hidden="true">▦</span> Grid</button>
+  </div>
   <p class="projects-count" data-projects-count role="status" aria-live="polite">
     {{ rows | length }} of {{ counts.all }} project{{ "" if counts.all == 1 else "s" }} shown</p>
 </section>

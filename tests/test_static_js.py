@@ -1041,6 +1041,12 @@ globalThis.location = { assign(target) { assigned = target; } };
 globalThis.document = {
   addEventListener(type, fn) { if (type === "click") clickHandler = fn; },
   querySelector: (sel) => nodes[sel] ?? null,
+  // projects.js syncs the list/grid toggle from <html> at load. This harness
+  // is about pin/hide, but it evals the same file, so the element the real
+  // page always has must exist here too -- stubbing it is right, making the
+  // source tolerate a missing documentElement would only hide a real break.
+  documentElement: { getAttribute: () => null, setAttribute() {}, removeAttribute() {} },
+  querySelectorAll: () => [],
   createElement: (tag) => {
     const el = { tag, setAttribute() {}, append() {},
                  textContent: "", className: "", href: "", type: "" };
@@ -1242,6 +1248,31 @@ const rows = [rowAlpha, rowBeta, rowGamma];
 
 const hiddenRows = [{ hidden: false, textContent: "Zeta hidden-project" }];
 
+// The list/grid toggle. `data-projects-view` lives on <html> because
+// base.html's inline head script sets it pre-paint; the stub mirrors that so
+// the load-time sync has the same thing to read that a real page would.
+const htmlAttrs = {};
+const documentElement = {
+  getAttribute(n) { return htmlAttrs[n] ?? null; },
+  setAttribute(n, v) { htmlAttrs[n] = v; },
+  removeAttribute(n) { delete htmlAttrs[n]; },
+};
+globalThis.localStorage = {
+  store: {},
+  getItem(k) { return this.store[k] ?? null; },
+  setItem(k, v) { this.store[k] = String(v); },
+};
+function makeViewButton(name, pressed) {
+  return {
+    attrs: { "data-projects-view-button": name, "aria-pressed": pressed },
+    getAttribute(n) { return this.attrs[n] ?? null; },
+    setAttribute(n, v) { this.attrs[n] = v; },
+  };
+}
+const viewList = makeViewButton("list", "true");
+const viewGrid = makeViewButton("grid", "false");
+const viewButtons = [viewList, viewGrid];
+
 const searchInput = { value: "", focused: false, focus() { this.focused = true; } };
 const countNode = { textContent: "" };
 const emptyNode = { hidden: true };
@@ -1253,6 +1284,7 @@ const listNode = { hidden: false };
 const hiddenSection = { hidden: true };
 
 globalThis.document = {
+  documentElement,
   addEventListener(type, fn) {
     if (type === "click") clickHandler = fn;
     if (type === "input") inputHandler = fn;
@@ -1273,6 +1305,7 @@ globalThis.document = {
   querySelectorAll(sel) {
     if (sel === "[data-project-row-item]") return rows;
     if (sel === "[data-projects-filter]") return filterButtons;
+    if (sel === "[data-projects-view-button]") return viewButtons;
     if (sel === "[data-hidden-project]") return hiddenRows;
     return [];
   },
@@ -1297,6 +1330,11 @@ if (CLEAR_CLICK) {
   clickHandler({ target: { closest: (sel) => (sel === "[data-projects-clear]" ? clearNode : null) } });
 }
 
+if (VIEW_CLICK) {
+  const target = viewButtons.find((b) => b.attrs["data-projects-view-button"] === VIEW_CLICK);
+  clickHandler({ target: { closest: (sel) => (sel === "[data-projects-view-button]" ? target : null) } });
+}
+
 console.log(JSON.stringify({
   rowHidden: rows.map((r) => r.hidden),
   hiddenRowHidden: hiddenRows.map((r) => r.hidden),
@@ -1309,19 +1347,32 @@ console.log(JSON.stringify({
   pressed: filterButtons.map((b) => b.attrs["aria-pressed"]),
   searchValue: searchInput.value,
   searchFocused: searchInput.focused,
+  viewAttr: htmlAttrs["data-projects-view"] ?? null,
+  viewStored: localStorage.getItem("bridge.projectsView"),
+  viewPressed: viewButtons.map((b) => b.attrs["aria-pressed"]),
   fetchCalled,
 }));
 """
 
 
-def _run_projects_filter(tmp_path, query: str, filter_target, clear_click: bool = False):
+def _run_projects_filter(tmp_path, query: str, filter_target, clear_click: bool = False,
+                         view_click=None, stored_view=None):
     harness = tmp_path / "projects_filter_harness.js"
     target_literal = json.dumps(filter_target) if filter_target is not None else "null"
-    harness.write_text(
+    script = (
         PROJECTS_FILTER_HARNESS.replace("QUERY", json.dumps(query))
         .replace("FILTER_TARGET", target_literal)
         .replace("CLEAR_CLICK", "true" if clear_click else "false")
+        .replace("VIEW_CLICK", json.dumps(view_click) if view_click else "null")
     )
+    if stored_view is not None:
+        # Stands in for base.html's inline head script, which sets the
+        # attribute pre-paint from localStorage before projects.js ever runs.
+        script = script.replace(
+            "const fs = require",
+            f'htmlAttrs["data-projects-view"] = {json.dumps(stored_view)};\nconst fs = require',
+        )
+    harness.write_text(script)
     proc = subprocess.run(
         [_node(), str(harness), str(PROJECTS_JS)], capture_output=True, text=True
     )
@@ -1410,6 +1461,42 @@ def test_projects_clear_resets_both_the_query_and_the_filter_without_fetching(tm
     assert got["clearHidden"] is True
     assert got["searchFocused"] is True
     assert got["fetchCalled"] is False
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_projects_grid_toggle_sets_the_attribute_persists_it_and_never_fetches(tmp_path):
+    """The layout is pure CSS off `data-projects-view`; this only moves the
+    attribute, keeps both buttons' `aria-pressed` agreeing with it, and stores
+    the choice -- Bridge is server-rendered, so a layout held only in memory
+    would revert on the next nav click."""
+    got = _run_projects_filter(tmp_path, "", None, view_click="grid")
+    assert got["viewAttr"] == "grid"
+    assert got["viewStored"] == "grid"
+    assert got["viewPressed"] == ["false", "true"]
+    # Switching layout must not disturb the list itself or hit the network.
+    assert got["rowHidden"] == [False, False, False]
+    assert got["fetchCalled"] is False
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_projects_grid_toggle_back_to_list_removes_the_attribute(tmp_path):
+    """List is the absence of the attribute, not a second value -- so going
+    back has to REMOVE it, or the CSS would keep matching the grid rules."""
+    got = _run_projects_filter(tmp_path, "", None, view_click="list", stored_view="grid")
+    assert got["viewAttr"] is None
+    assert got["viewStored"] == "list"
+    assert got["viewPressed"] == ["true", "false"]
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_projects_view_buttons_resync_from_the_persisted_attribute_on_load(tmp_path):
+    """The template always renders List as pressed, but the inline head script
+    may already have set grid. Without the load-time resync the control would
+    announce "List, pressed" over a grid -- a glyph-and-word toggle whose state
+    lies is worse than no toggle."""
+    got = _run_projects_filter(tmp_path, "", None, stored_view="grid")
+    assert got["viewAttr"] == "grid"
+    assert got["viewPressed"] == ["false", "true"]
 
 
 @pytest.mark.skipif(_node() is None, reason="node is not installed")
