@@ -32,6 +32,17 @@
   {{ empty_state("No projects indexed yet. Run `uv run python -m bridge index`.") }}
 {% endif %}
 
+{# The ledger's column-header band. Presentational, never a table header: the
+   thing below it is a `<ul>`, so announcing "Project, Status and activity"
+   would promise a grid structure that is not there -- hence `aria-hidden`.
+   Labels are authored in sentence case and rendered as small caps by CSS
+   (`font-variant-caps`), never typed in capitals. #}
+<div class="projects-index-head" aria-hidden="true">
+  <span class="projects-index-head__row">
+    <span class="projects-index-head__label">Project</span>
+    <span class="projects-index-head__label">Status &amp; activity</span>
+  </span>
+</div>
 {# `projects-index` is this page's CSS scope, and it is load-bearing: the
    Overview's Recent list renders the SAME `projects-list`/`projects-list__item`
    class names off the same macro, so an unscoped `.projects-list` rule written

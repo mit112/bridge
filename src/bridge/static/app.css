@@ -1582,18 +1582,34 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
 }
 .projects-search { display: flex; flex-direction: column; gap: var(--space-1); }
 .projects-search label { font-size: var(--text-sm); color: var(--text-secondary); }
+/* Bottom-ruled rather than boxed, matching the almanac's ruled-form feel --
+   the underline is the only chrome, and `--field-line` clears WCAG 1.4.11's
+   3:1 against both canvas and surface. `--text-body` (16px) is deliberate:
+   iOS Safari zooms the page on focus for anything smaller. The global
+   `:focus-visible` outline still draws around the whole field, so losing the
+   box costs no focus affordance. */
 .projects-search input {
   font: inherit;
-  font-size: var(--text-sm);
+  font-size: var(--text-body);
   min-height: var(--control-min);
   min-width: 16rem;
-  padding: .3rem .6rem;
+  padding: var(--space-2) 0;
   color: var(--text);
-  background: var(--field-bg);
-  border: 1px solid var(--field-border);
-  border-radius: var(--radius-sm);
+  background: none;
+  border: 0;
+  border-bottom: 1px solid var(--field-border);
+  border-radius: 0;
 }
 .projects-filters { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+/* Chip labels join the ledger's small-caps mono vocabulary. Small caps come
+   from `font-variant-caps`, not `text-transform`, so the accessible name the
+   filter announces stays the sentence-case string the template authored. */
+.projects-filter {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-variant-caps: all-small-caps;
+  letter-spacing: .06em;
+}
 /* A toggle group, not radio buttons -- `aria-pressed` is the state, exactly
    as `.btn--pin` already reads it; only one is ever "true" at a time. */
 .projects-filter[aria-pressed="true"] {
@@ -1602,7 +1618,16 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
   border-color: var(--btn-primary-bg);
 }
 .projects-filter__count { font-variant-numeric: tabular-nums; margin-left: .3em; }
-.projects-count { margin: 0 0 var(--space-2); color: var(--text-secondary); font-size: var(--text-sm); }
+/* Mono so the count sits with the chips it is counting. Styling only -- the
+   `role="status" aria-live="polite"` on the element is what makes a filter
+   change audible and nothing here may disturb it. */
+.projects-count {
+  margin: 0 0 var(--space-2);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
 
 .projects-list { list-style: none; margin: 0; padding: 0; }
 .projects-list__item {
@@ -1633,6 +1658,38 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
    sheet -- so at equal specificity an unscoped rule here would beat them and
    silently restyle the Overview. The two selectors can never co-match, so
    source order never gets to arbitrate. */
+
+/* The column-header band. It is distinguished by weight, letter-spacing and
+   small caps -- never by a rule of its own; the single hairline under it is
+   the list's own top border, which closes the ledger at the top the way each
+   row's `border-bottom` closes it at every other line (the same border
+   `.overview-recent .projects-list` already carries). So the band adds no net
+   rule to the page.
+   The two grids below duplicate the row's tracks exactly, one level each, so
+   the labels land on the same axes as the name and the status word. The
+   `ch` tracks are deliberately NOT given a font of their own -- they have to
+   resolve against the same inherited body font the rows resolve theirs
+   against, or the two would drift apart. Hence the type sits on the labels. */
+.projects-index { border-top: 1px solid var(--rule); }
+.projects-index-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 11ch;
+  gap: var(--space-6);
+  padding: 0 0 var(--space-2) var(--space-3);
+}
+.projects-index-head__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr) 16ch;
+  gap: var(--space-4);
+}
+.projects-index-head__label {
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  font-variant-caps: all-small-caps;
+  letter-spacing: .12em;
+}
 
 /* One alignment axis for the trailing controls. Both tracks are `ch`-based,
    not pixel-based: at 200% zoom a 1440 viewport is 720 CSS px and these have

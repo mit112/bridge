@@ -251,6 +251,21 @@ def test_projects_index_action_disclosure_is_constant_width_but_still_named(tmp_
     store.close()
 
 
+def test_projects_index_column_header_band_is_presentational(tmp_path):
+    """The band labels the row tracks, but the thing below it is a `<ul>`, not
+    a grid -- announcing "Project, Status and activity" would promise a
+    structure that is not there. So it is `aria-hidden`, and its labels are
+    authored in sentence case (CSS renders the small caps) rather than typed
+    in capitals."""
+    cfg = _cfg(tmp_path, "header-band")
+    store = Store(cfg.db_path)
+    html = TestClient(create_app(store, cfg)).get("/projects").text
+    assert '<div class="projects-index-head" aria-hidden="true">' in html
+    assert ">Project<" in html and ">Status &amp; activity<" in html
+    assert "STATUS &amp; ACTIVITY" not in html
+    store.close()
+
+
 def test_projects_index_rows_carry_the_state_hook_the_status_edge_reads(tmp_path):
     """The status edge is pure CSS keyed on `[data-project-state]`, so these
     four literal strings are an interface, not an implementation detail --
