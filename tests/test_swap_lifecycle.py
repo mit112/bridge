@@ -95,33 +95,38 @@ def test_shell_js_fires_the_initial_enter_hook_once_on_first_load(tmp_path):
     """The registry only QUEUES hooks -- nothing else performs the FIRST page
     view. router.js (task 9) calls `enter()` only after a swap, so without a
     bootstrap here every onEnter hook registered by an ordinary page load
-    would sit in the queue forever, unfired. Every static file is `defer`, so
-    all of them register their hooks before `DOMContentLoaded` fires -- that
-    event is shell.js's own trigger for the first view. Dispatching it twice
-    proves the boot itself is idempotent, not merely that the listener was
-    added once."""
-    script = tmp_path / "case.js"
-    shell_path = STATIC / "shell.js"
-    script.write_text(
-        f'const {{ makeDocument, report }} = require({json.dumps(str(MINIDOM))});\n'
-        f'const doc = makeDocument(null);\n'
-        f'doc.readyState = "loading";\n'
-        f'require("vm").runInThisContext(\n'
-        f'  require("fs").readFileSync({json.dumps(str(shell_path))}, "utf8"),\n'
-        f'  {{ filename: {json.dumps(str(shell_path))} }}\n'
-        f');\n'
-        f'const seen = [];\n'
-        f'window.bridgePage.onEnter(() => seen.push("entered"));\n'
-        f'doc.dispatchEvent({{ type: "DOMContentLoaded" }});\n'
-        f'doc.dispatchEvent({{ type: "DOMContentLoaded" }});\n'
-        f'report({{ seen }});\n'
+    would sit in the queue forever, unfired.
+
+    The ORDER below is the whole point, not incidental: `run_js` loads
+    shell.js FIRST, exactly as `base.html` does (it is the first `<script
+    defer>`), and only after that does this test register an `onEnter` hook --
+    exactly the sequence every other static file follows on a real page. A
+    version of this test that registered the hook BEFORE shell.js ran could
+    not tell a correct implementation from a broken one: a broken shell.js
+    that eagerly calls `enter()` during its own evaluation (instead of
+    waiting for `DOMContentLoaded`) would find that hook already queued and
+    "coincidentally" pass.
+
+    `DOMContentLoaded` fires only once every deferred script (this one
+    included) has finished executing -- readiness is already "interactive"
+    the whole time a `<script defer>` runs, never "loading" (see minidom.js's
+    `makeDocument`) -- so shell.js must listen for it unconditionally rather
+    than branching on `readyState`, which is exactly the bug this test
+    guards against."""
+    got = run_js(
+        """
+        const seen = [];
+        window.bridgePage.onEnter(() => seen.push("entered"));
+        document.dispatchEvent({ type: "DOMContentLoaded" });
+        report({ seen });
+        """,
+        ["shell.js"],
+        tmp_path,
     )
-    proc = subprocess.run([_node(), str(script)], capture_output=True, text=True)
-    assert proc.returncode == 0, proc.stderr
-    got = json.loads(proc.stdout)
     assert got["seen"] == ["entered"], (
-        "shell.js must fire the first view's onEnter hooks exactly once off "
-        "DOMContentLoaded, even if that event were somehow dispatched again"
+        "shell.js must fire the first view's onEnter hooks off "
+        "DOMContentLoaded -- registered unconditionally, not gated on "
+        "readyState, which a deferred script never observes as \"loading\""
     )
 
 

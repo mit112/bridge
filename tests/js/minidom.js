@@ -134,6 +134,15 @@ function makeDocument(root) {
   if (root) body.append(root);
   doc.getElementById = (id) => doc.querySelector(`[id="${id}"]`);
   doc.createElement = (tag) => new El(tag);
+  // Every static file here is `<script defer>`, and per spec the parser sets
+  // readiness to "interactive" BEFORE deferred scripts run -- a `defer`
+  // script never observes "loading" at evaluation time. Defaulting to
+  // "interactive" keeps this harness from presenting a state real page loads
+  // never produce (a bug that cost real time: shell.js's first-view
+  // bootstrap once branched on `readyState === "loading"` and a test that
+  // fabricated exactly that value stayed green over the resulting
+  // regression).
+  doc.readyState = "interactive";
   globalThis.document = doc;
   globalThis.window = globalThis;
   globalThis.window.matchMedia = () => ({ matches: false, addEventListener() {} });
