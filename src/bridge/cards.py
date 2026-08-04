@@ -10,6 +10,7 @@ obvious one: a running session needs nothing from you, while a queued one is
 waiting on you.
 """
 
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 
@@ -54,6 +55,25 @@ def _probe_all(probe_fn, paths) -> list[GitState]:
         return [_probe_one(probe_fn, p) for p in paths]
     with ThreadPoolExecutor(max_workers=min(16, len(paths))) as pool:
         return list(pool.map(lambda p: _probe_one(probe_fn, p), paths))
+
+
+def _settle_cache(store: Store, project_id: int, git: GitState, now: int) -> GitState:
+    """Write a good probe through to the cache, or fall back to the last one.
+
+    Only `unavailable` is transient, and it deliberately does not write:
+    caching it would overwrite the good state this fallback exists to return,
+    so the first timeout would break the feature permanently. `not_a_repo`
+    neither reads nor writes and falls through untouched, so a deleted repo
+    reports honestly.
+    """
+    if git.status == "ok":
+        store.put_git_cache(project_id, git, now)
+    elif git.status == "unavailable":
+        cached = store.get_git_cache(project_id)
+        if cached is not None:
+            state, probed_at = cached
+            return replace(state, cached_at=probed_at)
+    return git
 
 
 RANK_HANDOFF = -1
@@ -141,6 +161,130 @@ class LivenessDebouncer:
         return session
 
 
+class GitProbeCache:
+    """Serve the last known git state now; refresh it behind the request.
+
+    `_probe_all` made the per-request probe fast, not absent: `/` and
+    `/projects` still spend ~350ms of their TTFB shelling out to git for every
+    project before a byte is written. Expensive I/O inside the request handler
+    is the shape being removed here, not the number of threads doing it.
+
+    Three windows, off each project's `git_cache` row:
+
+      * age <= `fresh_s`         serve the row, probe nothing at all
+      * `fresh_s` .. `max_age_s` serve the row IMMEDIATELY and refresh behind
+                                 the response, so the next look is current
+      * older, or no row at all  block on a probe; there is nothing honest yet
+
+    `fresh_s=10` is sized to a burst of navigation. Moving between `/`,
+    `/projects` and a project page is 1-5s of wall clock and git facts do not
+    change in that time, so a burst of clicks costs exactly one probe. It stays
+    just inside `RefreshCoordinator.interval_s` (15s), the cadence at which the
+    panel's own data turns over: a freshness window wider than that would serve
+    states the rest of the page has already moved past.
+
+    `max_age_s=300` is where serving stops beating being right. Five minutes is
+    long enough to change branch and commit, so a row that old is likelier a
+    lie than a saving, and paying `_probe_all`'s 0.38s once is better than
+    rendering the wrong branch. Reaching the ceiling means nobody has opened the
+    panel in five minutes, so the cost lands on the first look after a long gap
+    and every look after that one is instant.
+
+    A stale hit is deliberately NOT marked `cached_at`. That field means "the
+    probe failed and this is a fossil" -- the templates render it instead of the
+    live state, as "Indexed 4 minutes ago" -- and a within-window revalidating
+    hit is a different claim. Only `_settle_cache`'s `unavailable` fallback
+    still sets it.
+
+    Writing from the refresh thread is safe because `Store` guards every
+    statement with an `RLock` over a `check_same_thread=False` connection: the
+    refresh serialises against the request rather than racing it.
+    """
+
+    def __init__(self, store: Store, fresh_s: int = 10, max_age_s: int = 300,
+                 executor=None):
+        self._store = store
+        self._fresh_s = fresh_s
+        self._max_age_s = max_age_s
+        # Four workers, not `_probe_all`'s sixteen: a refresh is off the
+        # critical path, so it may take as long as it likes, and a narrow pool
+        # is what stops a background sweep from competing for disk with the
+        # blocking probes of whatever request is in flight. Injectable so a
+        # test can run the refresh inline instead of waiting on a thread.
+        self._executor = executor or ThreadPoolExecutor(
+            max_workers=4, thread_name_prefix="git-refresh"
+        )
+        self._lock = threading.Lock()
+        self._refreshing: set[int] = set()
+
+    def states(
+        self, probe_fn, rows: list[tuple[int, str]], now: int
+    ) -> list[GitState]:
+        """One `GitState` per row, in the order the rows were given."""
+        out: list[GitState] = [None] * len(rows)        # type: ignore[list-item]
+        blocking: list[int] = []
+        for i, (project_id, path) in enumerate(rows):
+            cached = self._store.get_git_cache(project_id)
+            if cached is None:
+                blocking.append(i)
+                continue
+            state, probed_at = cached
+            age = now - probed_at
+            if age > self._max_age_s:
+                blocking.append(i)
+                continue
+            # Filled in BEFORE the refresh is scheduled, so even an executor
+            # that runs its work inline cannot make this call return the
+            # refreshed value -- the whole promise here is that the response
+            # does not wait.
+            out[i] = state
+            if age > self._fresh_s:
+                self._schedule(probe_fn, project_id, path)
+        if blocking:
+            # Still one `_probe_all`: the projects that do have to be probed are
+            # probed together rather than one after another.
+            probed = _probe_all(probe_fn, [rows[i][1] for i in blocking])
+            for i, git in zip(blocking, probed):
+                out[i] = _settle_cache(self._store, rows[i][0], git, now)
+        return out
+
+    def _schedule(self, probe_fn, project_id: int, path: str) -> None:
+        """At most one outstanding refresh per project.
+
+        Three quick navigations inside the stale window are three chances to
+        schedule the same probe; without this claim the cache would spend MORE
+        subprocesses than the uncached build it replaces.
+        """
+        with self._lock:
+            if project_id in self._refreshing:
+                return
+            self._refreshing.add(project_id)
+        # Submitted outside the lock: an injected inline executor runs the
+        # refresh right here, and the refresh takes this same lock to release
+        # the claim.
+        self._executor.submit(self._refresh, probe_fn, project_id, path)
+
+    def _refresh(self, probe_fn, project_id: int, path: str) -> None:
+        try:
+            git = _probe_one(probe_fn, path)
+            # `_probe_one` turns a raising probe into `unavailable`, and only
+            # "ok" is ever written, so a refresh that fails leaves the good
+            # state it was trying to replace exactly where it was. Nothing
+            # reports the failure: the only consequence is that the next look
+            # is stale too, and it will schedule another one.
+            if git.status == "ok":
+                # `now_epoch()` and not the request's `now`: by the time a
+                # refresh lands, the request that scheduled it may be seconds
+                # gone, and dating the row from then would shorten its own
+                # freshness window.
+                self._store.put_git_cache(project_id, git, now_epoch())
+        finally:
+            # Released even if the write itself raised, or one bad call would
+            # wedge this project's refreshes for the life of the process.
+            with self._lock:
+                self._refreshing.discard(project_id)
+
+
 def spark_points(values: list[int], width: int = 72, height: int = 20) -> str:
     """SVG polyline points for a token-burn sparkline.
 
@@ -179,7 +323,7 @@ def model_options(
 
 def build_cards(
     store: Store, cfg: Config, probe_fn=None, agents_fn=None, debouncer=None,
-    hook_state=None,
+    hook_state=None, git_cache=None,
 ) -> list[Card]:
     # Late-bound default: looked up at call time (not at def time) so tests
     # can monkeypatch `gitprobe.probe` and have callers that omit `probe_fn`
@@ -224,21 +368,20 @@ def build_cards(
         live_state, store.alias_map(), [row["path"] for row in project_rows]
     )
 
-    probed = _probe_all(probe_fn, [row["path"] for row in project_rows])
+    # A `git_cache` is the caller's collaborator, like `debouncer`: with one, it
+    # owns the read/write/fallback per project (its blocking probes go through
+    # `_settle_cache` itself), so this build must not settle the results again.
+    # With none, behaviour is exactly what it was before the cache existed.
+    if git_cache is None:
+        probed = _probe_all(probe_fn, [row["path"] for row in project_rows])
+    else:
+        probed = git_cache.states(
+            probe_fn, [(row["id"], row["path"]) for row in project_rows], now
+        )
 
     for row, git in zip(project_rows, probed):
-        if git.status == "ok":
-            store.put_git_cache(row["id"], git, now)
-        elif git.status == "unavailable":
-            # Only `unavailable` is transient, and it deliberately does not
-            # write: caching it would overwrite the good state this fallback
-            # exists to return, so the first timeout would break the feature
-            # permanently. `not_a_repo` neither reads nor writes and falls
-            # through untouched, so a deleted repo reports honestly.
-            cached = store.get_git_cache(row["id"])
-            if cached is not None:
-                git, probed_at = cached
-                git = replace(git, cached_at=probed_at)
+        if git_cache is None:
+            git = _settle_cache(store, row["id"], git, now)
 
         handoff = _handoff(store, row["id"])
         cards.append(

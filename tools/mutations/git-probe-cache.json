@@ -1,0 +1,124 @@
+[
+  {
+    "name": "never schedule the refresh, so a stale row is served forever and nothing revalidates",
+    "file": "src/bridge/cards.py",
+    "old": "                self._schedule(probe_fn, project_id, path)",
+    "new": "                pass",
+    "tests": [
+      "tests/test_gitprobe_cache.py::test_a_stale_entry_returns_the_old_state_and_refreshes_behind_it"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "ignore fresh_s, so every hit schedules a refresh and a burst of navigation costs one probe per page after all",
+    "file": "src/bridge/cards.py",
+    "old": "            if age > self._fresh_s:",
+    "new": "            if True:",
+    "tests": [
+      "tests/test_gitprobe_cache.py::test_a_fresh_entry_is_served_without_probing_at_all"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "ignore max_age_s, so a row from an hour ago is served as if it were minutes old",
+    "file": "src/bridge/cards.py",
+    "old": "            if age > self._max_age_s:",
+    "new": "            if False:",
+    "tests": [
+      "tests/test_gitprobe_cache.py::test_an_entry_past_max_age_blocks_for_a_fresh_probe"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "wait on the refresh, so the response pays for the probe it was scheduled to avoid",
+    "file": "src/bridge/cards.py",
+    "old": "            out[i] = state\n            if age > self._fresh_s:\n                self._schedule(probe_fn, project_id, path)",
+    "new": "            if age > self._fresh_s:\n                self._schedule(probe_fn, project_id, path)\n            out[i] = self._store.get_git_cache(project_id)[0]",
+    "tests": [
+      "tests/test_gitprobe_cache.py::test_a_stale_entry_returns_the_old_state_and_refreshes_behind_it"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "stamp cached_at on a within-window hit, so a served state renders as a failed probe's fossil",
+    "file": "src/bridge/cards.py",
+    "old": "            out[i] = state\n            if age > self._fresh_s:",
+    "new": "            out[i] = replace(state, cached_at=probed_at)\n            if age > self._fresh_s:",
+    "tests": [
+      "tests/test_gitprobe_cache.py::test_a_stale_entry_returns_the_old_state_and_refreshes_behind_it",
+      "tests/test_gitprobe_cache.py::test_a_fresh_entry_is_served_without_probing_at_all"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "fill the blocking results by position in the probe batch rather than by row, so one project shows another's branch",
+    "file": "src/bridge/cards.py",
+    "old": "            for i, git in zip(blocking, probed):",
+    "new": "            for i, git in enumerate(probed):",
+    "tests": [
+      "tests/test_gitprobe_cache.py::test_states_come_back_aligned_to_the_rows_it_was_given"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "drop the in-flight dedupe, so three quick navigations spawn three probes of the same project",
+    "file": "src/bridge/cards.py",
+    "old": "            if project_id in self._refreshing:\n                return",
+    "new": "            if False:\n                return",
+    "tests": [
+      "tests/test_gitprobe_cache.py::test_a_second_stale_call_does_not_schedule_a_second_refresh"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "never release the claim, so each project refreshes exactly once for the life of the process",
+    "file": "src/bridge/cards.py",
+    "old": "                self._refreshing.discard(project_id)",
+    "new": "                pass",
+    "tests": [
+      "tests/test_gitprobe_cache.py::test_a_finished_refresh_releases_its_claim"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "write whatever the refresh came back with, so one timeout destroys the good state the fallback exists to return",
+    "file": "src/bridge/cards.py",
+    "old": "            if git.status == \"ok\":",
+    "new": "            if True:",
+    "tests": [
+      "tests/test_gitprobe_cache.py::test_a_refresh_whose_probe_raises_leaves_the_good_state_intact",
+      "tests/test_gitprobe_cache.py::test_a_refresh_never_writes_a_non_ok_state_over_a_good_one"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "wire the default executor to nothing, so every test that injects one stays green while the app never refreshes",
+    "file": "src/bridge/cards.py",
+    "old": "        self._executor = executor or ThreadPoolExecutor(\n            max_workers=4, thread_name_prefix=\"git-refresh\"\n        )",
+    "new": "        self._executor = executor or type(\"Nothing\", (), {\"submit\": lambda *a: None})()",
+    "tests": [
+      "tests/test_gitprobe_cache.py::test_the_default_executor_really_refreshes_in_the_background"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "probe every project anyway when a cache was passed, so the collaborator is accepted and ignored",
+    "file": "src/bridge/cards.py",
+    "old": "        probed = git_cache.states(\n            probe_fn, [(row[\"id\"], row[\"path\"]) for row in project_rows], now\n        )",
+    "new": "        probed = _probe_all(probe_fn, [row[\"path\"] for row in project_rows])",
+    "tests": [
+      "tests/test_gitprobe_cache.py::test_build_cards_with_a_cache_serves_a_fresh_row_without_probing"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "settle the cache's own results a second time, so a served stale row is re-dated as fresh and never updates again",
+    "file": "src/bridge/cards.py",
+    "old": "        if git_cache is None:\n            git = _settle_cache(store, row[\"id\"], git, now)",
+    "new": "        git = _settle_cache(store, row[\"id\"], git, now)",
+    "tests": [
+      "tests/test_gitprobe_cache.py::test_build_cards_with_a_cache_does_not_re_date_the_row_it_served"
+    ],
+    "expect_count": 1
+  }
+]

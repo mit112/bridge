@@ -2,8 +2,8 @@
   {
     "name": "delete the fallback branch, so a card whose git state is known still says \"git unavailable\"",
     "file": "src/bridge/cards.py",
-    "old": "        elif git.status == \"unavailable\":",
-    "new": "        elif False:",
+    "old": "    elif git.status == \"unavailable\":",
+    "new": "    elif False:",
     "tests": [
       "tests/test_cards.py::test_a_timed_out_probe_shows_the_last_good_state_with_its_age"
     ],
@@ -12,8 +12,8 @@
   {
     "name": "cache unconditionally, so the first timeout overwrites the good state and the fallback can never work again (the subtle one)",
     "file": "src/bridge/cards.py",
-    "old": "        if git.status == \"ok\":\n            store.put_git_cache(row[\"id\"], git, now)",
-    "new": "        store.put_git_cache(row[\"id\"], git, now)\n        if False:\n            pass",
+    "old": "    if git.status == \"ok\":\n        store.put_git_cache(project_id, git, now)",
+    "new": "    store.put_git_cache(project_id, git, now)\n    if False:\n        pass",
     "tests": [
       "tests/test_cards.py::test_an_unavailable_probe_never_overwrites_the_cache",
       "tests/test_cards.py::test_not_a_repo_does_not_overwrite_a_good_cached_state"
@@ -23,8 +23,8 @@
   {
     "name": "treat not_a_repo as transient too, so a deleted repo shows a fossil branch forever",
     "file": "src/bridge/cards.py",
-    "old": "        elif git.status == \"unavailable\":",
-    "new": "        elif git.status in (\"unavailable\", \"not_a_repo\"):",
+    "old": "    elif git.status == \"unavailable\":",
+    "new": "    elif git.status in (\"unavailable\", \"not_a_repo\"):",
     "tests": [
       "tests/test_cards.py::test_not_a_repo_is_reported_not_papered_over"
     ],
@@ -33,8 +33,8 @@
   {
     "name": "stamp cached_at on a live state, so a fresh probe renders as a fossil",
     "file": "src/bridge/cards.py",
-    "old": "        if git.status == \"ok\":\n            store.put_git_cache(row[\"id\"], git, now)",
-    "new": "        if git.status == \"ok\":\n            store.put_git_cache(row[\"id\"], git, now)\n            git = replace(git, cached_at=now)",
+    "old": "    if git.status == \"ok\":\n        store.put_git_cache(project_id, git, now)",
+    "new": "    if git.status == \"ok\":\n        store.put_git_cache(project_id, git, now)\n        git = replace(git, cached_at=now)",
     "tests": [
       "tests/test_cards.py::test_a_live_ok_state_is_never_labelled_as_cached"
     ],
@@ -43,8 +43,8 @@
   {
     "name": "drop the cached_at stamp on a cache hit, so the age never renders and a fossil is indistinguishable from a live probe",
     "file": "src/bridge/cards.py",
-    "old": "                git = replace(git, cached_at=probed_at)",
-    "new": "                pass",
+    "old": "            return replace(state, cached_at=probed_at)",
+    "new": "            return state",
     "tests": [
       "tests/test_cards.py::test_a_timed_out_probe_shows_the_last_good_state_with_its_age"
     ],
