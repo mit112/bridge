@@ -11,19 +11,26 @@
     </header>
 
     <section class="continuation-panel" aria-label="Next session">
-      <p class="empty" data-handoff-empty="{{ card.project_id }}" {% if card.handoff %}hidden{% endif %}>
+      <p class="empty" data-handoff-empty="{{ card.project_id }}" {% if card.handoffs %}hidden{% endif %}>
         No session in progress for this project.
       </p>
 
-      {{ handoff_block(card, totals, collapse_prompt=True, show_span_line=True) }}
+      {% for h in card.handoffs %}
+      {{ handoff_block(card, h, totals, collapse_prompt=True, show_span_line=(loop.first)) }}
 
       <div class="continuation-actions">
-        {{ launch_band(card, primary=True, collapse_options=(card.handoff is not none)) }}
-        {{ handoff_actions(card, totals, show_dismiss=True) }}
+        {{ launch_band(card, h, primary=(loop.first), collapse_options=True) }}
+        {{ handoff_actions(card, h, totals, show_dismiss=True) }}
       </div>
+      {% endfor %}
     </section>
 
-    {{ compose_box(card, totals, collapsed=(card.handoff is not none)) }}
+    {{ compose_box(card, totals, collapsed=(card.handoffs | length > 0)) }}
+    {% if not card.handoffs %}
+    <div class="continuation-actions">
+      {{ launch_band(card, none, primary=True) }}
+    </div>
+    {% endif %}
   </div>
 
   <aside class="workspace-rail" aria-label="Project context">

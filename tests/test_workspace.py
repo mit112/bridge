@@ -609,6 +609,32 @@ def test_queued_handoff_shows_its_age_beside_the_summary(tmp_path):
     store.close()
 
 
+def test_two_handoffs_render_two_blocks(tmp_path):
+    """`Card.handoffs` (Task 2) can carry more than one queued handoff -- the
+    Current tab must stack a fireable block per handoff, not just the newest
+    (`card.handoff`, the compat property)."""
+    cfg = load({"db_path": tmp_path / "two.db", "spool_dir": tmp_path / "spool"})
+    store = Store(cfg.db_path)
+    pid = store.upsert_project("/p/two-handoffs", "two-handoffs-project")
+    store.create_handoff(Handoff(
+        id="h1", project_path="/p/two-handoffs", next_prompt="plan",
+        summary="Planned", created_at=1,
+    ), pid)
+    store.create_handoff(Handoff(
+        id="h2", project_path="/p/two-handoffs", next_prompt="ui",
+        summary="UI work", created_at=2,
+    ), pid)
+
+    c = TestClient(create_app(store, cfg))
+    html = c.get(f"/project/{pid}?tab=current").text
+
+    assert 'data-handoff-section="h1"' in html
+    assert 'data-handoff-section="h2"' in html
+    assert 'data-launch-handoff="h1"' in html
+    assert 'data-launch-handoff="h2"' in html
+    store.close()
+
+
 def test_current_tab_textareas_are_balanced(tmp_path):
     c, store, pid = _client_with_handoff(tmp_path)
     html = c.get(f"/project/{pid}?tab=current").text

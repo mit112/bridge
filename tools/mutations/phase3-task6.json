@@ -43,8 +43,8 @@
   {
     "name": "mark the textarea safe, so </textarea><script> escapes the field",
     "file": "src/bridge/templates/_launch.html",
-    "old": "{{ card.handoff.next_prompt }}</textarea>",
-    "new": "{{ card.handoff.next_prompt | safe }}</textarea>",
+    "old": "{{ handoff.next_prompt }}</textarea>",
+    "new": "{{ handoff.next_prompt | safe }}</textarea>",
     "tests": [
       "tests/test_api.py::test_the_editable_prompt_is_html_escaped_in_the_textarea"
     ],
