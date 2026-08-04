@@ -209,15 +209,25 @@ def test_projects_index_offers_a_labelled_list_and_grid_toggle(tmp_path):
     client = TestClient(create_app(store, cfg))
     html = client.get("/projects").text
 
-    for value in ("list", "grid"):
-        assert f'data-projects-view-button="{value}"' in html
-    assert ">List<" in html or "> List<" in html
-    assert ">Grid<" in html or "> Grid<" in html
+    for value, word in (("list", "List"), ("grid", "Grid")):
+        match = re.search(
+            rf'<button[^>]*data-projects-view-button="{value}".*?</button>', html, re.S
+        )
+        assert match, f"no {value} layout button"
+        button = match.group(0)
+        # Strip the icon, then all remaining tags: what is left is what a
+        # screen reader gets. Asserting on the stripped text rather than on a
+        # literal `>List<` keeps this from breaking every time the icon markup
+        # is reformatted -- which is exactly how it broke once already.
+        without_icon = re.sub(r"<svg.*?</svg>", "", button, flags=re.S)
+        assert re.sub(r"<[^>]+>", "", without_icon).strip() == word
+        # The icon must not reach the accessible name, or it would read twice.
+        assert 'aria-hidden="true"' in button
+
     # Exactly one pressed on the server render, and it is List.
     group = html[html.index('class="projects-views"'):html.index("projects-count")]
     assert group.count('aria-pressed="true"') == 1
     assert 'data-projects-view-button="list"' in group
-    assert group.count('aria-hidden="true"') == 2
     store.close()
 
 
