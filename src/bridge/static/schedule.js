@@ -185,7 +185,12 @@ function settleRow(id, status, error) {
   if (summary) summary.focus();
 }
 
-document.addEventListener("DOMContentLoaded", () => paintScheduledTimes());
+// Repaint on every page view, not once per document. Bridge swaps only the
+// content region, so binding this to a page-load event would fire exactly
+// once for the whole session -- every scheduled cell rendered by a later
+// swap would keep the server's raw UTC string. shell.js always loads first,
+// matching settings.js's own guard for the same registry.
+if (window.bridgePage) window.bridgePage.onEnter(() => paintScheduledTimes());
 
 document.addEventListener("click", async (event) => {
   // --- Reveal the datetime + mode form beside a compose box or a handoff ---

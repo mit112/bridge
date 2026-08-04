@@ -36,10 +36,7 @@ def source(name: str) -> str:
     return re.sub(r"^\s*//.*$", "", text, flags=re.M)
 
 
-@pytest.mark.parametrize("name", [
-    pytest.param(n, marks=pytestmark_known_red) if n == "schedule.js" else n
-    for n in PAGE_SCRIPTS
-])
+@pytest.mark.parametrize("name", PAGE_SCRIPTS)
 def test_no_domcontentloaded_outside_the_router(name):
     """DOMContentLoaded fires once per DOCUMENT, and there is now one document.
 
@@ -104,7 +101,7 @@ def test_no_module_scope_dom_capture(name):
 
 
 @pytest.mark.parametrize("name", [
-    pytest.param(n, marks=pytestmark_known_red) if n != "settings.js" else n
+    pytest.param(n, marks=pytestmark_known_red) if n not in ("settings.js", "schedule.js") else n
     for n in ["settings.js", "schedule.js", "projects.js", "launch.js", "live.js"]
 ])
 def test_per_page_behaviour_is_registered_on_the_registry(name):

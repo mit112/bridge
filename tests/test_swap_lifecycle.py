@@ -130,6 +130,39 @@ def test_shell_js_fires_the_initial_enter_hook_once_on_first_load(tmp_path):
     )
 
 
+def test_scheduled_times_are_repainted_on_every_page_view(tmp_path):
+    """schedule.js bound this to DOMContentLoaded, which fires once per document.
+
+    The server stores epoch seconds and only the browser knows the viewer's
+    timezone, so a cell that is never repainted shows a raw UTC string forever.
+    """
+    got = run_js(
+        """
+        const { El } = require(MINIDOM);
+        const cell = new El("span", { "data-scheduled-for": "1754300000" });
+        document.body.append(cell);
+        const beforeEnter = cell.textContent;
+        window.bridgePage.enter();
+        const afterFirst = cell.textContent;
+
+        // A second page view with a fresh cell -- what a swap actually produces.
+        const swapped = new El("span", { "data-scheduled-for": "1754300000" });
+        cell.remove();
+        document.body.append(swapped);
+        window.bridgePage.enter();
+        report({ beforeEnter, afterFirst, afterSwap: swapped.textContent });
+        """.replace("MINIDOM", json.dumps(str(MINIDOM))),
+        ["shell.js", "schedule.js"],
+        tmp_path,
+    )
+    assert got["beforeEnter"] == ""
+    assert got["afterFirst"] != ""
+    assert got["afterSwap"] != "", (
+        "a scheduled time rendered after a swap was never converted to local "
+        "time -- the viewer sees the server's raw UTC value"
+    )
+
+
 def test_leave_hooks_run_on_leave_and_not_on_enter(tmp_path):
     got = run_js(
         """
