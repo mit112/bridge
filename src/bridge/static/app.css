@@ -306,35 +306,49 @@ body {
    column to animate one line of text. */
 .shell-status { view-transition-name: app-rail-status; }
 
-/* Sequence the swap instead of cross-fading it. MEASURED, by freezing the
-   transition at its midpoint and screenshotting it: the UA default runs the
-   outgoing and incoming snapshots at overlapping opacity for the full ~250ms,
-   so Overview's stat tiles and cards stayed legible THROUGH the Projects list
-   and both page titles were readable at once. Two structurally different
-   documents superimposed is what read as an abrupt change -- it was never a
-   flash, it was a smear.
+/* Make the swap QUICKER, but never author its opacity curves. This is the
+   whole fix for the flash, and the reason is arithmetic.
 
-   A cross-fade is the right animation only when the two states are variations
-   of one layout. These are different pages, so the old one leaves before the
-   new one arrives: out in 100ms, in from 80ms, ~220ms total. The 20ms overlap
-   is deliberate -- the outgoing snapshot is already near zero by then, and
-   leaving a real gap would show bare background, which is the flash this whole
-   block exists to avoid.
+   `mix-blend-mode: plus-lighter` on the two snapshots, paired with
+   `isolation: isolate` on their image-pair, is what lets Chrome's default
+   cross-fade hold FULL composite strength the whole way through: the outgoing
+   and incoming opacities are complementary and add, so the page is never
+   partially transparent. Both declarations are restated here rather than left
+   implicit, because an author `animation` shorthand on these pseudo-elements
+   displaces the UA rule that supplies them -- measured, `blend` read `normal`
+   on every group I had authored and `plus-lighter` on every group I had not.
 
-   Opacity only, no drift or scale. The Almanac direction is a broadsheet; a
-   printed page does not slide in. */
-@keyframes app-vt-out { to { opacity: 0; } }
-@keyframes app-vt-in { from { opacity: 0; } }
+   An earlier attempt here sequenced the fade by hand (out 1->0 over 100ms, in
+   0->1 from 80ms) to stop two documents being legible at once. Overlapping
+   TIMING is not the same as summing to 1, which is the mistake: at t=90ms the
+   composite was 0.1 + 0.07 = 0.17, so the page all but vanished to its own
+   background for over a tenth of a second. On the espresso theme that reads as
+   a dip. On cream it is a white FLASH -- which is exactly what Mit reported,
+   and which the sequencing had made worse than the default it replaced.
+
+   So only `animation-duration` is set. That leaves ONE knob, and it trades the
+   two failure modes against each other rather than trying to defeat both: long
+   enough and both documents are legible at once (the smear), short enough and
+   the cross-fade stops being perceptible at all. 90ms is picked toward the
+   short end deliberately, because a full-strength cross-fade can only ever
+   look like a ghost, never like a flash -- so the remaining risk is all on the
+   smear side. Raise it if the swap feels too curt; there is nothing else to
+   tune here. */
+::view-transition-image-pair(root),
+::view-transition-image-pair(app-masthead),
+::view-transition-image-pair(app-rail-status) { isolation: isolate; }
 ::view-transition-old(root),
-::view-transition-old(app-masthead),
-::view-transition-old(app-rail-status) {
-  animation: app-vt-out 100ms ease-out both;
-}
 ::view-transition-new(root),
+::view-transition-old(app-masthead),
 ::view-transition-new(app-masthead),
+::view-transition-old(app-rail-status),
 ::view-transition-new(app-rail-status) {
-  animation: app-vt-in 140ms 80ms ease-out both;
+  mix-blend-mode: plus-lighter;
+  animation-duration: 90ms;
 }
+::view-transition-group(root),
+::view-transition-group(app-masthead),
+::view-transition-group(app-rail-status) { animation-duration: 90ms; }
 a { color: var(--accent); text-underline-offset: .16em; }
 :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 
@@ -2240,9 +2254,10 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
   /* The collapse still happens, it just happens instantly -- the width change
      is the feedback, the slide is only continuity. */
   .shell { transition: none; }
-  /* The page swap still happens, it just cuts. Chrome skips the UA's own
-     default cross-fade under reduced motion, but it does NOT skip authored
-     keyframes, so the sequenced fade above has to be switched off by hand. */
+  /* The page swap still happens, it just cuts. Chrome skips its own default
+     cross-fade under reduced motion and the block above now only retimes that
+     default rather than replacing it, so this is belt-and-braces -- kept
+     explicit so a future authored keyframe cannot slip past the guard. */
   ::view-transition-old(root),
   ::view-transition-new(root),
   ::view-transition-old(app-masthead),
