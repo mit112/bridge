@@ -74,6 +74,7 @@ def build_workspace(
     live_state: AgentsState | None = None,
     probe_fn=None,
     agents_fn=None,
+    git_cache=None,
 ) -> WorkspaceModel | None:
     """Assemble the workspace for one project, or None for an unknown id.
 
@@ -84,6 +85,13 @@ def build_workspace(
     takes precedence over `agents_fn` (mirroring `DashboardBuilder`, where an
     injected `live_state` always wins): a caller that already polled liveness
     once passes it straight through instead of paying for a second probe.
+
+    `git_cache` is forwarded so this page reads the same window every other
+    route does. It composes with the stand-in rather than replacing it: the
+    stand-in still guarantees no live probe from here, so the cache serves what
+    it has and the refreshes this page schedules can only ever come back
+    `unavailable`, which writes nothing. `/` and `/projects`, which pass a real
+    `probe_fn`, are what actually keep the rows current.
     """
     row = store.get_project(project_id)
     if row is None:
@@ -103,6 +111,7 @@ def build_workspace(
         agents_fn=agents_fn,
         debouncer=None,
         hook_state=None,
+        git_cache=git_cache,
     )
     card = next((c for c in cards if c.project_id == project_id), None)
     if card is None:

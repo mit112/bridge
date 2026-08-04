@@ -25,6 +25,7 @@ class DashboardBuilder:
         hook_state=None,
         probe_fn=None,
         agents_fn=None,
+        git_cache=None,
         now_fn: Callable[[], int] = now_epoch,
     ) -> None:
         self.store = store
@@ -34,6 +35,11 @@ class DashboardBuilder:
         self.hook_state = hook_state
         self.probe_fn = probe_fn
         self.agents_fn = agents_fn
+        # `full_update` with no `cards` is the most frequent git sweep in the
+        # app: `/events` rebuilds one on every reindex generation, so every 15s
+        # for as long as a panel is open. Without a cache here the stream pays
+        # for a full probe of every project on that cadence.
+        self.git_cache = git_cache
         self.now_fn = now_fn
 
     def full_update(
@@ -54,6 +60,7 @@ class DashboardBuilder:
                 agents_fn=lambda: state,
                 debouncer=None,
                 hook_state=None,
+                git_cache=self.git_cache,
             )
         status = self.coordinator.status_snapshot()
         return self._envelope(

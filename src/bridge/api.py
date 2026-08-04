@@ -24,7 +24,13 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, field_validator, model_validator
 
 from bridge import agents, hooks, launcher, schedspool, spool
-from bridge.cards import FIVE_HOURS, LivenessDebouncer, build_cards, spark_points
+from bridge.cards import (
+    FIVE_HOURS,
+    GitProbeCache,
+    LivenessDebouncer,
+    build_cards,
+    spark_points,
+)
 from bridge.config import Config
 from bridge.dashboard import DashboardBuilder
 from bridge.models import AgentsState, Handoff, ScheduledRun
@@ -456,6 +462,12 @@ def create_app(
     # and the hysteresis would never fire.
     debouncer = LivenessDebouncer()
 
+    # One git probe cache, for the same reason: a freshness window and a set of
+    # in-flight refreshes are both cross-request state, and a per-request
+    # instance would be cold on every page load -- which is the situation it
+    # exists to end.
+    git_cache = GitProbeCache(store)
+
     # --- hooks --------------------------------------------------------------
     #
     # The receiving end of `Notification` / `SessionStart` / `SessionEnd`,
@@ -476,6 +488,7 @@ def create_app(
         debouncer=debouncer,
         hook_state=hook_state,
         agents_fn=lambda: agents.probe(),
+        git_cache=git_cache,
         now_fn=now_epoch,
     )
 
@@ -764,8 +777,9 @@ def create_app(
         now = now_epoch()
         probe = dashboard_builder._live_state(now)
         cards = build_cards(store, cfg, agents_fn=lambda: probe,
-                            debouncer=None, hook_state=None)
-        model = build_overview(store, cfg, live_state=probe, cards=cards, now=now)
+                            debouncer=None, hook_state=None, git_cache=git_cache)
+        model = build_overview(store, cfg, live_state=probe, cards=cards, now=now,
+                               git_cache=git_cache)
         return templates.TemplateResponse(
             request,
             "overview.html",
@@ -783,7 +797,7 @@ def create_app(
 
     @app.get("/projects", response_class=HTMLResponse)
     def projects_view(request: Request):
-        model = build_projects(store, cfg)
+        model = build_projects(store, cfg, git_cache=git_cache)
         return templates.TemplateResponse(
             request,
             "projects.html",
@@ -802,7 +816,8 @@ def create_app(
         # once per view" rule the dashboard route already follows.
         now = now_epoch()
         probe = dashboard_builder._live_state(now)
-        model = build_workspace(store, cfg, project_id, tab, live_state=probe)
+        model = build_workspace(store, cfg, project_id, tab, live_state=probe,
+                                git_cache=git_cache)
         if model is None:
             raise HTTPException(status_code=404, detail="unknown project")
         return templates.TemplateResponse(

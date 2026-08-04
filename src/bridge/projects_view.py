@@ -35,6 +35,7 @@ def build_projects(
     cards: list[Card] | None = None,
     probe_fn=None,
     agents_fn=None,
+    git_cache=None,
 ) -> ProjectsModel:
     """Assemble the Projects index.
 
@@ -43,7 +44,9 @@ def build_projects(
     -- the same contract `build_overview` honours. `probe_fn`/`agents_fn`
     exist only for test determinism, mirroring `build_cards` itself; when
     `cards`/`live_state` are omitted, the one probe this function performs is
-    threaded into `build_cards` rather than letting it probe again.
+    threaded into `build_cards` rather than letting it probe again. `git_cache`
+    is forwarded so the route's own stale-while-revalidate window covers that
+    probe -- it is what keeps `/projects` off a full git sweep per request.
     """
     now = now_epoch()
     if agents_fn is None:
@@ -54,7 +57,10 @@ def build_projects(
         except Exception:  # noqa: BLE001 - a broken sensor must not break Projects
             live_state = AgentsState(status="unavailable", sessions=[], source="none")
     if cards is None:
-        cards = build_cards(store, cfg, probe_fn=probe_fn, agents_fn=lambda: live_state)
+        cards = build_cards(
+            store, cfg, probe_fn=probe_fn, agents_fn=lambda: live_state,
+            git_cache=git_cache,
+        )
 
     rows = [project_summary(card, now) for card in cards]
 

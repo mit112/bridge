@@ -16,7 +16,10 @@ the default were wired to nothing at all.
 import threading
 
 import pytest
+from fastapi.testclient import TestClient
 
+from bridge import gitprobe
+from bridge.api import create_app
 from bridge.cards import GitProbeCache, build_cards
 from bridge.config import load
 from bridge.models import GitState
@@ -328,3 +331,55 @@ def test_build_cards_with_a_cache_does_not_re_date_the_row_it_served(store, tmp_
     )
 
     assert store.get_git_cache(pid) == (GitState(status="ok", branch="old"), stamped)
+
+
+def test_two_page_loads_inside_the_window_probe_git_once(tmp_path, monkeypatch):
+    """The wiring, through the app's own cache rather than an injected one.
+
+    Every test above builds its own instance, so all of them would stay green
+    with `create_app` wiring nothing. This is the one that fails if a route
+    stops passing `git_cache` -- and `/projects` is included because it reaches
+    `build_cards` down a different path than `/` does.
+    """
+    probe, calls = counting(GitState(status="ok", branch="main"))
+    monkeypatch.setattr(gitprobe, "probe", lambda path, timeout=2.0: probe(path))
+    cfg = load({"db_path": tmp_path / "r.db", "spool_dir": tmp_path / "spool"})
+    store = Store(cfg.db_path)
+    store.upsert_project("/p/route", "route")
+    client = TestClient(create_app(store, cfg))
+
+    assert client.get("/").status_code == 200
+    assert calls == ["/p/route"]                 # cold: one probe, then cached
+
+    assert client.get("/").status_code == 200
+    assert calls == ["/p/route"]
+    assert client.get("/projects").status_code == 200
+    assert calls == ["/p/route"]
+
+    store.close()
+
+
+def test_the_live_snapshot_does_not_re_probe_what_the_page_just_cached(
+    tmp_path, monkeypatch
+):
+    """`/events`' opening frame, and every frame it sends on a new reindex
+    generation, is a full `DashboardBuilder.full_update` with no cards -- so it
+    is the most frequent git sweep in the app, once every 15s for as long as a
+    panel stays open. It reads the same window the page does."""
+    probe, calls = counting(GitState(status="ok", branch="main"))
+    monkeypatch.setattr(gitprobe, "probe", lambda path, timeout=2.0: probe(path))
+    cfg = load({"db_path": tmp_path / "e.db", "spool_dir": tmp_path / "spool"})
+    store = Store(cfg.db_path)
+    store.upsert_project("/p/stream", "stream")
+    client = TestClient(create_app(store, cfg))
+
+    assert client.get("/").status_code == 200
+    assert calls == ["/p/stream"]
+
+    with client.stream("GET", "/events?max_ticks=1&interval=0") as response:
+        assert response.status_code == 200
+        "".join(response.iter_text())
+
+    assert calls == ["/p/stream"]
+
+    store.close()

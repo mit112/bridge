@@ -120,5 +120,45 @@
       "tests/test_gitprobe_cache.py::test_build_cards_with_a_cache_does_not_re_date_the_row_it_served"
     ],
     "expect_count": 1
+  },
+  {
+    "name": "drop the cache from the `/` route, so the overview re-probes every project on every load",
+    "file": "src/bridge/api.py",
+    "old": "                            debouncer=None, hook_state=None, git_cache=git_cache)",
+    "new": "                            debouncer=None, hook_state=None)",
+    "tests": [
+      "tests/test_gitprobe_cache.py::test_two_page_loads_inside_the_window_probe_git_once"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "drop the cache from the `/projects` route, so the index re-probes every project on every load",
+    "file": "src/bridge/api.py",
+    "old": "        model = build_projects(store, cfg, git_cache=git_cache)",
+    "new": "        model = build_projects(store, cfg)",
+    "tests": [
+      "tests/test_gitprobe_cache.py::test_two_page_loads_inside_the_window_probe_git_once"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "accept the cache in build_projects and never forward it, so the route wires a collaborator that goes nowhere",
+    "file": "src/bridge/projects_view.py",
+    "old": "            git_cache=git_cache,",
+    "new": "            git_cache=None,",
+    "tests": [
+      "tests/test_gitprobe_cache.py::test_two_page_loads_inside_the_window_probe_git_once"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "drop the cache from the live snapshot, so an open panel re-probes every project on every reindex generation",
+    "file": "src/bridge/dashboard.py",
+    "old": "                git_cache=self.git_cache,",
+    "new": "                git_cache=None,",
+    "tests": [
+      "tests/test_gitprobe_cache.py::test_the_live_snapshot_does_not_re_probe_what_the_page_just_cached"
+    ],
+    "expect_count": 1
   }
 ]

@@ -132,6 +132,7 @@ def build_overview(
     now: int | None = None,
     probe_fn=None,
     agents_fn=None,
+    git_cache=None,
 ) -> OverviewModel:
     """Assemble the Overview.
 
@@ -141,7 +142,9 @@ def build_overview(
     probe. `probe_fn`/`agents_fn` exist only for test determinism (mirroring
     `build_cards`); when `cards`/`live_state` are omitted, the one probe this
     function performs is threaded into `DashboardBuilder` rather than letting
-    it probe again on its own.
+    it probe again on its own. `git_cache` is forwarded for the same reason, so
+    a caller that omits `cards` does not lose the app's stale-while-revalidate
+    window just by taking this path.
     """
     now = now_epoch() if now is None else now
     if agents_fn is None:
@@ -152,7 +155,10 @@ def build_overview(
         except Exception:  # noqa: BLE001 - a broken sensor must not break Overview
             live_state = AgentsState(status="unavailable", sessions=[], source="none")
     if cards is None:
-        cards = build_cards(store, cfg, probe_fn=probe_fn, agents_fn=lambda: live_state)
+        cards = build_cards(
+            store, cfg, probe_fn=probe_fn, agents_fn=lambda: live_state,
+            git_cache=git_cache,
+        )
 
     coordinator = RefreshCoordinator(store, cfg)
     builder = DashboardBuilder(
