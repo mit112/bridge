@@ -837,20 +837,23 @@ def test_a_launch_from_an_aliased_path_attaches_to_the_canonical_project(launch_
 
     The launch sends an explicit handoff_id but no prompt, so `fire()` still has
     to resolve the project path's alias itself for the spec it hands the
-    launcher -- which is the resolution being asserted.
+    launcher -- which is the resolution being asserted. The handoff carries no
+    summary and the alias's directory name differs from the canonical one, so
+    the launch title also proves `post_launch` resolves the alias itself for
+    its own title default, rather than using the raw, un-resolved path.
     """
     c, store, _, fake = launch_app
-    store.set_alias("/Users/mitsheth/Documents/projectX", "/Users/mitsheth/dev/projectX")
-    c.post("/api/handoff", json=body("h1", path="/Users/mitsheth/dev/projectX"))
+    store.set_alias("/Users/mitsheth/Documents/old-name", "/Users/mitsheth/dev/projectX")
+    c.post("/api/handoff", json=body("h1", path="/Users/mitsheth/dev/projectX", summary=None))
 
     r = c.post("/api/launch",
-               json={"project_path": "/Users/mitsheth/Documents/projectX",
+               json={"project_path": "/Users/mitsheth/Documents/old-name",
                      "handoff_id": "h1"})
 
     assert r.status_code == 200, r.text
     assert r.json()["outcome"] == "started"
     assert r.json()["handoff_id"] == "h1"
-    assert store.project_by_path("/Users/mitsheth/Documents/projectX") is None
+    assert store.project_by_path("/Users/mitsheth/Documents/old-name") is None
     assert store.project_by_path("/Users/mitsheth/dev/projectX") is not None
     # `fire()` resolves the alias itself (Task 2), so the spec it hands the
     # launcher already carries the canonical path -- a real terminal launch
@@ -859,6 +862,9 @@ def test_a_launch_from_an_aliased_path_attaches_to_the_canonical_project(launch_
     spec, handoff_id = fake.calls[0]
     assert spec.project_path == "/Users/mitsheth/dev/projectX"
     assert handoff_id == "h1"
+    # And the title falls back to the *canonical* project name, not the raw
+    # alias -- `post_launch` must resolve the alias itself for this default.
+    assert spec.title == "projectX"
 
 
 def test_a_failed_launch_is_a_200_carrying_the_error_and_the_prompt(launch_app):
@@ -1051,7 +1057,8 @@ def test_an_unknown_mode_is_422_and_never_reaches_the_launcher(launch_app):
     c, _, _, fake = launch_app
     c.post("/api/handoff", json=body("h1"))
 
-    r = c.post("/api/launch", json={"project_path": DEMO, "mode": "tmux"})
+    r = c.post("/api/launch",
+               json={"project_path": DEMO, "handoff_id": "h1", "mode": "tmux"})
 
     assert r.status_code == 422
     assert fake.calls == []
