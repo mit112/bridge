@@ -319,49 +319,56 @@ body {
 .page-head { background-color: var(--bg); }
 .shell-status { background-color: var(--nav); }
 
-/* Make the swap QUICKER, but never author its opacity curves. This is the
-   whole fix for the flash, and the reason is arithmetic.
+/* Do NOT cross-fade a group whose two sides hold different documents. This is
+   the fix for the flash, and it is a change of kind rather than of tuning --
+   three attempts at tuning the curves failed, which was the evidence that the
+   curves were never the problem.
 
-   `mix-blend-mode: plus-lighter` on the two snapshots, paired with
-   `isolation: isolate` on their image-pair, is what lets Chrome's default
-   cross-fade hold FULL composite strength the whole way through: the outgoing
-   and incoming opacities are complementary and add, so the page is never
-   partially transparent. Both declarations are restated here rather than left
-   implicit, because an author `animation` shorthand on these pseudo-elements
-   displaces the UA rule that supplies them -- measured, `blend` read `normal`
-   on every group I had authored and `plus-lighter` on every group I had not.
+   An opacity cross-fade is a DOUBLE EXPOSURE. That is not a bug in the timing;
+   it is what the effect is. Captured frame-by-frame from a real navigation
+   (light mode, 1440, `performance_start_trace` with the screenshots pulled out
+   of the raw trace), the swap held the Overview and the Projects ledger BOTH
+   fully legible, superimposed, for ~60ms: two page titles at once in the
+   masthead, the attention card smeared through the projects rows. Dark text
+   over dark text on cream reads as the whole viewport darkening and snapping
+   clean -- which is precisely the "whole screen flashing, especially in light
+   mode" being chased.
 
-   An earlier attempt here sequenced the fade by hand (out 1->0 over 100ms, in
-   0->1 from 80ms) to stop two documents being legible at once. Overlapping
-   TIMING is not the same as summing to 1, which is the mistake: at t=90ms the
-   composite was 0.1 + 0.07 = 0.17, so the page all but vanished to its own
-   background for over a tenth of a second. On the espresso theme that reads as
-   a dip. On cream it is a white FLASH -- which is exactly what Mit reported,
-   and which the sequencing had made worse than the default it replaced.
+   The two failure modes previously traded against each other are BOTH
+   properties of cross-fading unrelated content, so neither could be tuned out:
+   make the composite dip below 1 and the page washes to its own background (a
+   white flash on cream); hold it at exactly 1 with `plus-lighter` and both
+   documents are at full strength simultaneously, which is the smear at its
+   worst. Summing to 1.00 was verified, and it was the wrong invariant --
+   it maximises the double exposure rather than removing it.
 
-   So only `animation-duration` is set. That leaves ONE knob, and it trades the
-   two failure modes against each other rather than trying to defeat both: long
-   enough and both documents are legible at once (the smear), short enough and
-   the cross-fade stops being perceptible at all. 90ms is picked toward the
-   short end deliberately, because a full-strength cross-fade can only ever
-   look like a ghost, never like a flash -- so the remaining risk is all on the
-   smear side. Raise it if the swap feels too curt; there is nothing else to
-   tune here. */
-::view-transition-image-pair(root),
-::view-transition-image-pair(app-masthead),
-::view-transition-image-pair(app-rail-status) { isolation: isolate; }
+   So these three groups swap INSTANTLY. `animation: none` alone is not enough:
+   the pseudo tree lives until the LONGEST animation in the transition finishes
+   (the nav pill below), so an un-animated old snapshot would sit at its default
+   opacity 1 on top of the new page for that whole time. `opacity: 0` on the
+   outgoing side is what actually retires it. Nothing is ever partially
+   transparent, so there is no frame that can flash or ghost regardless of what
+   paints behind the snapshots.
+
+   The group animation goes too, not just the image ones. A morphing group box
+   with a full-opacity snapshot inside it stretches that snapshot to fit --
+   the masthead is not the same height on every page, so keeping the morph
+   would have traded the ghost for warped text.
+
+   Continuity is carried by the chrome instead, which is the right place for it:
+   `app-rail` is identical between pages so its cross-fade is invisible, and
+   `app-nav-active` deliberately keeps the UA default -- it is ONE element
+   morphing between two positions, the only case here where a cross-fade is
+   describing the same thing moving rather than two different things overlaid. */
 ::view-transition-old(root),
-::view-transition-new(root),
 ::view-transition-old(app-masthead),
+::view-transition-old(app-rail-status) { animation: none; opacity: 0; }
+::view-transition-new(root),
 ::view-transition-new(app-masthead),
-::view-transition-old(app-rail-status),
-::view-transition-new(app-rail-status) {
-  mix-blend-mode: plus-lighter;
-  animation-duration: 90ms;
-}
+::view-transition-new(app-rail-status) { animation: none; opacity: 1; }
 ::view-transition-group(root),
 ::view-transition-group(app-masthead),
-::view-transition-group(app-rail-status) { animation-duration: 90ms; }
+::view-transition-group(app-rail-status) { animation: none; }
 a { color: var(--accent); text-underline-offset: .16em; }
 :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 
