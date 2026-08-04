@@ -160,5 +160,25 @@
       "tests/test_gitprobe_cache.py::test_the_live_snapshot_does_not_re_probe_what_the_page_just_cached"
     ],
     "expect_count": 1
+  },
+  {
+    "name": "accept the cache in build_overview and never forward it, so a caller that omits `cards` falls back to a full sweep",
+    "file": "src/bridge/overview.py",
+    "old": "            git_cache=git_cache,",
+    "new": "            git_cache=None,",
+    "tests": [
+      "tests/test_gitprobe_cache.py::test_build_overview_forwards_the_cache_when_it_builds_its_own_cards"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "accept the cache in build_workspace and never forward it",
+    "file": "src/bridge/workspace.py",
+    "old": "        git_cache=git_cache,",
+    "new": "        git_cache=None,",
+    "tests": [
+      "tests/test_gitprobe_cache.py::test_build_workspace_forwards_the_cache"
+    ],
+    "expect_count": 1
   }
 ]

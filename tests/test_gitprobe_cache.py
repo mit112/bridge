@@ -22,8 +22,14 @@ from bridge import gitprobe
 from bridge.api import create_app
 from bridge.cards import GitProbeCache, build_cards
 from bridge.config import load
-from bridge.models import GitState
+from bridge.models import AgentsState, GitState
+from bridge.overview import build_overview
 from bridge.store import Store, now_epoch
+from bridge.workspace import build_workspace
+
+# Injected wherever a builder would otherwise poll liveness for real. Nothing
+# here is about sessions; this keeps `agents.probe` out of the picture entirely.
+QUIET = AgentsState(status="ok", sessions=[], source="test")
 
 
 @pytest.fixture
@@ -331,6 +337,40 @@ def test_build_cards_with_a_cache_does_not_re_date_the_row_it_served(store, tmp_
     )
 
     assert store.get_git_cache(pid) == (GitState(status="ok", branch="old"), stamped)
+
+
+def test_build_overview_forwards_the_cache_when_it_builds_its_own_cards(
+    store, tmp_path
+):
+    """`/` threads `cards` in, so this forward is the belt rather than the
+    braces: a caller that omits them must not silently drop back to a full
+    uncached sweep."""
+    pid = project(store)
+    store.put_git_cache(pid, GitState(status="ok", branch="cached"), now_epoch())
+    cfg = load({"db_path": tmp_path / "g.db", "spool_dir": tmp_path / "spool"})
+    probe, calls = counting(GitState(status="ok", branch="probed"))
+    cache = GitProbeCache(store, fresh_s=10, executor=InlineExecutor())
+
+    build_overview(store, cfg, live_state=QUIET, probe_fn=probe, git_cache=cache)
+
+    assert calls == []
+
+
+def test_build_workspace_forwards_the_cache(store, tmp_path):
+    """With an explicit `probe_fn` this page probes like any other, so the
+    forward is what decides whether it reads the window or sweeps git."""
+    pid = project(store)
+    store.put_git_cache(pid, GitState(status="ok", branch="cached"), now_epoch())
+    cfg = load({"db_path": tmp_path / "g.db"})
+    probe, calls = counting(GitState(status="ok", branch="probed"))
+    cache = GitProbeCache(store, fresh_s=10, executor=InlineExecutor())
+
+    model = build_workspace(
+        store, cfg, pid, "current", live_state=QUIET, probe_fn=probe, git_cache=cache,
+    )
+
+    assert calls == []
+    assert model.card.git.branch == "cached"
 
 
 def test_two_page_loads_inside_the_window_probe_git_once(tmp_path, monkeypatch):
