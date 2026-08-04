@@ -266,11 +266,75 @@ body {
    which is what removes the remaining flash. Native and declarative -- no
    router, no client-side navigation, no framework.
 
-   Deliberately NOT wrapped in a `prefers-reduced-motion` guard: the default
-   cross-fade is the UA's own, and Chrome already skips it under reduced
-   motion. The named animations below are the ones that need guarding, and
-   there are none. */
+   VERIFIED FIRING, not assumed: a `pageswap`/`pagereveal` listener in
+   base.html reported `event.viewTransition` non-null on both the outgoing and
+   incoming document across two consecutive nav clicks. The listener had to
+   live in the template rather than be injected by devtools -- an injected one
+   only survives the document it was injected into, which is why an earlier
+   probe was inconclusive.
+
+   The named animations below DO declare keyframes, so they are guarded under
+   `prefers-reduced-motion` at the end of this file. */
 @view-transition { navigation: auto; }
+
+/* Name the chrome that is byte-identical on every page. A `view-transition-name`
+   lifts an element OUT of the `root` snapshot into its own group, so naming the
+   rail and the masthead is what stops them being cross-faded along with
+   everything else -- unnamed, the entire viewport animates as ONE image and the
+   swap reads as "the whole screen changed" rather than "the content changed".
+   What is left in `root` is `<main>`, so the cross-fade lands only on the part
+   that actually differs.
+
+   `<main>` is deliberately NOT named. Root's snapshot is always viewport-sized,
+   while a named group animates its own box -- and `/` and `/projects` differ in
+   height by thousands of pixels, so naming it would scale one snapshot into the
+   other's dimensions and visibly warp the text. Leaving it in root cross-fades
+   it at a fixed size instead.
+
+   The active nav item takes ONE name shared across documents. Because the
+   element carrying it is a different link on each page, the group morphs from
+   the old position to the new one: the highlight slides down the rail instead
+   of blinking out and in somewhere else. */
+.sidebar { view-transition-name: app-rail; }
+.page-head { view-transition-name: app-masthead; }
+.sidebar__link[aria-current="page"] { view-transition-name: app-nav-active; }
+/* The rail is NOT quite identical between pages: `shell_status` is a Jinja
+   block and Overview overrides it, so the frozen midpoint showed "Connected /
+   Indexed 0m ago" ghosted over the default "Local control plane". Naming it
+   separately keeps the rail itself perfectly static and lets only the footer
+   swap -- naming the rail alone would have cross-faded the whole 95%-identical
+   column to animate one line of text. */
+.shell-status { view-transition-name: app-rail-status; }
+
+/* Sequence the swap instead of cross-fading it. MEASURED, by freezing the
+   transition at its midpoint and screenshotting it: the UA default runs the
+   outgoing and incoming snapshots at overlapping opacity for the full ~250ms,
+   so Overview's stat tiles and cards stayed legible THROUGH the Projects list
+   and both page titles were readable at once. Two structurally different
+   documents superimposed is what read as an abrupt change -- it was never a
+   flash, it was a smear.
+
+   A cross-fade is the right animation only when the two states are variations
+   of one layout. These are different pages, so the old one leaves before the
+   new one arrives: out in 100ms, in from 80ms, ~220ms total. The 20ms overlap
+   is deliberate -- the outgoing snapshot is already near zero by then, and
+   leaving a real gap would show bare background, which is the flash this whole
+   block exists to avoid.
+
+   Opacity only, no drift or scale. The Almanac direction is a broadsheet; a
+   printed page does not slide in. */
+@keyframes app-vt-out { to { opacity: 0; } }
+@keyframes app-vt-in { from { opacity: 0; } }
+::view-transition-old(root),
+::view-transition-old(app-masthead),
+::view-transition-old(app-rail-status) {
+  animation: app-vt-out 100ms ease-out both;
+}
+::view-transition-new(root),
+::view-transition-new(app-masthead),
+::view-transition-new(app-rail-status) {
+  animation: app-vt-in 140ms 80ms ease-out both;
+}
 a { color: var(--accent); text-underline-offset: .16em; }
 :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 
@@ -2176,4 +2240,13 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
   /* The collapse still happens, it just happens instantly -- the width change
      is the feedback, the slide is only continuity. */
   .shell { transition: none; }
+  /* The page swap still happens, it just cuts. Chrome skips the UA's own
+     default cross-fade under reduced motion, but it does NOT skip authored
+     keyframes, so the sequenced fade above has to be switched off by hand. */
+  ::view-transition-old(root),
+  ::view-transition-new(root),
+  ::view-transition-old(app-masthead),
+  ::view-transition-old(app-rail-status),
+  ::view-transition-new(app-rail-status),
+  ::view-transition-new(app-masthead) { animation: none; }
 }
