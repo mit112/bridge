@@ -227,6 +227,30 @@ def test_projects_index_rows_separate_identity_activity_and_action(tmp_path):
     store.close()
 
 
+def test_projects_index_action_disclosure_is_constant_width_but_still_named(tmp_path):
+    """The `<summary>` used to render `Actions for {name}`, so the disclosure
+    column resized per project and dragged the whole trailing action column
+    with it. The visible text is now the constant `Actions`; the project name
+    moves to `aria-label` so each of the 36 disclosures still has a distinct
+    accessible name in a screen reader's rotor."""
+    cfg = _cfg(tmp_path, "action-column")
+    store = Store(cfg.db_path)
+    repo = _dirty_repo(tmp_path)
+    store.upsert_project(str(repo), "demo-project")
+    client = TestClient(create_app(store, cfg))
+
+    html = client.get("/projects").text
+    assert '<summary aria-label="Actions for demo-project">Actions</summary>' in html
+    # The name must be gone from the *rendered* text, not merely relocated.
+    assert ">Actions for demo-project<" not in html
+
+    # `projects-index` is the CSS scope every rule in this pass hangs off, and
+    # the Overview's own list must never grow it (see app.css's Almanac block).
+    assert 'class="projects-list projects-index"' in html
+    assert "projects-index" not in client.get("/").text
+    store.close()
+
+
 def test_overview_nav_now_links_to_projects(tmp_path):
     """Projects is functional as of this task, so the shared shell's nav must
     grow to include it (no dead ends) rather than staying Milestone 1's

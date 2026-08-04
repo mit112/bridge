@@ -32,7 +32,13 @@
   {{ empty_state("No projects indexed yet. Run `uv run python -m bridge index`.") }}
 {% endif %}
 
-<ul class="projects-list" data-projects-list>
+{# `projects-index` is this page's CSS scope, and it is load-bearing: the
+   Overview's Recent list renders the SAME `projects-list`/`projects-list__item`
+   class names off the same macro, so an unscoped `.projects-list` rule written
+   for this page would land after `.overview-recent`'s overrides in app.css and
+   win on source order. A purpose-named class rather than the `[data-projects-list]`
+   attribute, so the stylesheet does not couple itself to a JS hook name. #}
+<ul class="projects-list projects-index" data-projects-list>
   {% for row in rows %}
     {% set state = "queued" if row.status_word == "queued" else ("running" if row.status_word == "running" else ("stale" if row.status_word == "stale" else "idle")) %}
     <li class="projects-list__item" data-project-card="{{ row.project_id }}"
@@ -40,7 +46,12 @@
         data-project-name="{{ row.name }}" data-project-path="{{ row.path }}">
       {{ project_summary_row(row) }}
       <details class="projects-list__actions">
-        <summary>Actions for {{ row.name }}</summary>
+        {# Visible text is the constant `Actions` so the disclosure column stops
+           resizing per project (the name made it swing 89-211px wide, dragging
+           the `Open project` edge 122px across 36 rows). The name stays in the
+           accessible name via `aria-label`: 36 summaries all announcing
+           "Actions" would be an unusable screen-reader rotor. #}
+        <summary aria-label="Actions for {{ row.name }}">Actions</summary>
         <button type="button" class="btn btn--pin" data-project-pin="{{ row.project_id }}"
                 aria-pressed="{{ 'true' if row.pinned else 'false' }}"
                 aria-label="Pin {{ row.name }} above every other project">Pin</button>
