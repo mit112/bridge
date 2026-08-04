@@ -137,6 +137,22 @@ document.addEventListener("click", async (event) => {
     return;
   }
 
+  // The way out of a zero-result state. Resets both inputs at once because
+  // either one alone can be what emptied the list, and leaving the other set
+  // would land the user on a second empty page.
+  const clear = event.target.closest("[data-projects-clear]");
+  if (clear) {
+    const search = document.querySelector("[data-projects-search]");
+    if (search) search.value = "";
+    document.querySelectorAll("[data-projects-filter]").forEach((btn) => {
+      btn.setAttribute("aria-pressed",
+                       String(btn.getAttribute("data-projects-filter") === "all"));
+    });
+    applyProjectsFilter();
+    if (search) search.focus();
+    return;
+  }
+
   const restore = event.target.closest("[data-project-restore]");
   if (!restore) return;
 
@@ -216,6 +232,27 @@ function applyProjectsFilter() {
 
   const empty = document.querySelector("[data-projects-empty]");
   if (empty) empty.hidden = shown !== 0;
+
+  // A zero-result state that does not say what was searched for leaves the user
+  // guessing whether they mistyped or the project is genuinely absent -- so the
+  // query is echoed back verbatim, and the two ways of reaching zero get
+  // different sentences because they have different ways out. `textContent`
+  // (never innerHTML) is what makes echoing untrusted input safe here.
+  const emptyText = document.querySelector("[data-projects-empty-text]");
+  if (emptyText) {
+    if (query && filter !== "all") {
+      emptyText.textContent =
+        `No ${showingHidden ? "hidden " : ""}projects match "${search.value}" in this filter.`;
+    } else if (query) {
+      emptyText.textContent = `No projects match "${search.value}".`;
+    } else {
+      emptyText.textContent = "No projects in this filter.";
+    }
+  }
+  // Offered only when there is something to clear: on an unfiltered, unsearched
+  // page zero rows means zero projects, and a Clear button would do nothing.
+  const clear = document.querySelector("[data-projects-clear]");
+  if (clear) clear.hidden = !(query || filter !== "all");
 }
 
 document.addEventListener("input", (event) => {

@@ -74,7 +74,15 @@
     </li>
   {% endfor %}
 </ul>
-<p class="empty" data-projects-empty hidden>No projects match your search.</p>
+{# Three different empties need three different sentences (a filter that matched
+   nothing is not the same situation as a query that did), so the text is written
+   by projects.js from the state it already computed rather than frozen here. The
+   server-rendered fallback is the no-JS case, where neither search nor filter can
+   have run at all. #}
+<p class="empty" data-projects-empty hidden>
+  <span data-projects-empty-text>No projects match your search.</span>
+  <button type="button" class="btn" data-projects-clear hidden>Clear search and filters</button>
+</p>
 
 <section class="hidden-projects-section" data-hidden-projects hidden>
   <h2>Hidden projects</h2>

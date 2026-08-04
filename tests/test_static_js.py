@@ -1242,9 +1242,13 @@ const rows = [rowAlpha, rowBeta, rowGamma];
 
 const hiddenRows = [{ hidden: false, textContent: "Zeta hidden-project" }];
 
-const searchInput = { value: "" };
+const searchInput = { value: "", focused: false, focus() { this.focused = true; } };
 const countNode = { textContent: "" };
 const emptyNode = { hidden: true };
+// The zero-result state's two halves: the sentence that echoes the query back
+// and the control that undoes whatever emptied the list.
+const emptyTextNode = { textContent: "" };
+const clearNode = { hidden: true };
 const listNode = { hidden: false };
 const hiddenSection = { hidden: true };
 
@@ -1258,6 +1262,8 @@ globalThis.document = {
     if (sel === "[data-projects-search]") return searchInput;
     if (sel === "[data-projects-count]") return countNode;
     if (sel === "[data-projects-empty]") return emptyNode;
+    if (sel === "[data-projects-empty-text]") return emptyTextNode;
+    if (sel === "[data-projects-clear]") return clearNode;
     if (sel === "[data-hidden-projects]") return hiddenSection;
     if (sel === '[data-projects-filter][aria-pressed="true"]') {
       return filterButtons.find((b) => b.attrs["aria-pressed"] === "true") || null;
@@ -1285,25 +1291,36 @@ if (FILTER_TARGET) {
   clickHandler({ target: { closest: (sel) => (sel === "[data-projects-filter]" ? target : null) } });
 }
 
+// The way out of the zero-result state. Runs last so it undoes whatever the
+// query and filter above did, which is exactly the situation it exists for.
+if (CLEAR_CLICK) {
+  clickHandler({ target: { closest: (sel) => (sel === "[data-projects-clear]" ? clearNode : null) } });
+}
+
 console.log(JSON.stringify({
   rowHidden: rows.map((r) => r.hidden),
   hiddenRowHidden: hiddenRows.map((r) => r.hidden),
   count: countNode.textContent,
   emptyHidden: emptyNode.hidden,
+  emptyText: emptyTextNode.textContent,
+  clearHidden: clearNode.hidden,
   listHidden: listNode.hidden,
   hiddenSectionHidden: hiddenSection.hidden,
   pressed: filterButtons.map((b) => b.attrs["aria-pressed"]),
+  searchValue: searchInput.value,
+  searchFocused: searchInput.focused,
   fetchCalled,
 }));
 """
 
 
-def _run_projects_filter(tmp_path, query: str, filter_target):
+def _run_projects_filter(tmp_path, query: str, filter_target, clear_click: bool = False):
     harness = tmp_path / "projects_filter_harness.js"
     target_literal = json.dumps(filter_target) if filter_target is not None else "null"
     harness.write_text(
         PROJECTS_FILTER_HARNESS.replace("QUERY", json.dumps(query))
         .replace("FILTER_TARGET", target_literal)
+        .replace("CLEAR_CLICK", "true" if clear_click else "false")
     )
     proc = subprocess.run(
         [_node(), str(harness), str(PROJECTS_JS)], capture_output=True, text=True
@@ -1347,6 +1364,52 @@ def test_projects_search_with_no_match_shows_the_empty_state(tmp_path):
     assert got["rowHidden"] == [True, True, True]
     assert got["count"] == "0 projects shown"
     assert got["emptyHidden"] is False
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_projects_empty_state_echoes_the_query_back(tmp_path):
+    """A zero-result state that does not repeat the query leaves the user unable
+    to tell a typo from a genuinely absent project, so the exact string typed is
+    echoed -- and the escape hatch appears alongside it."""
+    got = _run_projects_filter(tmp_path, "zzz-nope", None)
+    assert got["emptyHidden"] is False
+    assert got["emptyText"] == 'No projects match "zzz-nope".'
+    assert got["clearHidden"] is False
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_projects_empty_state_names_the_filter_when_a_query_is_also_active(tmp_path):
+    """Zero-with-a-filter needs a different sentence from zero-with-a-query
+    alone, because the way out is different: the filter is the more likely
+    culprit and the user cannot see it in the query box. The `hidden` filter
+    also proves the sentence names WHICH list came up empty.
+
+    (The third branch -- a filter emptying the list with no query at all -- is
+    not reachable from this fixture: every filter it defines matches at least
+    one of the three rows. It is exercised in the real app by e.g. `Running` at
+    zero live sessions.)"""
+    got = _run_projects_filter(tmp_path, "zzz-nope", "hidden")
+    assert got["hiddenRowHidden"] == [True]
+    assert got["count"] == "0 projects shown"
+    assert got["emptyHidden"] is False
+    assert got["emptyText"] == 'No hidden projects match "zzz-nope" in this filter.'
+    assert got["clearHidden"] is False
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_projects_clear_resets_both_the_query_and_the_filter_without_fetching(tmp_path):
+    """Either input alone can be what emptied the list, so Clear resets both --
+    clearing only one would land the user on a second empty page. Still no
+    fetch and no reload, the invariant this whole file exists to protect."""
+    got = _run_projects_filter(tmp_path, "zzz-nope", "running", clear_click=True)
+    assert got["searchValue"] == ""
+    assert got["pressed"] == ["true", "false", "false", "false", "false"]
+    assert got["rowHidden"] == [False, False, False]
+    assert got["count"] == "3 projects shown"
+    assert got["emptyHidden"] is True
+    assert got["clearHidden"] is True
+    assert got["searchFocused"] is True
+    assert got["fetchCalled"] is False
 
 
 @pytest.mark.skipif(_node() is None, reason="node is not installed")
