@@ -170,6 +170,10 @@
   <script src="/static/schedule.js" defer></script>
   <script src="/static/live.js" defer></script>
   <script src="/static/projects.js" defer></script>
-  {% block scripts %}{% endblock %}
+  {# Loaded for every page, not just /settings. Bridge swaps only the content
+     region, so `{% block scripts %}` is never evaluated on a swapped
+     navigation -- a page whose JS arrived that way would simply be inert.
+     Scoped to `data-settings-*` elements, so it is a no-op everywhere else. #}
+  <script src="/static/settings.js" defer></script>
 </body>
 </html>

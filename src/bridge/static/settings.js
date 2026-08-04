@@ -58,21 +58,41 @@ if (darkMedia && darkMedia.addEventListener) {
   });
 }
 
-// Restores a stored value into its select (leaving the server-rendered
-// default alone when nothing is stored yet) and persists every change.
-function bindSelect(selector, key, onChange) {
-  const el = document.querySelector(selector);
-  if (!el) return;
-  const stored = localStorage.getItem(key);
-  if (stored !== null) el.value = stored;
-  el.addEventListener("change", () => {
+// One delegated `change` listener for all five selects, registered once. A
+// direct `el.addEventListener` would die with the node the moment the content
+// region is swapped, leaving the controls looking fine and silently saving
+// nothing.
+const SELECT_KEYS = [
+  ["[data-settings-theme]", APPEARANCE_KEY, applyTheme],
+  ["[data-settings-density]", DENSITY_KEY, applyDensity],
+  ["[data-settings-launch-model]", LAUNCH_MODEL_KEY, null],
+  ["[data-settings-launch-effort]", LAUNCH_EFFORT_KEY, null],
+  ["[data-settings-launch-mode]", LAUNCH_MODE_KEY, null],
+];
+
+document.addEventListener("change", (event) => {
+  if (!event.target || !event.target.closest) return;
+  for (const [selector, key, onChange] of SELECT_KEYS) {
+    const el = event.target.closest(selector);
+    if (!el) continue;
     localStorage.setItem(key, el.value);
     if (onChange) onChange();
-  });
+    return;
+  }
+});
+
+// Restore stored values into the selects on every page view, leaving the
+// server-rendered default alone where nothing is stored yet. This has to re-run
+// after a swap: the selects are fresh nodes carrying the server's defaults, so
+// without it Settings shows values the user did not choose.
+function restoreSettingsSelects() {
+  for (const [selector, key] of SELECT_KEYS) {
+    const el = document.querySelector(selector);
+    if (!el) continue;
+    const stored = localStorage.getItem(key);
+    if (stored !== null) el.value = stored;
+  }
 }
 
-bindSelect("[data-settings-theme]", APPEARANCE_KEY, applyTheme);
-bindSelect("[data-settings-density]", DENSITY_KEY, applyDensity);
-bindSelect("[data-settings-launch-model]", LAUNCH_MODEL_KEY);
-bindSelect("[data-settings-launch-effort]", LAUNCH_EFFORT_KEY);
-bindSelect("[data-settings-launch-mode]", LAUNCH_MODE_KEY);
+if (window.bridgePage) window.bridgePage.onEnter(restoreSettingsSelects);
+else restoreSettingsSelects();

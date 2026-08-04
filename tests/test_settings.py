@@ -292,10 +292,10 @@ def test_settings_route_never_renders_the_live_launch_permission_hook(tmp_path):
     """The Settings page's own permission-mode select is `data-settings-launch-
     mode` -- a different hook than the live launch band's `data-launch-perm`
     (`_launch.html`). If a future template edit ever reused that hook name
-    here, `settings.js`'s `bindSelect("[data-settings-launch-mode]", ...)`
-    would silently start writing into the LIVE control instead of this page's
-    own stand-in, and task 5.3's node-harness proof would no longer be
-    testing what actually ships."""
+    here, `settings.js`'s delegated change listener (keyed off
+    `[data-settings-launch-mode]`) would silently start writing into the LIVE
+    control instead of this page's own stand-in, and task 5.3's node-harness
+    proof would no longer be testing what actually ships."""
     client, _ = _route_client(tmp_path)
 
     resp = client.get("/settings")

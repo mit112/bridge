@@ -2441,30 +2441,35 @@ const documentElement = {
   getAttribute(name) { return this.attrs[name] ?? null; },
 };
 
-function makeSelect(initialValue) {
+// Real `<select>`s are their own `closest(selector)` match (they have no
+// parents here), which is exactly what the delegated `change` listener in
+// settings.js relies on to route an event back to the right key.
+function makeSelect(initialValue, selector) {
   return {
     value: initialValue,
-    listeners: [],
-    addEventListener(type, fn) { if (type === "change") this.listeners.push(fn); },
+    selector,
+    closest(sel) { return sel === this.selector ? this : null; },
   };
 }
 
 const selects = {
-  '[data-settings-theme]': makeSelect("system"),
-  '[data-settings-density]': makeSelect("comfortable"),
-  '[data-settings-launch-model]': makeSelect("opus"),
-  '[data-settings-launch-effort]': makeSelect("low"),
-  '[data-settings-launch-mode]': makeSelect(""),
+  '[data-settings-theme]': makeSelect("system", '[data-settings-theme]'),
+  '[data-settings-density]': makeSelect("comfortable", '[data-settings-density]'),
+  '[data-settings-launch-model]': makeSelect("opus", '[data-settings-launch-model]'),
+  '[data-settings-launch-effort]': makeSelect("low", '[data-settings-launch-effort]'),
+  '[data-settings-launch-mode]': makeSelect("", '[data-settings-launch-mode]'),
   // Present in the harness so a mistaken query for the LIVE launch band's
   // permission control would resolve to something observable instead of
   // silently returning null and masking the bug.
-  '[data-launch-perm="launch-1"]': makeSelect("bypassPermissions"),
+  '[data-launch-perm="launch-1"]': makeSelect("bypassPermissions", '[data-launch-perm="launch-1"]'),
 };
 
 const queried = [];
+const documentChangeListeners = [];
 globalThis.document = {
   documentElement,
   querySelector(sel) { queried.push(sel); return selects[sel] ?? null; },
+  addEventListener(type, fn) { if (type === "change") documentChangeListeners.push(fn); },
 };
 
 const fs = require("fs");
@@ -2578,7 +2583,7 @@ def test_settings_js_changing_a_select_persists_and_reapplies(tmp_path):
         interactions=(
             'const el = selects["[data-settings-theme]"];'
             'el.value = "dark";'
-            'el.listeners.forEach((fn) => fn());'
+            'documentChangeListeners.forEach((fn) => fn({ target: el }));'
         ),
     )
     assert ["bridge.appearance", "dark"] in got["setCalls"]

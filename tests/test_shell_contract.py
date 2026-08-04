@@ -104,7 +104,7 @@ def test_no_module_scope_dom_capture(name):
 
 
 @pytest.mark.parametrize("name", [
-    pytest.param(n, marks=pytestmark_known_red)
+    pytest.param(n, marks=pytestmark_known_red) if n != "settings.js" else n
     for n in ["settings.js", "schedule.js", "projects.js", "launch.js", "live.js"]
 ])
 def test_per_page_behaviour_is_registered_on_the_registry(name):
@@ -129,7 +129,6 @@ def test_launch_flushes_pending_edits_before_the_swap():
     )
 
 
-@pytestmark_known_red
 def test_no_template_overrides_the_scripts_block():
     """The script-injection path is gone; nothing may reintroduce it.
 
@@ -146,7 +145,6 @@ def test_no_template_overrides_the_scripts_block():
     )
 
 
-@pytestmark_known_red
 def test_settings_js_is_loaded_from_base():
     """An actual `<script src>` tag, not just the filename anywhere in the file.
 
