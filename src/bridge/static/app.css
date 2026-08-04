@@ -1659,13 +1659,87 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
    where the pointer is a mouse and the ledger wants density. This overrides
    the shared 40px `--control-min`, so the sub-desktop layer -- where
    `--control-min` is deliberately raised to 44px for touch -- hands the floor
-   straight back rather than inheriting the dense value. */
+   straight back rather than inheriting the dense value.
+   The rest mirrors `.overview-recent`'s ghost link property for property:
+   mono, terracotta, no chrome, arrow via `::after`. The arrow does land in
+   the accessible name (`link "Open project →"`) -- established on the
+   Overview last pass and accepted there, so accepted here. */
 .projects-index .project-row__action .btn {
   min-height: 1.5rem;
   min-width: 1.5rem;
+  padding: var(--space-1) var(--space-2);
+  color: var(--work);
+  background: transparent;
+  border-color: transparent;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  letter-spacing: .04em;
+}
+.projects-index .project-row__action .btn::after { content: " →"; }
+/* The one hover in the row (see the separator-channel note below). It rides
+   `.btn`'s own named-property transition -- colour/background/border/shadow,
+   never `all` -- which the reduced-motion block at the foot of this sheet
+   already drops to `none`. */
+.projects-index .project-row__action .btn:hover {
+  background: var(--surface-raised);
+  border-color: transparent;
 }
 @media (max-width: 1023px) {
   .projects-index .project-row__action .btn { min-height: var(--control-min); }
+}
+
+/* Row typography. The name takes the Almanac serif at exactly the treatment
+   `.overview-recent .project-row__name` already uses, so one project reads
+   identically on both pages; 20px clears the system's "serif at 19px and up
+   only" floor, and the tight line-height is what pays for the density. */
+.projects-index .project-row__name {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: var(--text-title);
+  line-height: 1.15;
+}
+/* The path WRAPS instead of truncating. The base rule ellipsises it, which
+   silently deletes the tail of paths like `/Users/.../boardwatch/.claude/work`
+   with no affordance to get it back; a `title` attribute would be the tidier
+   fix but lives in the shared macro, which this pass does not touch. The
+   handful of longest paths make their rows taller -- that is the accepted
+   trade, and the responsive height criterion is written around it. */
+.projects-index .project-row__path {
+  overflow: visible;
+  font-size: var(--text-xs);
+  line-height: 1.35;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+/* Metadata is demoted against the serif name by weight, colour and face --
+   it inherits `--text-secondary` and 400 from the base rule and only turns
+   mono here. Size does almost none of the work because 12px is the floor and
+   there is nowhere below it to go. */
+.projects-index .project-row__branch,
+.projects-index .project-row__dirty {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+/* Figures line up column-wise down the list rather than jittering per row. */
+.projects-index .project-row__dirty { font-variant-numeric: tabular-nums; }
+/* The last-session note rides the activity column's FIRST line here instead
+   of claiming a whole second one (the base rule gives it `flex-basis: 100%`).
+   That is what makes the row two lines total -- name/status/metadata, then
+   the path -- rather than three. It keeps the base rule's single-line
+   ellipsis; `min-width: 0` is what lets that ellipsis actually engage inside
+   a flex item. */
+.projects-index .project-row__session { flex: 1 1 8rem; min-width: 0; }
+/* ~64px two-line rows, reached by padding and line-height alone -- no markup
+   moves. `min-height` rather than more padding (the same idiom
+   `.overview-recent .project-row` uses) so the ~1/3 of rows with no session
+   note match the rest instead of collapsing shorter. Internal spacing (name
+   to path, 4px) stays far under half the separating spacing (8px above and
+   below plus the hairline), so the pair still reads as one row, not two.
+   Measured at 1440: 2375px of list for 36 projects, down from 2930. */
+.projects-index .project-row {
+  min-height: 4rem;
+  padding: var(--space-2) 0;
 }
 
 .hidden-projects-section { margin-top: var(--space-8); }
