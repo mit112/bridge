@@ -38,6 +38,12 @@ PAIRS = [
     ("--p-review", "--p-surface", 4.5, "review status text on a surface"),
     ("--p-review", "--p-canvas", 4.5, "review status text on canvas"),
     ("--p-review", "--p-review-soft", 4.5, "review tag text on its soft pill"),
+    # `--surface-raised` (hover fills, the usage panel, the recent-row action's
+    # hover) resolves to --p-raised, which dark darkens away from --p-surface.
+    # Dark --p-work on it is only 4.57:1 -- the tightest text pair in the sheet,
+    # so it needs the gate more than any other, not less.
+    ("--p-work", "--p-raised", 4.5, "accent text on a raised surface"),
+    ("--p-text-2", "--p-raised", 4.5, "secondary text on a raised surface"),
     # The sidebar rail (--p-nav) is dark in BOTH themes, so these pairs are
     # expected to read identically under "light" and "dark" -- that sameness
     # is the point, not a coincidence to fix.

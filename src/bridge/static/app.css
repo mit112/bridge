@@ -9,6 +9,11 @@
   --p-nav: #1e1a14;
   --p-canvas: #f5efe3;
   --p-surface: #fcf8f0;
+  /* Same value as --p-surface under light: the light theme has no separate
+     raised tone. It exists as a primitive in BOTH themes anyway so that
+     --surface-raised is a single alias everywhere and tests/test_contrast.py
+     can measure text pairs against it in both halves of the stylesheet. */
+  --p-raised: #fcf8f0;
   --p-text: #211d17;
   --p-text-2: #6b6152;
   --p-rule: #dcd2bf;
@@ -39,7 +44,7 @@
   /* Semantic layer: names components should reach for. */
   --canvas: var(--p-canvas);
   --surface: var(--p-surface);
-  --surface-raised: var(--p-surface);
+  --surface-raised: var(--p-raised);
   --text: var(--p-text);
   --text-secondary: var(--p-text-2);
   --rule: var(--p-rule);
@@ -51,9 +56,6 @@
   --run-soft: var(--p-run-soft);
   --review: var(--p-review);
   --review-soft: var(--p-review-soft);
-  --status-running: var(--p-run);
-  --status-review: var(--p-review);
-  --status-attention: var(--p-work);
   --field-line: var(--p-field-line);
   --focus: var(--p-work);
   --nav: var(--p-nav);
@@ -107,6 +109,7 @@
   --p-nav: #1e1a14;
   --p-canvas: #f5efe3;
   --p-surface: #fcf8f0;
+  --p-raised: #fcf8f0;
   --p-text: #211d17;
   --p-text-2: #6b6152;
   --p-rule: #dcd2bf;
@@ -123,7 +126,6 @@
   --p-nav-text-2: #b7ab95;
   --p-nav-accent: #d8a07f;
   --p-nav-focus: #e6b89b;
-  --surface-raised: var(--p-surface);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -465,7 +467,7 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
 .live--busy,
 .live--working { color: var(--fg); font-weight: 600; }
 .live--busy .live__dot,
-.live--working .live__dot { color: var(--accent); }
+.live--working .live__dot { color: var(--run); }
 .live--idle,
 .live--waiting,
 .live--unknown,
@@ -635,13 +637,16 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
 .pill--work { color: var(--pill-work-fg); background: var(--pill-work-bg); }
 .pill--risk { color: var(--pill-risk-fg); background: var(--pill-risk-bg); }
 /* The state words `status_pill` renders for a `ProjectSummary`
-   (queued/running/stale/recent/idle): queued and running both read as
-   "something is moving", so they share the work-soft treatment; stale reuses
-   the risk-soft pair already held to AA by tests/test_contrast.py; recent and
-   idle are quiet, so they stay a bordered neutral rather than minting a third
-   colour pair. */
-.pill--queued, .pill--running { color: var(--pill-work-fg); background: var(--pill-work-bg); }
-.pill--stale { color: var(--pill-risk-fg); background: var(--pill-risk-bg); }
+   (queued/running/stale/recent/idle). These resolve through the SAME slots as
+   the Overview's `st-*` vocabulary below, so one project reads identically on
+   `/`, `/projects`, and `/project/{id}`: running is the run (green) pair;
+   queued is a pending handoff, which the taxonomy colours as attention
+   (work/terracotta), not as running; stale is "needs review" (gold), not the
+   rust alarm -- a stale tree is not an emergency. Recent and idle are quiet, so
+   they stay a bordered neutral rather than minting another colour pair. */
+.pill--queued { color: var(--pill-work-fg); background: var(--pill-work-bg); }
+.pill--running { color: var(--pill-run-fg); background: var(--pill-run-bg); }
+.pill--stale { color: var(--pill-review-fg); background: var(--pill-review-bg); }
 .pill--recent, .pill--idle {
   color: var(--text-secondary);
   background: var(--surface);
@@ -1034,8 +1039,8 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
   font-variant-numeric: tabular-nums lining-nums;
   color: var(--text);
 }
-.command-cell.is-live .command-cell__num { color: var(--status-running); }
-.command-cell.is-hot .command-cell__num { color: var(--status-attention); }
+.command-cell.is-live .command-cell__num { color: var(--run); }
+.command-cell.is-hot .command-cell__num { color: var(--work); }
 .command-cell__label {
   display: block;
   margin-top: var(--space-2);
@@ -1101,8 +1106,8 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
   border-top: 4px solid var(--rule);
   border-radius: 11px;
 }
-.attention-primary--st-run { border-top-color: var(--status-running); }
-.attention-primary--st-attention { border-top-color: var(--status-attention); }
+.attention-primary--st-run { border-top-color: var(--run); }
+.attention-primary--st-attention { border-top-color: var(--work); }
 .attention-primary--st-review { border-top-color: var(--review); }
 .attention-primary--st-risk { border-top-color: var(--risk); }
 .attention-primary__top { display: flex; justify-content: space-between; align-items: flex-start; gap: var(--space-5); }
@@ -1194,8 +1199,8 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
   border-top: 4px solid var(--rule);
   border-radius: 10px;
 }
-.attention-secondary--st-run { border-top-color: var(--status-running); }
-.attention-secondary--st-attention { border-top-color: var(--status-attention); }
+.attention-secondary--st-run { border-top-color: var(--run); }
+.attention-secondary--st-attention { border-top-color: var(--work); }
 .attention-secondary--st-review { border-top-color: var(--review); }
 .attention-secondary--st-risk { border-top-color: var(--risk); }
 .attention-secondary h3 { margin: var(--space-2) 0 var(--space-1); font-size: .9375rem; }
