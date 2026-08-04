@@ -2,8 +2,8 @@
   {
     "name": "render settings.html with the wrong active key, so the sidebar's Settings entry never gets aria-current",
     "file": "src/bridge/api.py",
-    "old": "            request, \"settings.html\", {\"model\": model, \"active\": \"settings\"},",
-    "new": "            request, \"settings.html\", {\"model\": model, \"active\": \"overview\"},",
+    "old": "                \"active\": \"settings\",",
+    "new": "                \"active\": \"overview\",",
     "tests": [
       "tests/test_settings.py::test_settings_route_marks_nav_entry_current"
     ],
