@@ -44,14 +44,41 @@ def stylesheet() -> str:
     return re.sub(r"/\*.*?\*/", "", CSS.read_text(), flags=re.DOTALL)
 
 
+def without_reduced_motion(css: str) -> str:
+    """`css` with the `prefers-reduced-motion: reduce` block removed.
+
+    That block deliberately switches EVERY group off, including the one that is
+    supposed to keep animating, so a test asking "what still moves normally?"
+    has to read past it. Brace-counted rather than regexed because the block
+    contains nested rules.
+    """
+    marker = "@media (prefers-reduced-motion: reduce)"
+    start = css.find(marker)
+    if start == -1:
+        return css
+    depth, i = 0, css.index("{", start)
+    for i in range(i, len(css)):
+        if css[i] == "{":
+            depth += 1
+        elif css[i] == "}":
+            depth -= 1
+            if depth == 0:
+                break
+    return css[:start] + css[i + 1:]
+
+
 def declarations_for(pseudo: str) -> str:
     """The declaration block of the rule whose selector list includes `pseudo`.
 
     Selectors are grouped in the sheet (one rule lists all three outgoing
     snapshots), so this matches on membership in the list rather than on an
     exact selector string -- regrouping them differently must not break this.
+
+    The reduced-motion block is skipped: it names every group, so it would
+    always be the first match and these callers ask about the UNCONDITIONAL
+    behaviour.
     """
-    css = stylesheet()
+    css = without_reduced_motion(stylesheet())
     escaped = re.escape(pseudo)
     match = re.search(r"([^{}]*" + escaped + r"[^{}]*)\{([^}]*)\}", css)
     assert match is not None, f"no rule in app.css targets {pseudo}"
@@ -98,6 +125,109 @@ def test_no_group_at_double_exposure_risk_blends(group):
         )
 
 
+def test_the_navigation_opt_in_is_not_nested_in_a_media_query():
+    """Wrapping `@view-transition` in `@media` kills the whole transition in Arc.
+
+    Arc PARSES the nested form -- it shows up in the CSSOM with the media query
+    evaluating true -- and then does not honour it: `pageswap` reported
+    `event.viewTransition` null on every navigation, and un-nesting it with no
+    other change made the same probe report non-null. Support for this at-rule
+    inside a conditional group rule landed after the feature itself, and Arc
+    reports a Chrome version ahead of the engine it ships, so nothing about the
+    nested form looks wrong from the outside.
+
+    It cost a full session of fixes aimed at a transition that was not running.
+    Reduced motion is handled by neutralising the animations instead, which is
+    why this can be asserted unconditionally.
+    """
+    css = stylesheet()
+    at_rule = css.index("@view-transition")
+    enclosing = css.rfind("@media", 0, at_rule)
+    if enclosing == -1:
+        return  # no @media precedes it at all, so it cannot be nested in one
+    # Nested iff a brace opened by that @media is still unclosed at the at-rule.
+    depth = 0
+    for ch in css[enclosing:at_rule]:
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+    assert depth == 0, (
+        "@view-transition is nested inside an @media block. Arc parses that and "
+        "silently refuses to run the transition, so every rule below it becomes "
+        "dead code in the browser this app is actually used in. Keep the opt-in "
+        "at the top level and gate reduced motion on the animations instead."
+    )
+
+
+def reduced_motion_block() -> str:
+    """Just the `prefers-reduced-motion: reduce` block, braces and all."""
+    css = stylesheet()
+    start = css.index("@media (prefers-reduced-motion: reduce)")
+    depth = 0
+    for end in range(css.index("{", start), len(css)):
+        if css[end] == "{":
+            depth += 1
+        elif css[end] == "}":
+            depth -= 1
+            if depth == 0:
+                return css[start:end + 1]
+    raise AssertionError("unterminated reduced-motion block in app.css")
+
+
+def named_groups() -> set[str]:
+    """Every view-transition group in the sheet, derived rather than listed.
+
+    `root` always exists implicitly; the rest come from the actual
+    `view-transition-name` declarations, so adding a named group and forgetting
+    the reduced-motion list below fails this suite instead of shipping motion to
+    someone who asked for none.
+    """
+    names = set(re.findall(r"view-transition-name:\s*([a-z0-9-]+)", stylesheet()))
+    names.discard("none")
+    return names | {"root"}
+
+
+@pytest.mark.parametrize("group", sorted(named_groups()))
+def test_reduced_motion_leaves_nothing_animating(group):
+    """A stated motion preference must reach EVERY group, not just most of them.
+
+    With the content swap already instant for everyone, the only thing reduced
+    motion still has to suppress is the sliding nav pill and the rail's
+    (invisible) cross-fade -- but "only a little motion" is not what the
+    preference asks for. Asserted per group so a newly named one cannot slip
+    through: the pill was exactly the group a blanket rule would have missed.
+    """
+    block = reduced_motion_block()
+    rules = re.findall(r"([^{}]*)\{([^{}]*)\}", block)
+    # Rule-level, not substring-level: naming a group in the block proves
+    # nothing if the declaration next to it is still a duration. A first pass
+    # here only checked membership, and a mutation swapping `animation: none`
+    # for `animation-duration: 90ms` survived it.
+    silenced = [s for s, decls in rules if "animation: none" in decls]
+    for pseudo in ("group", "old", "new"):
+        assert any(f"::view-transition-{pseudo}({group})" in s for s in silenced), (
+            f"::view-transition-{pseudo}({group}) is not switched off under "
+            f"prefers-reduced-motion: reduce -- it must appear in a rule that "
+            f"sets `animation: none`, not merely be mentioned in the block"
+        )
+    # The outgoing snapshot needs retiring as well as un-animating, for the same
+    # reason it does unconditionally: un-animated, it sits at opacity 1 on top.
+    # So find the rule that actually sets opacity: 0 and check this group is in
+    # ITS selector list, rather than just that both strings occur somewhere.
+    retiring = [
+        selectors for selectors, decls
+        in re.findall(r"([^{}]*)\{([^{}]*)\}", block)
+        if re.search(r"opacity:\s*0\b", decls)
+    ]
+    assert retiring, "reduced motion never retires the old snapshots"
+    assert any(f"::view-transition-old({group})" in s for s in retiring), (
+        f"::view-transition-old({group}) is un-animated under reduced motion but "
+        f"never given opacity: 0, so it covers the new page for the whole "
+        f"transition"
+    )
+
+
 def test_the_moving_nav_pill_keeps_its_cross_fade():
     """The one legitimate cross-fade here, and it must survive the fix.
 
@@ -107,7 +237,7 @@ def test_the_moving_nav_pill_keeps_its_cross_fade():
     blanket "make everything instant" would take the continuity away with the
     flash, so the absence of a name is the assertion.
     """
-    css = stylesheet()
+    css = without_reduced_motion(stylesheet())
     instant_rules = re.findall(r"([^{}]*::view-transition-[a-z-]+\([^)]*\)[^{}]*)\{([^}]*)\}", css)
     for selectors, block in instant_rules:
         if "animation: none" not in block:

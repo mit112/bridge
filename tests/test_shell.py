@@ -274,17 +274,28 @@ def test_desktop_rail_is_fixed_and_the_body_scrolls_instead_of_the_document():
 
 def test_reduced_motion_disables_btn_transitions():
     """Task 5.4: prefers-reduced-motion only covered scroll-behavior and the
-    skip-link before this; extend it to the .btn transitions too."""
+    skip-link before this; extend it to the .btn transitions too.
+
+    The sheet now has MORE than one reduced-motion block -- the view transition
+    keeps its own, next to the rules it switches off, rather than having those
+    rules live a thousand lines from everything they relate to. So this reads
+    every such block and asserts the button/shell rules appear in one of them.
+    The original single-block regex silently described "whichever block comes
+    first in the file", which stopped being the intended one the moment another
+    was added; the invariant was always "reduced motion reaches these rules".
+    """
     css = _app_css()
-    match = re.search(
+    blocks = re.findall(
         r"@media \(prefers-reduced-motion: reduce\)\s*\{(.*?)\n\}",
         css,
         re.DOTALL,
     )
-    assert match, "expected a prefers-reduced-motion block"
-    block = match.group(1)
-    assert ".btn" in block
-    assert "transition: none" in block
+    assert blocks, "expected a prefers-reduced-motion block"
+    assert any(".btn" in b and "transition: none" in b for b in blocks), (
+        "no prefers-reduced-motion block disables the .btn transitions"
+    )
     # The sidebar collapse animates grid-template-columns; under reduced motion
     # it must snap instead.
-    assert ".shell { transition: none; }" in block
+    assert any(".shell { transition: none; }" in b for b in blocks), (
+        "no prefers-reduced-motion block snaps the sidebar collapse"
+    )

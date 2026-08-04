@@ -273,13 +273,60 @@ body {
    only survives the document it was injected into, which is why an earlier
    probe was inconclusive.
 
-   The opt-in itself is gated on `no-preference` rather than switching the
-   animations off further down. A full-viewport luminance change on every
-   navigation is a WCAG flash concern, not a taste one, so the right response to
-   a stated motion preference is to have no transition at all rather than a
-   transition whose parts have been individually neutralised. */
-@media (prefers-reduced-motion: no-preference) {
-  @view-transition { navigation: auto; }
+   THIS AT-RULE MUST STAY AT THE TOP LEVEL. Never wrap it in `@media`, however
+   tempting the reduced-motion gate below looks. It was wrapped in
+   `@media (prefers-reduced-motion: no-preference)` for exactly one commit, and
+   Arc -- Mit's actual browser -- PARSES the nested form (it appears in the
+   CSSOM, correctly, with the media query evaluating true) and then does not
+   honour it: `pageswap` reported `event.viewTransition` NULL on every
+   navigation. Un-nesting it and changing nothing else made the same probe
+   report non-null. Support for `@view-transition` inside a conditional group
+   rule landed later than the feature itself, and Arc reports a Chrome version
+   ahead of the engine it actually ships, so a version check would not have
+   caught this either.
+
+   The cost of that one commit was an entire session: the whole view transition
+   was silently dead in the only browser being looked at, so three consecutive
+   fixes to it were inert and read as "still not fixed". A feature that fails
+   CLOSED and silently is worse than one that fails loudly. `tests/
+   test_view_transitions.py` now asserts the at-rule is unnested.
+
+   Reduced motion is honoured below instead, by neutralising the animations.
+   That is the arrangement the previous comment here argued against, on the
+   grounds that a stated motion preference deserves no transition at all rather
+   than a transition with its parts individually switched off. The argument was
+   reasonable and is now overruled by measurement -- and it also matters much
+   less than it did, because the full-viewport luminance change it was written
+   about is gone: the content swap is instant for everyone now, so what reduced
+   motion has left to suppress is one sliding nav pill. */
+@view-transition { navigation: auto; }
+
+/* Everything that still moves, switched off -- which leaves an instant swap,
+   the same thing every other browser now gets for the content itself. Groups
+   are enumerated rather than matched with `*` because the universal form is
+   newer than the nesting support this file just got burned by. Keep this list
+   in step with the `view-transition-name` declarations below. */
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(root),
+  ::view-transition-group(app-rail),
+  ::view-transition-group(app-masthead),
+  ::view-transition-group(app-nav-active),
+  ::view-transition-group(app-rail-status),
+  ::view-transition-old(root),
+  ::view-transition-old(app-rail),
+  ::view-transition-old(app-masthead),
+  ::view-transition-old(app-nav-active),
+  ::view-transition-old(app-rail-status),
+  ::view-transition-new(root),
+  ::view-transition-new(app-rail),
+  ::view-transition-new(app-masthead),
+  ::view-transition-new(app-nav-active),
+  ::view-transition-new(app-rail-status) { animation: none; }
+  ::view-transition-old(root),
+  ::view-transition-old(app-rail),
+  ::view-transition-old(app-masthead),
+  ::view-transition-old(app-nav-active),
+  ::view-transition-old(app-rail-status) { opacity: 0; }
 }
 
 /* Name the chrome that is byte-identical on every page. A `view-transition-name`
