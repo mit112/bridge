@@ -1780,27 +1780,37 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
 }
 /* Figures line up column-wise down the list rather than jittering per row. */
 .projects-index .project-row__dirty { font-variant-numeric: tabular-nums; }
-/* The last-session note rides the activity column's FIRST line here instead
-   of claiming a whole second one (the base rule gives it `flex-basis: 100%`).
-   That is what makes the row two lines total -- name/status/metadata, then
-   the path -- rather than three. It keeps the base rule's single-line
-   ellipsis; `min-width: 0` is what lets that ellipsis actually engage inside
-   a flex item. */
-.projects-index .project-row__session { flex: 1 1 0; min-width: 0; }
-/* The activity line never wraps above the phone layer. It is the one part of
-   the row whose height is width-dependent, so letting it wrap is what made
-   heights run ragged as the viewport narrowed (65->87px at 1100 on rows whose
-   path fitted on one line).
-   Which item gives up space is decided by the flex bases, and the order
-   matters. The note's basis is 0, so it contributes nothing to the line's
-   base size: it soaks up whatever is left over and ellipsises, and the line
-   only goes into deficit once the pill, branch and dirty count alone
-   outgrow the column. At that point the branch is the one thing left that
-   can shrink -- so it, and only it, ellipsises, and short branches like
-   `main` are never touched. Both counts must also be `nowrap`: without it a
-   long branch word-wraps INSIDE its own span, which is the ragged height
-   this rule exists to stop, in a nastier form. */
-.projects-index .project-row__activity { flex-wrap: nowrap; }
+/* The last-session note keeps the base rule's own full-width basis, so the
+   activity column reads as two lines: status/branch/dirty, then the note.
+   Riding it on the status line instead looked like it bought a shorter row,
+   but it does not: the identity column beside it is ALREADY two lines (name
+   over path), so it -- not this column -- sets the row height. Measured: with
+   the note on its own line the list is 2375px and single-line-path rows are
+   65px, which is byte-for-byte what sharing the line produced.
+   Sharing it did cost something real, though. It ellipsised 11 of 36 notes,
+   one down to 40px of the 368px it needed, which is the same
+   truncation-without-an-affordance the path treatment above exists to avoid.
+   Full width is therefore free and strictly better. */
+.projects-index .project-row__session {
+  flex: 1 0 100%;
+  min-width: 0;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+}
+/* The activity column is exactly two lines: status/branch/dirty, then the
+   note on its own full-width basis above. It wraps only at that one seam --
+   the note's `flex-basis: 100%` is the sole thing that can start a new line,
+   because everything sharing line one is held to it by the rules below.
+   That distinction matters: free wrapping is what made heights run ragged as
+   the viewport narrowed (65->87px at 1100 on rows whose path fitted on one
+   line), but a wrap at a fixed seam is a constant, so heights stay level.
+   Line one never goes into deficit because the branch is allowed to
+   ellipsise and the dirty count is not allowed to wrap -- without the latter
+   a long branch word-wraps INSIDE its own span, which is the ragged height
+   this rule exists to stop, in a nastier form. Short branches like `main`
+   are never touched. */
+.projects-index .project-row__activity { flex-wrap: wrap; }
 .projects-index .project-row__branch {
   min-width: 0;
   overflow: hidden;
@@ -1969,13 +1979,24 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
    values, without collapsing to the phone layer's single-column rules. */
 @media (min-width: 768px) and (max-width: 1023px) {
   main { padding: 0 var(--space-5) var(--space-8); }
-  /* Projects drops to two tracks here (identity | activity) and moves the
-     action cell to a second grid row spanning both, right-aligned. Squeezing
-     three tracks plus the disclosure into ~730px left the activity column
-     around 200px, so paths wrapped on 25 rows out of 36 and heights ran
-     81->155px. With the action on its own row EVERY row has the same two-row
-     shape and the identity column gets the width back. Single-line-path rows
-     now measure 112px each with zero variance. */
+}
+
+/* Projects drops to two tracks through this whole band (identity | activity)
+   and moves the action cell to a second grid row spanning both, right-aligned.
+   Squeezing three tracks plus the disclosure in left the activity column around
+   200-270px, which wrapped the last-session note to FOUR lines and pushed the
+   worst row to 154px.
+
+   The band deliberately runs past 1024 rather than stopping there, because
+   1024 is the narrowest content area on the whole scale, not the widest of the
+   small ones: the sidebar rail appears AT 1024, so 1024 has ~768px of content
+   where 1023 -- rail stacked -- has ~980px. Ending the band at 1023 would hand
+   the tightest layout to the widest tracks. 1280 is the first width where three
+   tracks leave the activity column enough room for a one-line note.
+
+   With the action on its own row every row has the same two-row shape and both
+   text columns get the width back. */
+@media (min-width: 768px) and (max-width: 1279px) {
   .projects-index .project-row {
     grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
     row-gap: var(--space-2);
