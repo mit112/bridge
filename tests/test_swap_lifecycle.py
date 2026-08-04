@@ -91,6 +91,40 @@ def test_one_bad_enter_hook_does_not_abort_the_others(tmp_path):
     )
 
 
+def test_shell_js_fires_the_initial_enter_hook_once_on_first_load(tmp_path):
+    """The registry only QUEUES hooks -- nothing else performs the FIRST page
+    view. router.js (task 9) calls `enter()` only after a swap, so without a
+    bootstrap here every onEnter hook registered by an ordinary page load
+    would sit in the queue forever, unfired. Every static file is `defer`, so
+    all of them register their hooks before `DOMContentLoaded` fires -- that
+    event is shell.js's own trigger for the first view. Dispatching it twice
+    proves the boot itself is idempotent, not merely that the listener was
+    added once."""
+    script = tmp_path / "case.js"
+    shell_path = STATIC / "shell.js"
+    script.write_text(
+        f'const {{ makeDocument, report }} = require({json.dumps(str(MINIDOM))});\n'
+        f'const doc = makeDocument(null);\n'
+        f'doc.readyState = "loading";\n'
+        f'require("vm").runInThisContext(\n'
+        f'  require("fs").readFileSync({json.dumps(str(shell_path))}, "utf8"),\n'
+        f'  {{ filename: {json.dumps(str(shell_path))} }}\n'
+        f');\n'
+        f'const seen = [];\n'
+        f'window.bridgePage.onEnter(() => seen.push("entered"));\n'
+        f'doc.dispatchEvent({{ type: "DOMContentLoaded" }});\n'
+        f'doc.dispatchEvent({{ type: "DOMContentLoaded" }});\n'
+        f'report({{ seen }});\n'
+    )
+    proc = subprocess.run([_node(), str(script)], capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stderr
+    got = json.loads(proc.stdout)
+    assert got["seen"] == ["entered"], (
+        "shell.js must fire the first view's onEnter hooks exactly once off "
+        "DOMContentLoaded, even if that event were somehow dispatched again"
+    )
+
+
 def test_leave_hooks_run_on_leave_and_not_on_enter(tmp_path):
     got = run_js(
         """

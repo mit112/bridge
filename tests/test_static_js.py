@@ -2472,8 +2472,27 @@ globalThis.document = {
   addEventListener(type, fn) { if (type === "change") documentChangeListeners.push(fn); },
 };
 
+// Same queue-and-run shape as the real registry in shell.js. Its presence
+// (not just its shape) matters: shell.js loads first in every real page and
+// unconditionally defines `window.bridgePage`, so settings.js's
+// `if (window.bridgePage) ... else ...` guard always takes the `if` branch
+// in a browser -- a harness that leaves `bridgePage` undefined only ever
+// exercises the `else` fallback, which is not the path production code takes.
+const enterHooks = [];
+window.bridgePage = {
+  onEnter(fn) { enterHooks.push(fn); },
+  enter() { for (const fn of enterHooks) fn(); },
+};
+
 const fs = require("fs");
 eval(fs.readFileSync(process.argv[2], "utf8"));
+
+// Simulate shell.js's task-3 bootstrap: the browser calls `enter()` once for
+// the page's first view, after every deferred script (including this one)
+// has registered its hooks. Without this call, `restoreSettingsSelects`
+// would be queued but never run, and every assertion below would be
+// observing a page that never actually restored anything.
+window.bridgePage.enter();
 
 __INTERACTIONS__
 

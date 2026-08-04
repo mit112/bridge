@@ -39,6 +39,29 @@
     leave() { runAll(leaveHooks); },
   };
 
+  // The registry above replaces per-load work that used to happen at script
+  // evaluation time -- but nothing performs the FIRST page view: router.js
+  // (task 9) only calls `enter()` after a swap. Every static file is `defer`,
+  // so all of them run and register their onEnter hooks before
+  // `DOMContentLoaded` fires -- that event is therefore the correct trigger
+  // for the first view, and this file is the one allowed to bind it (it
+  // bootstraps before everything else and is exempt from the
+  // no-DOMContentLoaded rule the other page scripts follow). `booted` guards
+  // the call itself (not just the listener registration) so the first view
+  // runs exactly once regardless of `readyState` timing or whether the
+  // event fires again.
+  let booted = false;
+  function bootFirstEnter() {
+    if (booted) return;
+    booted = true;
+    window.bridgePage.enter();
+  }
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", bootFirstEnter);
+  } else {
+    bootFirstEnter();
+  }
+
   const root = document.documentElement;
 
   // The server cannot know a client-only preference, so the button ships
