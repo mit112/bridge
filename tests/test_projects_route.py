@@ -251,6 +251,44 @@ def test_projects_index_action_disclosure_is_constant_width_but_still_named(tmp_
     store.close()
 
 
+def test_projects_index_rows_carry_the_state_hook_the_status_edge_reads(tmp_path):
+    """The status edge is pure CSS keyed on `[data-project-state]`, so these
+    four literal strings are an interface, not an implementation detail --
+    renaming one in the template would silently drop a row's colour with no
+    other test noticing. The word beside it is the redundant, non-colour cue
+    (WCAG 1.4.1), so the two must always agree."""
+    cfg = _cfg(tmp_path, "state-hook")
+    store = Store(cfg.db_path)
+
+    queued_id = store.upsert_project(str(_dirty_repo(tmp_path)), "queued-project")
+    store.create_handoff(Handoff(
+        id="h1", project_path=str(tmp_path / "repo"), next_prompt="keep going",
+        created_at=int(datetime.now(timezone.utc).timestamp()),
+    ), queued_id)
+    store.upsert_project("/p/quiet", "quiet-project")
+
+    html = TestClient(create_app(store, cfg)).get("/projects").text
+    pairs = re.findall(
+        r'data-project-state="([a-z]+)".*?<span class="pill pill--([a-z]+)">([a-z]+)</span>',
+        html, re.S,
+    )
+    assert len(pairs) == 2
+    # `idle` is the one state that covers two words -- `_status_word` says
+    # "recent" for a project with a past session and "idle" for one with none
+    # -- and it is also the only state the edge deliberately leaves
+    # uncoloured, so both words must land in that bucket.
+    words = {
+        "queued": {"queued"}, "running": {"running"},
+        "stale": {"stale"}, "idle": {"recent", "idle"},
+    }
+    for state, pill_class, word in pairs:
+        assert state in words, f"unknown state {state!r} has no status edge"
+        assert word in words[state]
+        assert pill_class == word
+    assert "queued" in {state for state, _, _ in pairs}
+    store.close()
+
+
 def test_overview_nav_now_links_to_projects(tmp_path):
     """Projects is functional as of this task, so the shared shell's nav must
     grow to include it (no dead ends) rather than staying Milestone 1's
