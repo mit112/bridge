@@ -2,7 +2,7 @@
   {
     "name": "drop the supersede UPDATE entirely",
     "file": "src/bridge/store.py",
-    "old": "            self.conn.execute(\n                \"UPDATE handoffs SET status='superseded' \"\n                \"WHERE project_id=? AND status='queued' AND id<>?\",\n                (project_id, h.id),\n            )\n            self.conn.execute(",
+    "old": "            if h.source_session_id is not None:\n                self.conn.execute(\n                    \"UPDATE handoffs SET status='superseded' \"\n                    \"WHERE project_id=? AND status='queued' \"\n                    \"AND source_session_id=? AND id<>?\",\n                    (project_id, h.source_session_id, h.id),\n                )\n            self.conn.execute(",
     "new": "            self.conn.execute(",
     "tests": [
       "tests/test_store.py::test_second_handoff_supersedes_the_first_and_both_survive"
@@ -11,8 +11,8 @@
   {
     "name": "remove the `AND id<>?` self-supersede guard",
     "file": "src/bridge/store.py",
-    "old": "                \"WHERE project_id=? AND status='queued' AND id<>?\",\n                (project_id, h.id),",
-    "new": "                \"WHERE project_id=? AND status='queued'\",\n                (project_id,),",
+    "old": "                    \"WHERE project_id=? AND status='queued' \"\n                    \"AND source_session_id=? AND id<>?\",\n                    (project_id, h.source_session_id, h.id),",
+    "new": "                    \"WHERE project_id=? AND status='queued' \"\n                    \"AND source_session_id=?\",\n                    (project_id, h.source_session_id),",
     "tests": [
       "tests/test_store.py::test_reinserting_the_queued_handoff_does_not_supersede_itself"
     ]
@@ -20,8 +20,8 @@
   {
     "name": "move the INSERT outside the transaction (supersede commits alone)",
     "file": "src/bridge/store.py",
-    "old": "                (project_id, h.id),\n            )\n            self.conn.execute(\n                \"INSERT INTO handoffs(id, project_id, source_session_id, summary, \"",
-    "new": "                (project_id, h.id),\n            )\n        if True:\n            self.conn.execute(\n                \"INSERT INTO handoffs(id, project_id, source_session_id, summary, \"",
+    "old": "                    (project_id, h.source_session_id, h.id),\n                )\n            self.conn.execute(\n                \"INSERT INTO handoffs(id, project_id, source_session_id, summary, \"",
+    "new": "                    (project_id, h.source_session_id, h.id),\n                )\n        if True:\n            self.conn.execute(\n                \"INSERT INTO handoffs(id, project_id, source_session_id, summary, \"",
     "tests": [
       "tests/test_store.py::test_supersede_and_insert_are_atomic"
     ]
