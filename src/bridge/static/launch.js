@@ -262,12 +262,14 @@ function prefillLaunchDefaults() {
 // persisted. Without this flush an edit made and then navigated away from is
 // discarded silently, and the prompt cannot be rebuilt from transcripts.
 //
-// Deliberately not awaited: the swap must not be held up by the network, and
-// `savePrompt` already reports its own failure into the status line.
+// The hook itself does not await anything -- it only hands back the promise
+// `bridgePage.leave()` (router.js) awaits before it swaps. That is what lets a
+// failed save's warning land in `[data-prompt-status]` before the swap
+// discards it, without ever blocking synchronously here.
 if (window.bridgePage) {
-  window.bridgePage.onLeave(() => {
-    document.querySelectorAll("[data-prompt-handoff]").forEach(savePrompt);
-  });
+  window.bridgePage.onLeave(() => Promise.all(
+    Array.from(document.querySelectorAll("[data-prompt-handoff]")).map(savePrompt),
+  ));
   window.bridgePage.onEnter(prefillLaunchDefaults);
 }
 if (!window.bridgePage) prefillLaunchDefaults();

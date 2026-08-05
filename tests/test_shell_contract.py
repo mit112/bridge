@@ -137,6 +137,45 @@ def test_no_template_overrides_the_scripts_block():
     )
 
 
+def test_router_only_intercepts_the_sidebar_destinations():
+    """Widening this silently is how /project/{id} would start swapping.
+
+    That route has no fragment mode (Task 8), so intercepting a link to it would
+    swap in a whole document -- sidebar and all -- into the content region.
+    """
+    text = source("router.js")
+    assert "SWAPPABLE" in text
+    for path in ('"/"', '"/projects"', '"/schedule"', '"/diagnostics"', '"/settings"'):
+        assert path in text
+    assert "/project/" not in text
+
+
+def test_router_falls_back_to_a_normal_navigation():
+    text = source("router.js")
+    assert "location.assign" in text, (
+        "the router must fall back to a real navigation on any failure, or a "
+        "server error leaves the user on a page whose link did nothing"
+    )
+
+
+def test_router_awaits_the_leave_flush_before_swapping():
+    """Carried finding from Task 6, resolved here: a leave hook's async flush
+    (launch.js's prompt save) must settle before the swap discards the node it
+    warns through, or a failed save's warning is lost with nothing left to
+    announce through. bridgePage.leave() (Task 1) now returns a promise that
+    settles once every hook's own async work has settled; this asserts the
+    router actually awaits it rather than firing the swap alongside it.
+
+    tests/test_swap_lifecycle.py::test_a_failed_leave_flush_still_surfaces_its_warning_before_the_swap
+    proves the mechanism (bridgePage.leave()'s new contract) behaviourally; this
+    is the static check that router.js actually uses it.
+    """
+    assert "await window.bridgePage.leave()" in source("router.js"), (
+        "navigate() must await bridgePage.leave() before fetching the fragment, "
+        "or a leave hook's pending flush can lose its warning to the swap"
+    )
+
+
 def test_settings_js_is_loaded_from_base():
     """An actual `<script src>` tag, not just the filename anywhere in the file.
 

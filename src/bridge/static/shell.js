@@ -36,7 +36,33 @@
     onEnter(fn) { enterHooks.push(fn); },
     onLeave(fn) { leaveHooks.push(fn); },
     enter() { runAll(enterHooks); },
-    leave() { runAll(leaveHooks); },
+    // Returns a promise that settles once every leave hook's own async work has
+    // settled. Most hooks return nothing; launch.js's prompt flush returns one
+    // (deliberately not awaited INSIDE the hook -- it only hands the promise
+    // back). router.js (task 9) awaits this before fetching the fragment, so a
+    // flush's own announce() call -- success or failure -- lands on a still-live
+    // node instead of racing the swap that would otherwise discard it. Each hook
+    // still runs synchronously in registration order and a thrown error is still
+    // caught per-hook, exactly as before; a hook's async rejection is now also
+    // caught (via allSettled) rather than left to reject unobserved.
+    leave() {
+      const pending = [];
+      for (const fn of leaveHooks) {
+        try {
+          const result = fn();
+          if (result && typeof result.then === "function") pending.push(result);
+        } catch (error) {
+          console.error("bridge: page hook failed", error);
+        }
+      }
+      return Promise.allSettled(pending).then((results) => {
+        for (const result of results) {
+          if (result.status === "rejected") {
+            console.error("bridge: page hook failed", result.reason);
+          }
+        }
+      });
+    },
   };
 
   // The registry above replaces per-load work that used to happen at script

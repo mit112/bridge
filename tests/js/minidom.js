@@ -76,6 +76,12 @@ class El {
   }
   get hidden() { return this.getAttribute("hidden") !== null; }
   set hidden(v) { v ? this.setAttribute("hidden", "") : this.removeAttribute("hidden"); }
+  // `.id` reflects the `id` content attribute in every real DOM; launch.js
+  // reads `field.id` (not `getAttribute("id")`) to build a status selector, and
+  // nothing exercised that path until this task's tests, which is how this gap
+  // stayed unnoticed.
+  get id() { return this.getAttribute("id") || ""; }
+  set id(v) { this.setAttribute("id", v); }
   getAttribute(name) { return this.attrs.has(name) ? this.attrs.get(name) : null; }
   setAttribute(name, value) { this.attrs.set(name, String(value)); }
   removeAttribute(name) { this.attrs.delete(name); }
@@ -146,6 +152,25 @@ function makeDocument(root) {
   globalThis.document = doc;
   globalThis.window = globalThis;
   globalThis.window.matchMedia = () => ({ matches: false, addEventListener() {} });
+  // Task 9 (router.js): `window.addEventListener("popstate", ...)` runs at
+  // module load, and `navigate()` reads `window.location` and
+  // `window.history` -- none of which a bare `globalThis` has. Minimal stubs,
+  // matching this file's existing style of counting what the duplicate-hazard
+  // tests assert on (`__calls.locationAssign` below).
+  const globalListeners = new Map();
+  globalThis.addEventListener = (type, fn) => {
+    if (!globalListeners.has(type)) globalListeners.set(type, []);
+    globalListeners.get(type).push(fn);
+  };
+  globalThis.dispatchEvent = (event) => {
+    for (const fn of globalListeners.get(event.type) || []) fn(event);
+  };
+  globalThis.location = {
+    href: "http://localhost/",
+    origin: "http://localhost",
+    assign(href) { globalThis.__calls.locationAssign = href; },
+  };
+  globalThis.history = { pushState() {} };
   globalThis.localStorage = {
     _m: new Map(),
     getItem(k) { return this._m.has(k) ? this._m.get(k) : null; },

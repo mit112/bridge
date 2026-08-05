@@ -263,6 +263,143 @@ def test_an_unchanged_prompt_is_not_patched_on_leave(tmp_path):
     assert got["calls"] == []
 
 
+def test_a_failed_leave_flush_still_surfaces_its_warning_before_the_swap(tmp_path):
+    """Carried finding from Task 6, resolved here (not deferred further).
+
+    router.js's navigate() used to call bridgePage.leave() and move straight on
+    to fetching the fragment and replacing .shell__body -- fire-and-forget, per
+    Task 6's "don't await inside the hook" mandate. A PATCH that settled later
+    than the fragment fetch landed AFTER the status node it warns through had
+    already been swapped away, so announce()'s `if (status)` guard turned the
+    "Not saved" warning into a silent no-op: the user lost both the edit and
+    the warning.
+
+    bridgePage.leave() now returns a promise that resolves only once every leave
+    hook's own async work has settled, and router.js awaits it before fetching
+    the fragment (see the companion static check in test_shell_contract.py).
+    This proves the mechanism directly, independent of the router: a PATCH
+    rigged to settle several microtask ticks later than a bare, un-awaited
+    leave() call ever waited for still lands its announce() on a live node
+    before anything simulating a swap removes it.
+    """
+    got = run_js(
+        """
+        const { El } = require(MINIDOM);
+        const field = new El("textarea", { "data-prompt-handoff": "7", id: "p7" });
+        field.defaultValue = "ORIGINAL";
+        field.value = "EDITED BY THE USER";
+        document.body.append(field);
+        const status = new El("span", { "data-prompt-status": "p7" });
+        document.body.append(status);
+
+        // The handoff PATCH settles several microtask ticks later than an
+        // un-awaited leave() call would ever wait for -- exactly the race the
+        // carried finding describes ("resolves after the swap").
+        globalThis.fetch = (url, opts) => {
+          globalThis.__calls.fetch.push({ url, opts });
+          let p = Promise.resolve();
+          for (let i = 0; i < 4; i += 1) p = p.then(() => {});
+          return p.then(() => { throw new Error("network down"); });
+        };
+
+        (async () => {
+          const result = window.bridgePage.leave();
+          await result;
+          // Simulate the swap discarding the node AFTER leave() has settled --
+          // exactly what router.js's navigate() now does.
+          status.remove();
+          report({
+            leaveIsAwaitable: !!(result && typeof result.then === "function"),
+            text: status.textContent,
+          });
+        })();
+        """.replace("MINIDOM", json.dumps(str(MINIDOM))),
+        ["shell.js", "copy.js", "launch.js"],
+        tmp_path,
+    )
+    assert got["leaveIsAwaitable"], (
+        "bridgePage.leave() must return a promise, or router.js has nothing to "
+        "await before it fetches the fragment and swaps"
+    )
+    assert "Not saved" in got["text"], (
+        "the leave flush's warning never landed before something (a swap) "
+        "removed the node it announces through -- it vanished silently"
+    )
+
+
+def test_router_exposes_navigate_for_in_app_redirects(tmp_path):
+    got = run_js(
+        'report({ has: typeof window.bridgeNavigate });',
+        ["shell.js", "router.js"],
+        tmp_path,
+    )
+    assert got["has"] == "function"
+
+
+def test_router_ignores_a_modified_click_on_a_swappable_link(tmp_path):
+    """The standard opt-out: cmd/ctrl/shift/alt-click must keep its browser
+    meaning (new tab, new window, save-as) rather than being intercepted.
+
+    Mutation-verify guard for Step 7's first mutation (drop the modifier-key
+    guard) -- without it, this is the test that fails.
+    """
+    got = run_js(
+        """
+        const { El } = require(MINIDOM);
+        const link = new El("a", { href: "/projects" });
+        document.body.append(link);
+        let prevented = false;
+        const event = {
+          type: "click", target: link, button: 0,
+          metaKey: true, ctrlKey: false, shiftKey: false, altKey: false,
+          defaultPrevented: false,
+          preventDefault() { prevented = true; },
+        };
+        link.dispatchEvent(event);
+        report({ prevented, fetches: globalThis.__calls.fetch.length });
+        """.replace("MINIDOM", json.dumps(str(MINIDOM))),
+        ["shell.js", "router.js"],
+        tmp_path,
+    )
+    assert got["prevented"] is False, (
+        "a cmd-click on a swappable link was intercepted -- this breaks "
+        "cmd-click-to-new-tab"
+    )
+    assert got["fetches"] == 0
+
+
+def test_router_falls_back_to_a_real_navigation_on_a_failed_fetch(tmp_path):
+    """Mutation-verify guard for Step 7's second mutation (drop the `catch`
+    fallback).
+
+    `location.assign` also appears in navigate()'s own swappable-guard (a
+    distinct code path from `window.bridgeNavigate`, since that function is
+    exposed to any caller with any href), so a bare source substring check
+    cannot tell "the catch's fallback is intact" from "only the guard's
+    fallback survived." This drives an actual failing fetch through
+    navigate() with a URL that passes the swappable guard, so only the
+    catch's own fallback can be responsible for the assign.
+    """
+    got = run_js(
+        """
+        globalThis.fetch = (url, opts) => {
+          globalThis.__calls.fetch.push({ url, opts });
+          return Promise.resolve({ ok: false, status: 500 });
+        };
+        (async () => {
+          await window.bridgeNavigate("/projects");
+          report({ assigned: globalThis.__calls.locationAssign });
+        })();
+        """,
+        ["shell.js", "router.js"],
+        tmp_path,
+    )
+    assert got["assigned"] == "/projects", (
+        "a server error on the fragment fetch must fall back to a real "
+        "navigation, or the user is stranded on a link that did nothing"
+    )
+
+
 def test_only_one_event_source_across_many_navigations(tmp_path):
     """The surviving SSE connection is the concrete win of the persistent shell.
 
