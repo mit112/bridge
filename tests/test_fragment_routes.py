@@ -131,3 +131,18 @@ def test_the_project_detail_route_has_no_fragment_mode(c):
     client, pid = c
     body = client.get(f"/project/{pid}", headers=FRAGMENT).text
     assert "<!doctype html>" in body.lower()
+
+
+@pytest.mark.parametrize("path,active", ROUTES)
+def test_fragment_response_is_never_cacheable(c, path, active):
+    """A fragment and a full document share a URL, differing only by the request
+    header. Without `Cache-Control: no-store` a browser (its memory cache in
+    particular, which ignores `Vary`) can store the headless fragment under the
+    page URL and then serve it as the whole document on a back/forward
+    navigation -- rendering the page unstyled until a manual reload. `Vary`
+    marks the dependency for well-behaved shared caches; `no-store` is what
+    actually guarantees the fragment is never reused as a document.
+    """
+    resp = c[0].get(path, headers=FRAGMENT)
+    assert resp.headers.get("cache-control") == "no-store"
+    assert resp.headers.get("vary") == "X-Bridge-Fragment"
