@@ -1,7 +1,25 @@
 [project]
 name = "bridge"
 version = "0.1.0"
+description = "A local control panel for Claude Code projects — see each project's state, keep the next-session prompt with it, and launch the session from the card."
+readme = "README.md"
 requires-python = ">=3.13"
+authors = [{ name = "Mit Sheth" }]
+urls = { repository = "https://github.com/mit112/bridge" }
+license = { text = "MIT" }
+keywords = ["claude-code", "claude", "developer-tools", "productivity"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Environment :: MacOS X",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: Software Development :: User Interfaces",
+    "Topic :: Utilities",
+]
 dependencies = ["fastapi", "uvicorn[standard]", "jinja2"]
 
 [project.scripts]
@@ -19,6 +37,10 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/bridge"]
+force-include = { "commands/handoff.md" = "bridge/commands/handoff.md" }
+
+[tool.hatch.build.targets.sdist]
+include = ["commands/handoff.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
