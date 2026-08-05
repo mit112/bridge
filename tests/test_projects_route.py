@@ -134,6 +134,41 @@ def test_queued_count_counts_handoffs_not_cards(tmp_path):
     store.close()
 
 
+def test_running_count_excludes_a_queued_and_running_project(tmp_path):
+    """A project with BOTH a queued handoff and a live session renders as
+    "queued" (a queued handoff outranks a running session -- see
+    overview._status_word), and the Running filter matches on that rendered
+    state. So the Running count must not include it either: counting it under
+    Running while the row shows "queued" and the Running filter hides it is the
+    badge/count-vs-filter mismatch this guards against. It is still counted
+    under Queued (its handoff), consistent with how it renders."""
+    cfg = _cfg(tmp_path, "queued-and-running")
+    store = Store(cfg.db_path)
+    now = 10_000
+
+    pid = store.upsert_project("/p/both", "both-project")
+    store.create_handoff(Handoff(
+        id="h1", project_path="/p/both", next_prompt="keep going", created_at=now,
+    ), pid)
+
+    def agents_fn() -> AgentsState:
+        return AgentsState(status="ok", sessions=[LiveSession(
+            session_id="live-1", cwd="/p/both", kind="interactive", status="busy",
+        )])
+
+    model = build_projects(
+        store, cfg,
+        probe_fn=lambda path: GitState(status="ok", branch="main"),
+        agents_fn=agents_fn,
+    )
+
+    assert model.rows[0].status_word == "queued"
+    assert model.counts["running"] == 0
+    assert model.counts["queued"] == 1
+    assert model.counts["needs_attention"] == 1
+    store.close()
+
+
 def test_build_projects_rows_keep_the_card_actionability_order(tmp_path):
     """`rows` is `[project_summary(card, now) for card in cards]` -- the exact
     order `build_cards`/`cards.sort_key` already produces (handoff first),
