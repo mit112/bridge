@@ -191,9 +191,17 @@ class Card:
     # The sensor failed, as distinct from `live is None` meaning nothing is
     # running. Collapsing the two asserts quiescence from a broken read.
     live_unavailable: bool = False
-    # The queued handoff, as a plain dict. A card carries at most one: the store
-    # supersedes the rest, so "what next" is never ambiguous.
-    handoff: dict | None = None
+    # Every queued handoff for this project, newest first. A project can carry
+    # several at once -- one per authoring session -- and the launch surface
+    # renders one fireable block per entry. Empty when nothing is queued.
+    handoffs: list[dict] = field(default_factory=list)
+
+    @property
+    def handoff(self) -> dict | None:
+        """The newest queued handoff, or None. Compatibility shim for readers
+        that still think in terms of a single 'what's next'; new code iterates
+        `handoffs`."""
+        return self.handoffs[0] if self.handoffs else None
     # The launch band's option lists, copied off `Config` by `build_cards`. They
     # live on the card because the launch band renders per card and the template
     # only ever sees the card, so this is what keeps the configured vocabulary

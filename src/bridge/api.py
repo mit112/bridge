@@ -1009,6 +1009,21 @@ def create_app(
             return Response(status_code=204)
         return dict(row)
 
+    @app.get("/api/handoffs")
+    def list_handoffs_by_path(project_path: str):
+        """Every queued handoff for a project, for the panel's stacked view.
+        Returns [] (not 204) for an unknown or empty project, so the client
+        renders 'nothing queued' without special-casing a no-content status."""
+        canonical = store.alias_map().get(project_path, project_path)
+        project = store.project_by_path(canonical)
+        if project is None:
+            return []
+        return [dict(r) for r in store.queued_handoffs(project["id"])]
+
+    @app.get("/api/handoffs/{project_id}")
+    def list_handoffs(project_id: int):
+        return [dict(r) for r in store.queued_handoffs(project_id)]
+
     @app.patch("/api/handoff/{handoff_id}")
     def patch_handoff(handoff_id: str, body: HandoffPatch):
         """Edit the queued prompt, change the status, or both.
@@ -1056,40 +1071,45 @@ def create_app(
 
         The boundary is whether a `launches` row exists yet:
 
-        * Nothing recorded — an unknown mode, a NUL or oversize prompt, no
-          `claude` on `PATH`, no prompt and nothing queued — is a `422`. Nothing
-          happened, there is no launch id or outcome to report, and a
-          `200 {outcome: 'failed'}` would describe a launch the database does not
-          have.
+        * Nothing recorded — an unknown mode, a NUL or oversize prompt, neither
+          a prompt nor a handoff_id — is a `422`. Nothing happened, there is no
+          launch id or outcome to report, and a `200 {outcome: 'failed'}` would
+          describe a launch the database does not have.
         * A row exists and the *spawn* failed: `200`, `outcome='failed'`, and a
           non-empty `error`. The panel needs the error text and the prompt in the
           same response to show one and copy the other, and a 500 gives it
           neither. The handoff stays queued, so nothing is lost.
         """
-        # Read-only resolution, matching `GET /api/handoff`: looking for a queued
-        # prompt must not bring a project row into existence, or a launch that is
-        # about to be refused would leave one behind. Canonicalising the project
-        # for the launch itself is `launch()`'s job, through the same alias table.
+        # Canonicalising the project path is needed for the title default
+        # below, matching `GET /api/handoff`'s alias resolution; the launch
+        # itself canonicalises again through the same alias table, inside
+        # `launch()`.
         canonical = store.alias_map().get(body.project_path, body.project_path)
-        project = store.project_by_path(canonical)
-        queued = store.queued_handoff(project["id"]) if project else None
 
         prompt, handoff_id = body.prompt, body.handoff_id
-        if prompt is None:
-            if queued is None:
-                raise HTTPException(
-                    status_code=422,
-                    detail=f"no prompt supplied and nothing queued for {canonical}",
-                )
-            prompt, handoff_id = queued["next_prompt"], queued["id"]
+        if prompt is None and handoff_id is None:
+            # A project may have several queued handoffs; grabbing one at
+            # random would fire whichever happened to be newest instead of
+            # the one the caller meant, so the target must be explicit.
+            raise HTTPException(
+                status_code=422,
+                detail="supply a prompt or a handoff_id; a project may have "
+                       "several queued handoffs and the target must be explicit",
+            )
 
-        # Passing the handoff id is what gets it consumed and journalled, and only
-        # on success — `launch()` leaves it queued when the spawn fails.
+        # Fetched once and reused below for both the prompt (when the caller
+        # sent a handoff_id but no prompt) and the launch title, so an explicit
+        # handoff_id doesn't hit the store twice for the same row. Passing the
+        # id on to `fire` is what gets it consumed and journalled, and only on
+        # success — `launch()` leaves it queued when the spawn fails.
         handoff = store.get_handoff(handoff_id) if handoff_id else None
         if handoff_id and handoff is None:
-            # `launches.handoff_id` has a foreign key, so an id the client made up
-            # would otherwise surface as an IntegrityError traceback from `launch()`.
+            # `launches.handoff_id` has a foreign key, so an id the client made
+            # up would otherwise surface as an IntegrityError traceback from
+            # `launch()`.
             raise HTTPException(status_code=404, detail="unknown handoff")
+        if prompt is None:
+            prompt = handoff["next_prompt"]
         title = body.title or launcher.default_title(
             handoff["summary"] if handoff else None, display_name(canonical)
         )

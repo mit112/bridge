@@ -157,9 +157,9 @@ document.addEventListener("input", (event) => {
 // Dismiss a queued handoff from the workspace's Current tab. Reuses the same
 // PATCH the handoff prompt already saves through — only the body differs —
 // so no new write path is introduced. No reload: the already-rendered
-// handoff section and empty-state paragraph swap `hidden` in place, and the
-// launch band that was driving the queued handoff demotes to a plain ad hoc
-// launch rather than keep pointing at a prompt that no longer exists.
+// handoff section, its launch band, and its dismiss button swap `hidden` in
+// place, and the empty-state paragraph is revealed only once no handoff
+// section remains on the page.
 document.addEventListener("click", async (event) => {
   const button = event.target.closest("[data-handoff-dismiss]");
   if (!button) return;
@@ -180,30 +180,26 @@ document.addEventListener("click", async (event) => {
 
     // The launch band that was driving THIS handoff -- matched by
     // `data-launch-handoff`, not by the band's own id, since the band's id is
-    // keyed off the project, not the handoff. Demoted to a plain launch: the
-    // handoff link is dropped and `data-launch-prompt` is RE-POINTED at the ad
-    // hoc compose textarea rather than removed, landing the band on the exact
-    // empty-state wiring the server renders when nothing is queued -- the band
-    // id is `launch-<project_id>` and the compose box is `compose-<project_id>`.
-    // The primary button falls back to the empty-state label AND starts
-    // disabled (enabled only once the compose box has text, by the input
-    // listener above); without this, "Start session" would fire a promptless
-    // /api/launch and 422.
+    // keyed off the handoff, not the project. The compose box (always
+    // rendered, per Task 5) is the page's one "start a session" affordance,
+    // so there is nothing left to demote this band to -- it and its dismiss
+    // button just hide alongside the section. The status span stays out of
+    // this: it is a SIBLING of the button, never inside it, so it is left in
+    // the accessibility tree for `announce` below to reach.
     const band = document.querySelector(`[data-launch-handoff="${id}"]`);
-    if (band) {
-      band.removeAttribute("data-launch-handoff");
-      const composeId = (band.getAttribute("data-launch") || "").replace(/^launch-/, "compose-");
-      band.setAttribute("data-launch-prompt", composeId);
-      const launchButton = band.querySelector("[data-launch-button]");
-      if (launchButton && launchButton.textContent.trim() === "Continue in Terminal") {
-        launchButton.textContent = "Start session";
-        const compose = document.getElementById(composeId);
-        launchButton.disabled = !compose || compose.value.trim() === "";
-      }
-    }
+    if (band) band.hidden = true;
+    button.hidden = true;
 
-    const empty = document.querySelector(`[data-handoff-empty]`);
-    if (empty) empty.hidden = false;
+    // The empty-state is only true once every queued handoff is gone -- a
+    // sibling handoff still showing means "no session in progress" would be
+    // a lie. `:not([hidden])` is left out of the selector itself (the
+    // mini-DOM harness only models tag/class/id/attribute parts, never a
+    // pseudo-class) and done instead with a plain array filter.
+    const sections = Array.from(document.querySelectorAll("[data-handoff-section]"));
+    if (sections.every((el) => el.hidden)) {
+      const empty = document.querySelector(`[data-handoff-empty]`);
+      if (empty) empty.hidden = false;
+    }
 
     announce(key, "✓ Dismissed");
   } catch (error) {

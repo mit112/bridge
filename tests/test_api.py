@@ -624,6 +624,43 @@ def test_get_returns_204_when_nothing_is_queued(handoff_app):
     assert r.content == b""
 
 
+def test_handoffs_plural_returns_all(handoff_app):
+    """Several handoffs stay queued per project; the panel needs the whole
+    stack, not just the newest -- that's still `GET /api/handoff`'s job."""
+    c, _, _ = handoff_app
+    c.post("/api/handoff", json=body("h1", path="/proj/a", prompt="plan", session_id="s1"))
+    c.post("/api/handoff", json=body("h2", path="/proj/a", prompt="ui", session_id="s2"))
+
+    r = c.get("/api/handoffs", params={"project_path": "/proj/a"})
+
+    assert r.status_code == 200
+    assert {h["id"] for h in r.json()} == {"h1", "h2"}
+
+
+def test_handoffs_plural_empty_is_empty_list(handoff_app):
+    """[] rather than 204, so the client renders 'nothing queued' without
+    special-casing a no-content status."""
+    c, _, _ = handoff_app
+
+    r = c.get("/api/handoffs", params={"project_path": "/proj/none"})
+
+    assert r.status_code == 200
+    assert r.json() == []
+
+
+def test_handoffs_plural_by_project_id_returns_all(handoff_app):
+    """The `/{project_id}` sibling of the plural route, mirroring the
+    singular `GET /api/handoff/{project_id}`."""
+    c, store, _ = handoff_app
+    pid = c.post("/api/handoff", json=body("h1", session_id="s1")).json()["project_id"]
+    c.post("/api/handoff", json=body("h2", session_id="s2"))
+
+    r = c.get(f"/api/handoffs/{pid}")
+
+    assert r.status_code == 200
+    assert {h["id"] for h in r.json()} == {"h1", "h2"}
+
+
 def test_patch_sets_status_and_rejects_unknown_ids_and_statuses(handoff_app):
     c, _, _ = handoff_app
     pid = c.post("/api/handoff", json=body("h1")).json()["project_id"]
@@ -798,20 +835,25 @@ def launch_app(tmp_path):
 def test_a_launch_from_an_aliased_path_attaches_to_the_canonical_project(launch_app):
     """A ▶ pressed on an old ~/Documents path must not re-split merged history.
 
-    The launch sends no prompt, so the route has to resolve the alias itself to
-    find the queued handoff at all -- which is the resolution being asserted.
+    The launch sends an explicit handoff_id but no prompt, so `fire()` still has
+    to resolve the project path's alias itself for the spec it hands the
+    launcher -- which is the resolution being asserted. The handoff carries no
+    summary and the alias's directory name differs from the canonical one, so
+    the launch title also proves `post_launch` resolves the alias itself for
+    its own title default, rather than using the raw, un-resolved path.
     """
     c, store, _, fake = launch_app
-    store.set_alias("/Users/mitsheth/Documents/projectX", "/Users/mitsheth/dev/projectX")
-    c.post("/api/handoff", json=body("h1", path="/Users/mitsheth/dev/projectX"))
+    store.set_alias("/Users/mitsheth/Documents/old-name", "/Users/mitsheth/dev/projectX")
+    c.post("/api/handoff", json=body("h1", path="/Users/mitsheth/dev/projectX", summary=None))
 
     r = c.post("/api/launch",
-               json={"project_path": "/Users/mitsheth/Documents/projectX"})
+               json={"project_path": "/Users/mitsheth/Documents/old-name",
+                     "handoff_id": "h1"})
 
     assert r.status_code == 200, r.text
     assert r.json()["outcome"] == "started"
     assert r.json()["handoff_id"] == "h1"
-    assert store.project_by_path("/Users/mitsheth/Documents/projectX") is None
+    assert store.project_by_path("/Users/mitsheth/Documents/old-name") is None
     assert store.project_by_path("/Users/mitsheth/dev/projectX") is not None
     # `fire()` resolves the alias itself (Task 2), so the spec it hands the
     # launcher already carries the canonical path -- a real terminal launch
@@ -820,6 +862,9 @@ def test_a_launch_from_an_aliased_path_attaches_to_the_canonical_project(launch_
     spec, handoff_id = fake.calls[0]
     assert spec.project_path == "/Users/mitsheth/dev/projectX"
     assert handoff_id == "h1"
+    # And the title falls back to the *canonical* project name, not the raw
+    # alias -- `post_launch` must resolve the alias itself for this default.
+    assert spec.title == "projectX"
 
 
 def test_a_failed_launch_is_a_200_carrying_the_error_and_the_prompt(launch_app):
@@ -830,7 +875,7 @@ def test_a_failed_launch_is_a_200_carrying_the_error_and_the_prompt(launch_app):
         launch_id="l9", outcome="failed", error="/usr/bin/osascript exited 1: boom"
     )
 
-    r = c.post("/api/launch", json={"project_path": DEMO})
+    r = c.post("/api/launch", json={"project_path": DEMO, "handoff_id": "h1"})
 
     assert r.status_code == 200, r.text
     got = r.json()
@@ -898,7 +943,8 @@ def test_a_successful_launch_consumes_the_handoff(launch_app):
     c, _, _, fake = launch_app
     pid = c.post("/api/handoff", json=body("h1")).json()["project_id"]
 
-    assert c.post("/api/launch", json={"project_path": DEMO}).json()["outcome"] == "started"
+    assert c.post("/api/launch", json={"project_path": DEMO, "handoff_id": "h1"}
+                  ).json()["outcome"] == "started"
 
     assert c.get(f"/api/handoff/{pid}").status_code == 204
     # Consumption and its journal record are the launcher's, which is why the id
@@ -906,12 +952,17 @@ def test_a_successful_launch_consumes_the_handoff(launch_app):
     assert fake.calls[0][1] == "h1"
 
 
-def test_a_launch_with_no_prompt_uses_the_queued_handoff(launch_app):
-    """`bridge launch` sends no prompt at all; this pins that contract."""
+def test_a_launch_with_an_explicit_handoff_id_and_no_prompt_uses_its_next_prompt(launch_app):
+    """`bridge launch` sends a handoff_id but no prompt; this pins that contract.
+
+    A project may have several queued handoffs, so the id must be explicit --
+    unlike the old fallback, the route no longer guesses which one to run.
+    """
     c, _, _, fake = launch_app
     c.post("/api/handoff", json=body("h1", prompt="carry on from here"))
 
-    r = c.post("/api/launch", json={"project_path": DEMO, "mode": "background",
+    r = c.post("/api/launch", json={"project_path": DEMO, "handoff_id": "h1",
+                                    "mode": "background",
                                     "model": "opus", "effort": "high"})
 
     assert r.status_code == 200, r.text
@@ -941,6 +992,36 @@ def test_a_launch_with_nothing_queued_and_no_prompt_is_a_clear_error(launch_app)
     assert store.project_by_path(unknown) is None
 
 
+def test_launch_without_prompt_or_handoff_is_422(launch_app):
+    """A project may have several queued handoffs; grabbing an arbitrary one
+    would fire the wrong prompt, so both omitted is refused rather than
+    guessed."""
+    c, _, _, fake = launch_app
+    c.post("/api/handoff", json=body("h1"))
+
+    r = c.post("/api/launch", json={"project_path": DEMO})
+
+    assert r.status_code == 422
+    assert fake.calls == [], "a refused launch must not reach the launcher"
+
+
+def test_launch_with_explicit_handoff_fires_that_one(launch_app):
+    """An explicit handoff_id fires exactly that handoff, leaving any other
+    queued handoffs for the same project untouched."""
+    c, _, _, fake = launch_app
+    c.post("/api/handoff", json=body("h1", prompt="plan", session_id="s1"))
+    c.post("/api/handoff", json=body("h2", prompt="ui", session_id="s2"))
+
+    r = c.post("/api/launch", json={"project_path": DEMO, "handoff_id": "h1"})
+
+    assert r.status_code == 200, r.text
+    assert r.json()["outcome"] == "started"
+    assert fake.calls[0][1] == "h1"
+    # h1 consumed, h2 still queued.
+    remaining = c.get("/api/handoffs", params={"project_path": DEMO}).json()
+    assert {h["id"] for h in remaining} == {"h2"}
+
+
 def test_a_refused_launch_is_422_where_a_failed_spawn_is_200(launch_app):
     """A `LaunchError` is raised *before* the `launches` row exists.
 
@@ -952,7 +1033,7 @@ def test_a_refused_launch_is_422_where_a_failed_spawn_is_200(launch_app):
     pid = c.post("/api/handoff", json=body("h1")).json()["project_id"]
     fake.result = launcher.LaunchError("claude is not on PATH; cannot launch a session")
 
-    r = c.post("/api/launch", json={"project_path": DEMO})
+    r = c.post("/api/launch", json={"project_path": DEMO, "handoff_id": "h1"})
 
     assert r.status_code == 422
     assert "not on PATH" in r.json()["detail"]
@@ -976,12 +1057,13 @@ def test_an_unknown_mode_is_422_and_never_reaches_the_launcher(launch_app):
     c, _, _, fake = launch_app
     c.post("/api/handoff", json=body("h1"))
 
-    r = c.post("/api/launch", json={"project_path": DEMO, "mode": "tmux"})
+    r = c.post("/api/launch",
+               json={"project_path": DEMO, "handoff_id": "h1", "mode": "tmux"})
 
     assert r.status_code == 422
     assert fake.calls == []
     # And the default is terminal, so the CLI and the card can both omit it.
-    c.post("/api/launch", json={"project_path": DEMO})
+    c.post("/api/launch", json={"project_path": DEMO, "handoff_id": "h1"})
     assert fake.calls[0][0].mode == "terminal"
 
 
@@ -1055,7 +1137,7 @@ def test_both_launch_selects_are_labelled_and_preselect_the_suggestion(launch_ap
     ).json()["project_id"]
 
     html = c.get(f"/project/{pid}?tab=current").text
-    lid = f"launch-{pid}"
+    lid = "launch-h1"
 
     assert f'<label class="launch__label" for="{lid}-model">Model</label>' in html
     assert f'<label class="launch__label" for="{lid}-effort">Effort</label>' in html
@@ -1094,7 +1176,7 @@ def test_a_suggestion_the_config_does_not_list_is_still_preselected(launch_app):
     html = c.get(f"/project/{pid}?tab=current").text
 
     assert f'<option value="{off_catalog}" selected>{off_catalog}</option>' in html
-    assert f'id="launch-{pid}-model"' in html
+    assert 'id="launch-h1-model"' in html
 
 
 def test_with_no_suggestion_the_first_catalog_entry_is_selected(launch_app):
@@ -1141,7 +1223,12 @@ def test_a_card_with_no_queued_handoff_still_renders_a_launch_band(launch_app):
     html = c.get(f"/project/{pid}?tab=current").text
 
     assert f'data-launch="launch-{pid}"' in html
-    assert f'data-compose-launch="launch-{pid}"' in html
+    # The compose box is self-contained (Task 5 fix round 2): it owns its own
+    # launch selects and points `data-compose-launch` at its own `cid`, never
+    # at the launch band's `lid` -- a queued-handoff page has no band keyed
+    # off the project id at all, so borrowing the band's id would resolve to
+    # nothing.
+    assert f'data-compose-launch="compose-{pid}"' in html
     assert f'id="launch-{pid}-model"' in html
     assert f'data-launch-status="launch-{pid}"' in html
     # ...and no queued-handoff artifacts. The compose box's own textarea is
@@ -1169,9 +1256,11 @@ def test_every_new_control_is_labelled_and_none_leaves_the_tab_order(launch_app)
     labelled = set(re.findall(r'<label[^>]*\sfor="([^"]+)"', html))
     fields = re.findall(r"<(?:select|textarea)\b[^>]*>", html)
     # Three launch-band selects and the handoff's own prompt field, plus
-    # Task 5's compose box (its prompt field and its own mode select) and the
-    # handoff's "Schedule…" reveal (one more mode select).
-    assert len(fields) == 7, "three launch selects, two mode selects, two prompts"
+    # Task 5's compose box (its prompt field, its own three launch selects --
+    # fix round 2 gave it its own model/effort/permission controls -- and its
+    # own mode select) and the handoff's "Schedule…" reveal (one more mode
+    # select).
+    assert len(fields) == 10, "six launch selects, two mode selects, two prompts"
     for tag in fields:
         ident = re.search(r'\sid="([^"]+)"', tag)
         assert (ident and ident.group(1) in labelled) or "aria-label=" in tag, tag
@@ -1228,7 +1317,7 @@ def test_a_launch_with_no_permission_mode_reaches_the_spec_as_none(launch_app):
     reconstituted into a benign-looking mode somewhere in the middle."""
     c, _, _, launch_fn = launch_app
     c.post("/api/handoff", json=body("h1"))
-    c.post("/api/launch", json={"project_path": DEMO})
+    c.post("/api/launch", json={"project_path": DEMO, "handoff_id": "h1"})
     spec, _ = launch_fn.calls[-1]
     assert spec.permission_mode is None
 
@@ -1237,7 +1326,8 @@ def test_the_requested_permission_mode_reaches_the_spec_verbatim(launch_app):
     c, _, _, launch_fn = launch_app
     c.post("/api/handoff", json=body("h1"))
     c.post("/api/launch",
-           json={"project_path": DEMO, "permission_mode": "bypassPermissions"})
+           json={"project_path": DEMO, "handoff_id": "h1",
+                 "permission_mode": "bypassPermissions"})
     spec, _ = launch_fn.calls[-1]
     assert spec.permission_mode == "bypassPermissions"
 
@@ -1277,7 +1367,7 @@ def test_the_permission_select_is_labelled_and_marked_dangerous(launch_app):
     c, _, _, _ = launch_app
     pid = c.post("/api/handoff", json=body("h1")).json()["project_id"]
     html = c.get(f"/project/{pid}?tab=current").text
-    assert re.search(r'<label[^>]*for="launch-\d+-perm">Permissions</label>', html)
+    assert re.search(r'<label[^>]*for="launch-h1-perm">Permissions</label>', html)
     # Colour is never the only signal: the option says so in words.
     assert "SKIP ALL CHECKS" in html
 

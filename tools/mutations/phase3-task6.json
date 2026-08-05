@@ -1,10 +1,11 @@
 [
   {
-    "name": "key the launch band's ids off the handoff id, so ids collide across cards",
+    "name": "revert the launch band's ids to the project id, so stacked handoffs collide",
     "file": "src/bridge/templates/_launch.html",
-    "old": "  {% set lid = \"launch-\" ~ card.project_id %}",
-    "new": "  {% set lid = \"launch-\" ~ (card.handoff.id if card.handoff else \"\") %}",
+    "old": "  {% set lid = (\"launch-\" ~ handoff.id) if handoff else (\"launch-\" ~ card.project_id) %}",
+    "new": "  {% set lid = \"launch-\" ~ card.project_id %}",
     "tests": [
+      "tests/test_workspace.py::test_stacked_launch_bands_get_unique_ids_per_handoff",
       "tests/test_api.py::test_two_cards_produce_no_duplicate_element_id",
       "tests/test_api.py::test_a_card_with_no_queued_handoff_still_renders_a_launch_band"
     ],
@@ -43,8 +44,8 @@
   {
     "name": "mark the textarea safe, so </textarea><script> escapes the field",
     "file": "src/bridge/templates/_launch.html",
-    "old": "{{ card.handoff.next_prompt }}</textarea>",
-    "new": "{{ card.handoff.next_prompt | safe }}</textarea>",
+    "old": "{{ handoff.next_prompt }}</textarea>",
+    "new": "{{ handoff.next_prompt | safe }}</textarea>",
     "tests": [
       "tests/test_api.py::test_the_editable_prompt_is_html_escaped_in_the_textarea"
     ],

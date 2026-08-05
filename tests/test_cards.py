@@ -582,3 +582,31 @@ def test_the_debouncer_forgets_sessions_that_are_gone():
     d.apply([], now=101.0)
     assert d._shown == {}
     assert d._quiet_since == {}
+
+
+# --- Phase 4 Task 2: all queued handoffs, newest-of compat -------------------
+
+
+def test_card_carries_all_queued_handoffs(store, tmp_path):
+    pid = store.upsert_project("/proj/a", "a")
+    store.create_handoff(
+        Handoff(id="h1", project_path="/proj/a", next_prompt="plan",
+                source_session_id="sess-1", created_at=1), pid)
+    store.create_handoff(
+        Handoff(id="h2", project_path="/proj/a", next_prompt="ui",
+                source_session_id="sess-2", created_at=2), pid)
+    cfg = load({"db_path": tmp_path / "c.db"})
+    cards = build_cards(store, cfg, probe_fn=lambda p: GitState(status="ok"))
+    card = next(c for c in cards if c.path == "/proj/a")
+    assert {h["id"] for h in card.handoffs} == {"h1", "h2"}
+    # Compat property returns the newest (h2 is created last).
+    assert card.handoff["id"] == "h2"
+
+
+def test_card_no_handoffs_is_empty_list(store, tmp_path):
+    store.upsert_project("/proj/b", "b")
+    cfg = load({"db_path": tmp_path / "c.db"})
+    cards = build_cards(store, cfg, probe_fn=lambda p: GitState(status="ok"))
+    card = next(c for c in cards if c.path == "/proj/b")
+    assert card.handoffs == []
+    assert card.handoff is None

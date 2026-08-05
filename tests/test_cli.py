@@ -40,9 +40,15 @@ def closed_port() -> int:
 
 @pytest.fixture
 def fake_server():
-    """A real HTTP server on a real port, with a settable status code."""
-    state = {"code": 201, "get_body": None, "posts": [],
-             "post_body": {"id": "server-side"}}
+    """A real HTTP server on a real port, with a settable status code.
+
+    `/api/handoffs` (plural, by-path list) and `/api/handoff` (singular) are
+    routed separately so a test can assert both that the right GET happened
+    and what the POST body carried, rather than one stub answering for both.
+    """
+    state = {"code": 201, "get_body": None, "posts": [], "gets": [],
+             "post_body": {"id": "server-side"},
+             "handoffs_body": [{"id": "auto-handoff", "summary": "auto-picked"}]}
 
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self):
@@ -54,6 +60,15 @@ def fake_server():
             self.wfile.write(json.dumps(state["post_body"]).encode())
 
         def do_GET(self):
+            path = self.path.split("?", 1)[0]
+            state["gets"].append(path)
+            if path == "/api/handoffs":
+                # Contract: always 200 with a list, never 204, even when empty.
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps(state["handoffs_body"]).encode())
+                return
             body = state["get_body"]
             self.send_response(200 if body is not None else 204)
             self.send_header("Content-Type", "application/json")
@@ -233,6 +248,10 @@ def test_launch_exits_one_where_handoff_exits_zero_on_the_same_closed_port(tmp_p
     only copy of something. `launch` must not, because a launch that did not
     happen has lost nothing and a launch deferred to some later boot is worse
     than one that never fired.
+
+    `--handoff` is passed so `launch` reaches the POST (and its unreachable
+    handling) directly rather than failing earlier at the GET this task added;
+    that GET's own panel-down handling has its own coverage above.
     """
     port = closed_port()
     home = tmp_path / "home"
@@ -247,7 +266,7 @@ def test_launch_exits_one_where_handoff_exits_zero_on_the_same_closed_port(tmp_p
             cwd=str(tmp_path), env=env,
         )
 
-    launch = run(["launch", "--project", DEMO])
+    launch = run(["launch", "--project", DEMO, "--handoff", "h1"])
     handoff = run(["handoff", "--prompt-file", "-", "--project", DEMO], HOSTILE)
 
     assert (launch.returncode, handoff.returncode) == (1, 0), (
@@ -258,15 +277,43 @@ def test_launch_exits_one_where_handoff_exits_zero_on_the_same_closed_port(tmp_p
     assert "panel unreachable" in launch.stderr
 
 
-def test_a_failed_launch_writes_no_spool_file(tmp_path):
-    """A spooled launch would fire at an unpredictable later time. Nothing at all
-    must be left behind that a drain could pick up."""
+def test_launch_with_neither_flag_and_the_panel_down_exits_one_and_posts_nothing(
+    tmp_path
+):
+    """With no `--prompt-file` and no `--handoff`, target resolution GETs
+    `/api/handoffs` before ever reaching the POST this task's other tests
+    exercise directly; a genuinely closed port covers that GET's own
+    unreachable handling, on a real socket rather than a mocked transport."""
     port = closed_port()
     home = tmp_path / "home"
     home.mkdir()
 
     proc = subprocess.run(
         [sys.executable, "-m", "bridge", "launch", "--project", DEMO],
+        input="", capture_output=True, text=True, cwd=str(tmp_path),
+        env={"HOME": str(home), "PATH": "/usr/bin:/bin",
+             "BRIDGE_PORT": str(port), "PYTHONDONTWRITEBYTECODE": "1"},
+    )
+
+    assert proc.returncode == 1, f"stderr:\n{proc.stderr}"
+    assert proc.stdout == ""
+    assert "panel unreachable" in proc.stderr
+    left = [p for p in (home / ".bridge").rglob("*") if p.is_file()]
+    assert left == [], f"a failed launch left files behind: {left}"
+
+
+def test_a_failed_launch_writes_no_spool_file(tmp_path):
+    """A spooled launch would fire at an unpredictable later time. Nothing at all
+    must be left behind that a drain could pick up.
+
+    `--handoff` reaches the POST directly, same rationale as above."""
+    port = closed_port()
+    home = tmp_path / "home"
+    home.mkdir()
+
+    proc = subprocess.run(
+        [sys.executable, "-m", "bridge", "launch", "--project", DEMO,
+         "--handoff", "h1"],
         input="", capture_output=True, text=True, cwd=str(tmp_path),
         env={"HOME": str(home), "PATH": "/usr/bin:/bin",
              "BRIDGE_PORT": str(port), "PYTHONDONTWRITEBYTECODE": "1"},
@@ -326,28 +373,108 @@ def test_launching_an_empty_prompt_file_launches_nothing(monkeypatch, tmp_path,
 
 def test_launch_without_a_prompt_file_sends_no_prompt_at_all(monkeypatch, tmp_path,
                                                              fake_server):
-    """Asserted as an absence, because the server-side fallback to the queued
-    handoff is the whole point: an empty-string prompt would look like a request
-    to launch nothing, and echoing the queued prompt back would let the client
-    launch text the panel no longer holds."""
+    """Asserted as an absence, because the client auto-picks the one queued
+    handoff by id rather than reading (or round-tripping) its prompt: an
+    empty-string prompt would look like a request to launch nothing, and
+    echoing the queued prompt back would let the client launch text the panel
+    no longer holds.
+
+    This is also the regression test for the bug this task fixes: with no
+    `--prompt-file` and no `--handoff`, the CLI used to POST a payload with
+    neither key, which now 422s server-side. The fix is client-side: GET the
+    project's queued handoffs first and post the one that comes back.
+    """
     fake_server["code"] = 200
     fake_server["post_body"] = started()
+    fake_server["handoffs_body"] = [{"id": "only-queued", "summary": "s"}]
     code, _ = run_launch(monkeypatch, tmp_path, fake_server["port"])
     assert code == 0
+    assert "/api/handoffs" in fake_server["gets"]
     posted = fake_server["posts"][0]
     assert "prompt" not in posted, f"the CLI sent a prompt anyway: {posted}"
+    assert posted["handoff_id"] == "only-queued"
     assert posted["mode"] == "terminal", "--mode defaults to terminal"
 
 
+def test_launch_with_handoff_flag_posts_that_handoff_id_and_no_prompt(
+    monkeypatch, tmp_path, fake_server
+):
+    """`--handoff <id>` is an explicit target, so it skips the GET entirely."""
+    fake_server["code"] = 200
+    fake_server["post_body"] = started()
+    code, _ = run_launch(monkeypatch, tmp_path, fake_server["port"], argv=[
+        "launch", "--project", DEMO, "--handoff", "h-explicit",
+    ])
+    assert code == 0
+    assert "/api/handoffs" not in fake_server["gets"]
+    posted = fake_server["posts"][0]
+    assert posted["handoff_id"] == "h-explicit"
+    assert "prompt" not in posted
+
+
+def test_launch_with_nothing_queued_client_side_exits_two_and_posts_nothing(
+    monkeypatch, tmp_path, fake_server, capsys
+):
+    """The server no longer auto-picks and no longer answers this case at all
+    (Task 3 made it a 422), so the client must catch an empty project before
+    ever POSTing."""
+    fake_server["handoffs_body"] = []
+    code, _ = run_launch(monkeypatch, tmp_path, fake_server["port"])
+    out = capsys.readouterr()
+    assert code == 2
+    assert fake_server["posts"] == []
+    assert "nothing queued" in out.err
+
+
+def test_launch_with_multiple_queued_handoffs_lists_them_and_posts_nothing(
+    monkeypatch, tmp_path, fake_server, capsys
+):
+    """Grabbing one at random would fire whichever happened to be newest
+    instead of the one the caller meant, so a project with several queued
+    handoffs must refuse and name them rather than guess."""
+    fake_server["handoffs_body"] = [
+        {"id": "h1", "summary": "first summary"},
+        {"id": "h2", "summary": "second summary"},
+    ]
+    code, _ = run_launch(monkeypatch, tmp_path, fake_server["port"])
+    out = capsys.readouterr()
+    assert code == 2
+    assert fake_server["posts"] == []
+    assert "h1" in out.err and "first summary" in out.err
+    assert "h2" in out.err and "second summary" in out.err
+    assert "--handoff" in out.err
+
+
+def test_launch_with_both_prompt_file_and_handoff_is_a_usage_error(
+    monkeypatch, tmp_path, fake_server, capsys
+):
+    """Two explicit targets that might disagree is a user error worth naming,
+    caught before any HTTP is attempted."""
+    code, _ = run_launch(
+        monkeypatch, tmp_path, fake_server["port"],
+        argv=["launch", "--project", DEMO, "--prompt-file", "-",
+              "--handoff", "h1"],
+        prompt=HOSTILE,
+    )
+    out = capsys.readouterr()
+    assert code == 2
+    assert "pick one" in out.err
+    assert fake_server["posts"] == []
+    assert fake_server["gets"] == []
+
+
 @pytest.mark.parametrize("code_and_body", [
-    (409, {"detail": "nothing queued for " + DEMO}),
-    (200, {"outcome": "failed", "error": "nothing queued for " + DEMO,
+    (409, {"detail": "spawn refused"}),
+    (200, {"outcome": "failed", "error": "spawn failed",
            "session_id": None, "launch_id": "l-1"}),
 ], ids=["refused-outright", "reported-as-a-failed-outcome"])
-def test_launch_with_nothing_queued_exits_nonzero_and_says_why(
+def test_launch_that_reaches_the_server_and_fails_exits_nonzero_and_says_why(
     monkeypatch, tmp_path, fake_server, capsys, code_and_body
 ):
-    """Matching `bridge next`: nothing to run is a non-zero exit with a message.
+    """Matching `bridge next`: a launch that does not start is a non-zero exit
+    with a message. `--handoff` is passed explicitly so this exercises the
+    generic POST-failure handling on its own, independent of target
+    resolution (covered separately above).
 
     Both shapes the API can express this in are covered — a refusal, and the
     200-with-`outcome='failed'` the panel needs in order to show the error beside
@@ -355,11 +482,13 @@ def test_launch_with_nothing_queued_exits_nonzero_and_says_why(
     server's own words rather than inventing a guess.
     """
     fake_server["code"], fake_server["post_body"] = code_and_body
-    code, _ = run_launch(monkeypatch, tmp_path, fake_server["port"])
+    code, _ = run_launch(monkeypatch, tmp_path, fake_server["port"], argv=[
+        "launch", "--project", DEMO, "--handoff", "h1",
+    ])
     out = capsys.readouterr()
     assert code == 1
     assert out.out == ""
-    assert "nothing queued" in out.err
+    assert "spawn" in out.err
 
 
 # --- structure ---------------------------------------------------------------

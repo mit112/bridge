@@ -12,8 +12,8 @@
   {
     "name": "the queued-handoff action loses its own label, becoming indistinguishable from a plain Open",
     "file": "src/bridge/overview.py",
-    "old": "                    \"Continue in Terminal\", f\"/project/{card.project_id}?tab=current\",",
-    "new": "                    \"Open project\", f\"/project/{card.project_id}?tab=current\",",
+    "old": "                        \"Continue in Terminal\",",
+    "new": "                        \"Open project\",",
     "tests": [
       "tests/test_overview.py::test_attention_ladder_orders_kinds_and_pins_correct_hrefs"
     ],

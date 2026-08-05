@@ -12,7 +12,7 @@
   {
     "name": "render a handoff schedule form without linking it to its handoff",
     "file": "src/bridge/templates/_launch.html",
-    "old": "      {{ schedule_form(hpanel, card.path, hid, totals, card.handoff.id) }}",
+    "old": "      {{ schedule_form(hpanel, card.path, hid, totals, handoff.id) }}",
     "new": "      {{ schedule_form(hpanel, card.path, hid, totals) }}",
     "tests": [
       "tests/test_api.py::test_a_queued_handoff_offers_its_own_schedule_affordance"

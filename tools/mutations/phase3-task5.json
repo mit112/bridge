@@ -35,7 +35,7 @@
     "old": "        print(f\"bridge launch: server returned {status}{_detail(body)}\",\n              file=sys.stderr)\n        return 1",
     "new": "        print(f\"bridge launch: server returned {status}{_detail(body)}\",\n              file=sys.stderr)\n        return 0",
     "tests": [
-      "tests/test_cli.py::test_launch_with_nothing_queued_exits_nonzero_and_says_why"
+      "tests/test_cli.py::test_launch_that_reaches_the_server_and_fails_exits_nonzero_and_says_why"
     ],
     "expect_count": 1
   },

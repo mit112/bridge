@@ -438,10 +438,14 @@ def _client_with_handoff(tmp_path, with_session=True):
     return TestClient(create_app(store, cfg)), store, pid
 
 
-def test_current_tab_exposes_interactive_hooks_keyed_off_the_project_id(tmp_path):
+def test_current_tab_exposes_interactive_hooks_keyed_off_the_queued_handoff(tmp_path):
+    """Task 5 fix round 1: the launch band renders once per queued handoff, so
+    its `lid` (and every id/data-* derived from it) is keyed off the HANDOFF's
+    own id, not the project id -- a project-id-keyed `lid` would repeat
+    verbatim across stacked bands and collide."""
     c, store, pid = _client_with_handoff(tmp_path)
     html = c.get(f"/project/{pid}?tab=current").text
-    lid = f"launch-{pid}"
+    lid = "launch-h1"
     assert f'data-launch="{lid}"' in html
     assert f'data-launch-model="{lid}"' in html
     assert f'data-launch-perm="{lid}"' in html
@@ -453,7 +457,7 @@ def test_current_tab_exposes_interactive_hooks_keyed_off_the_project_id(tmp_path
 def test_permission_select_defaults_to_the_no_flag_option_not_a_suggestion(tmp_path):
     c, store, pid = _client_with_handoff(tmp_path)
     html = c.get(f"/project/{pid}?tab=current").text
-    lid = f"launch-{pid}"
+    lid = "launch-h1"
     perm_block = html.split(f'data-launch-perm="{lid}"', 1)[1].split("</select>", 1)[0]
     first_option = perm_block.split("<option", 2)[1]
     assert "selected" in first_option
@@ -501,7 +505,7 @@ def test_handoff_primary_button_is_never_disabled(tmp_path):
     button is launchable immediately -- never disabled like the empty state."""
     c, store, pid = _client_with_handoff(tmp_path)
     html = c.get(f"/project/{pid}?tab=current").text
-    lid = f"launch-{pid}"
+    lid = "launch-h1"
     button = html.split(f'data-launch-button="{lid}"', 1)[1].split(">", 1)[0]
     assert "disabled" not in button
     store.close()
@@ -609,6 +613,106 @@ def test_queued_handoff_shows_its_age_beside_the_summary(tmp_path):
     store.close()
 
 
+def test_two_handoffs_render_two_blocks(tmp_path):
+    """`Card.handoffs` (Task 2) can carry more than one queued handoff -- the
+    Current tab must stack a fireable block per handoff, not just the newest
+    (`card.handoff`, the compat property)."""
+    cfg = load({"db_path": tmp_path / "two.db", "spool_dir": tmp_path / "spool"})
+    store = Store(cfg.db_path)
+    pid = store.upsert_project("/p/two-handoffs", "two-handoffs-project")
+    store.create_handoff(Handoff(
+        id="h1", project_path="/p/two-handoffs", next_prompt="plan",
+        summary="Planned", created_at=1,
+    ), pid)
+    store.create_handoff(Handoff(
+        id="h2", project_path="/p/two-handoffs", next_prompt="ui",
+        summary="UI work", created_at=2,
+    ), pid)
+
+    c = TestClient(create_app(store, cfg))
+    html = c.get(f"/project/{pid}?tab=current").text
+
+    assert 'data-handoff-section="h1"' in html
+    assert 'data-handoff-section="h2"' in html
+    assert 'data-launch-handoff="h1"' in html
+    assert 'data-launch-handoff="h2"' in html
+    store.close()
+
+
+def test_stacked_launch_bands_get_unique_ids_per_handoff(tmp_path):
+    """Task 5 fix round 1 (CRITICAL): before this fix `launch_band`'s `lid` was
+    keyed off `card.project_id`, the SAME string for every stacked band --
+    every `<select id>`, `data-launch`, `data-launch-model/-effort/-perm`, and
+    `data-launch-button` repeated verbatim across both handoffs. `launch.js`
+    resolves each of those by an exact-match `document.querySelector`, so a
+    click on the SECOND handoff's launch button would have silently read the
+    FIRST handoff's model/effort/permission selects. Keying `lid` off each
+    handoff's own id (not the project id) is what makes every id unique per
+    band, so the two selects below can never collide."""
+    cfg = load({"db_path": tmp_path / "stacked.db", "spool_dir": tmp_path / "spool"})
+    store = Store(cfg.db_path)
+    pid = store.upsert_project("/p/stacked", "stacked-project")
+    store.create_handoff(Handoff(
+        id="h1", project_path="/p/stacked", next_prompt="plan",
+        summary="Planned", created_at=1,
+    ), pid)
+    store.create_handoff(Handoff(
+        id="h2", project_path="/p/stacked", next_prompt="ui",
+        summary="UI work", created_at=2,
+    ), pid)
+
+    c = TestClient(create_app(store, cfg))
+    html = c.get(f"/project/{pid}?tab=current").text
+
+    # Every id on the page is unique -- the real symptom a collision produces.
+    ids = re.findall(r'\sid="([^"]+)"', html)
+    assert len(ids) == len(set(ids)), f"duplicate ids: {sorted(ids)}"
+
+    for hid in ("h1", "h2"):
+        lid = f"launch-{hid}"
+        assert f'data-launch="{lid}"' in html
+        assert f'data-launch-model="{lid}"' in html
+        assert f'data-launch-effort="{lid}"' in html
+        assert f'data-launch-perm="{lid}"' in html
+        assert f'data-launch-button="{lid}"' in html
+        assert f'id="{lid}-model"' in html
+        assert f'id="{lid}-effort"' in html
+        assert f'id="{lid}-perm"' in html
+        assert f'for="{lid}-model"' in html
+
+    # Neither band is a stray project-id-keyed leftover. (The compose box's
+    # own `data-compose-launch` is keyed off its own `cid`, not `lid` --
+    # covered separately below -- so this checks the launch BAND hook only.)
+    assert f'data-launch="launch-{pid}"' not in html
+    store.close()
+
+
+def test_compose_run_now_has_its_own_selects_when_a_handoff_is_queued(tmp_path):
+    """Task 5 fix round 2 (IMPORTANT regression): the compose box's Run-now
+    button used to point `data-compose-launch` at `launch-<project_id>` --
+    the launch band's own id. That worked by accident before fix round 1
+    (every stacked band shared that same id), but once bands were correctly
+    keyed off their own handoff id, a page with >=1 queued handoff has NO
+    band left with a project-id-keyed `lid` at all -- so the compose box's
+    `bridgeLaunchBody` lookup resolved to nothing and silently posted
+    `model: null, effort: null, permission_mode: null`. The compose box now
+    owns its own selects (keyed on its own `cid`) via the shared
+    `launch_options` macro, so `data-compose-launch` always names a select
+    that is actually present on the page."""
+    c, store, pid = _client_with_handoff(tmp_path)
+    html = c.get(f"/project/{pid}?tab=current").text
+    cid = f"compose-{pid}"
+
+    assert f'data-compose-launch="{cid}"' in html
+    assert f'data-launch-model="{cid}"' in html
+    assert f'data-launch-effort="{cid}"' in html
+    assert f'data-launch-perm="{cid}"' in html
+    assert f'id="{cid}-model"' in html
+    assert f'id="{cid}-effort"' in html
+    assert f'id="{cid}-perm"' in html
+    store.close()
+
+
 def test_current_tab_textareas_are_balanced(tmp_path):
     c, store, pid = _client_with_handoff(tmp_path)
     html = c.get(f"/project/{pid}?tab=current").text
@@ -664,7 +768,7 @@ def test_change_options_disclosure_wraps_the_launch_selects(tmp_path):
     beside it, and not as a second, separately-toggled set of controls."""
     c, store, pid = _client_with_handoff(tmp_path)
     html = c.get(f"/project/{pid}?tab=current").text
-    lid = f"launch-{pid}"
+    lid = "launch-h1"
 
     assert 'class="launch__options"' in html
     start = html.index('class="launch__options"')

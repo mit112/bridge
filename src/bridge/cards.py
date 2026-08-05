@@ -383,7 +383,8 @@ def build_cards(
         if git_cache is None:
             git = _settle_cache(store, row["id"], git, now)
 
-        handoff = _handoff(store, row["id"])
+        handoffs = _handoffs(store, row["id"])
+        handoff = handoffs[0] if handoffs else None
         cards.append(
             Card(
                 project_id=row["id"],
@@ -396,7 +397,7 @@ def build_cards(
                 spark=store.token_series(row["id"], SPARK_DAYS, now),
                 is_stale=_is_stale(git, cfg.stale_hours, now),
                 pinned=bool(row["pinned"]),
-                handoff=handoff,
+                handoffs=handoffs,
                 # Resolved here rather than in Jinja: prepending an off-catalog
                 # suggestion needs to construct a ModelChoice, and exposing the
                 # class to the template environment to do that would put a data
@@ -436,9 +437,8 @@ def _session(store: Store, project_id: int) -> SessionRecord | None:
     )
 
 
-def _handoff(store: Store, project_id: int) -> dict | None:
-    row = store.queued_handoff(project_id)
-    return dict(row) if row is not None else None
+def _handoffs(store: Store, project_id: int) -> list[dict]:
+    return [dict(row) for row in store.queued_handoffs(project_id)]
 
 
 def _is_stale(git: GitState, stale_hours: int, now: int) -> bool:

@@ -22,7 +22,7 @@
   {
     "name": "count every card as queued regardless of whether it actually has a handoff, so the Queued filter's number is meaningless",
     "file": "src/bridge/projects_view.py",
-    "old": "        \"queued\": sum(1 for card in cards if card.handoff),",
+    "old": "        \"queued\": sum(len(card.handoffs) for card in cards),",
     "new": "        \"queued\": len(cards),",
     "tests": [
       "tests/test_projects_route.py::test_build_projects_counts_by_status"
