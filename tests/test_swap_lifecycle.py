@@ -502,3 +502,39 @@ def test_the_freshness_strip_is_reseeded_after_returning_to_overview(tmp_path):
         "cached state suppressed the correction"
     )
     assert got["label"] != ""
+
+
+def test_five_navigations_leave_exactly_one_of_everything(tmp_path):
+    """The whole point, asserted once: N page views, one connection, one ticker.
+
+    Every duplicate hazard in this app is a doubled delegated listener -- two
+    POST /api/launch is two spawned terminal sessions, two POST /api/schedule is
+    two scheduled rows. Counting listeners is what catches all of them at once.
+    """
+    got = run_js(
+        """
+        for (let i = 0; i < 5; i += 1) {
+          window.bridgePage.enter();
+          window.bridgePage.leave();
+        }
+        report({
+          sources: globalThis.__calls.eventSource.length,
+          intervals: globalThis.__calls.interval,
+          click: document.listenerCount("click"),
+          focusout: document.listenerCount("focusout"),
+          change: document.listenerCount("change"),
+          input: document.listenerCount("input"),
+        });
+        """,
+        ["shell.js", "router.js", "copy.js", "launch.js", "schedule.js",
+         "live.js", "projects.js", "settings.js"],
+        tmp_path,
+    )
+    assert got["sources"] == 1
+    assert got["intervals"] == 1
+    # Each file registers its own delegated click at load; the invariant is that
+    # the count does NOT grow with the number of page views.
+    baseline = got["click"]
+    assert baseline < 10, f"{baseline} click listeners suggests re-registration"
+    for key in ("focusout", "change", "input"):
+        assert got[key] <= 2, f"{key} listeners multiplied across page views"

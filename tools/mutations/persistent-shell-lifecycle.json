@@ -1,0 +1,175 @@
+[
+  {
+    "name": "enter() runs hooks in reverse order, not registration order",
+    "file": "src/bridge/static/shell.js",
+    "old": "enter() { runAll(enterHooks); },",
+    "new": "enter() { runAll(enterHooks.slice().reverse()); },",
+    "tests": [
+      "tests/test_swap_lifecycle.py::test_registry_runs_enter_hooks_in_registration_order"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "remove runAll's per-hook try/catch",
+    "file": "src/bridge/static/shell.js",
+    "old": "function runAll(hooks) {\n    for (const fn of hooks) {\n      try {\n        fn();\n      } catch (error) {\n        console.error(\"bridge: page hook failed\", error);\n      }\n    }\n  }",
+    "new": "function runAll(hooks) {\n    for (const fn of hooks) {\n      fn();\n    }\n  }",
+    "tests": [
+      "tests/test_swap_lifecycle.py::test_one_bad_enter_hook_does_not_abort_the_others"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "leave() iterates enterHooks instead of leaveHooks",
+    "file": "src/bridge/static/shell.js",
+    "old": "for (const fn of leaveHooks) {",
+    "new": "for (const fn of enterHooks) {",
+    "tests": [
+      "tests/test_swap_lifecycle.py::test_leave_hooks_run_on_leave_and_not_on_enter"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "leave() stops awaiting a hook's own async work before resolving",
+    "file": "src/bridge/static/shell.js",
+    "old": "          const result = fn();\n          if (result && typeof result.then === \"function\") pending.push(result);",
+    "new": "          fn();",
+    "tests": [
+      "tests/test_swap_lifecycle.py::test_a_failed_leave_flush_still_surfaces_its_warning_before_the_swap"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "reintroduce the readyState guard the deferred script never observes as loading",
+    "file": "src/bridge/static/shell.js",
+    "old": "  document.addEventListener(\"DOMContentLoaded\", () => window.bridgePage.enter());",
+    "new": "  if (document.readyState === \"loading\") {\n    document.addEventListener(\"DOMContentLoaded\", () => window.bridgePage.enter());\n  }",
+    "tests": [
+      "tests/test_swap_lifecycle.py::test_shell_js_fires_the_initial_enter_hook_once_on_first_load"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "restore the bare DOMContentLoaded binding in schedule.js",
+    "file": "src/bridge/static/schedule.js",
+    "old": "if (window.bridgePage) window.bridgePage.onEnter(() => paintScheduledTimes());",
+    "new": "document.addEventListener(\"DOMContentLoaded\", () => paintScheduledTimes());",
+    "tests": [
+      "tests/test_shell_contract.py::test_no_domcontentloaded_outside_the_router[schedule.js]",
+      "tests/test_shell_contract.py::test_per_page_behaviour_is_registered_on_the_registry[schedule.js]",
+      "tests/test_swap_lifecycle.py::test_scheduled_times_are_repainted_on_every_page_view"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "revert projects.js's view/filter reconciliation to run once at load, not per view",
+    "file": "src/bridge/static/projects.js",
+    "old": "if (window.bridgePage) {\n  window.bridgePage.onEnter(() => {\n    applyProjectsFilter();\n    applyProjectsView(currentProjectsView());\n  });\n} else {\n  applyProjectsFilter();\n  applyProjectsView(currentProjectsView());\n}",
+    "new": "applyProjectsFilter();\napplyProjectsView(currentProjectsView());",
+    "tests": [
+      "tests/test_swap_lifecycle.py::test_view_toggle_reannounces_after_a_swap"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "remove launch.js's onLeave prompt-flush registration",
+    "file": "src/bridge/static/launch.js",
+    "old": "if (window.bridgePage) {\n  window.bridgePage.onLeave(() => Promise.all(\n    Array.from(document.querySelectorAll(\"[data-prompt-handoff]\")).map(savePrompt),\n  ));\n  window.bridgePage.onEnter(prefillLaunchDefaults);\n}",
+    "new": "if (window.bridgePage) {\n  window.bridgePage.onEnter(prefillLaunchDefaults);\n}",
+    "tests": [
+      "tests/test_swap_lifecycle.py::test_an_edited_prompt_is_saved_before_the_content_is_swapped"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "drop savePrompt's unchanged-value guard",
+    "file": "src/bridge/static/launch.js",
+    "old": "  if (field.value === saved) return;\n",
+    "new": "",
+    "tests": [
+      "tests/test_swap_lifecycle.py::test_an_unchanged_prompt_is_not_patched_on_leave"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "drop the freshness-strip's cached-state reset on re-entry",
+    "file": "src/bridge/static/live.js",
+    "old": "  lastConnectionState = null;\n  announceConnectionState(\n    connectionState(strip.getAttribute(\"data-server\"), Math.floor(Date.now() / 1000)),\n  );\n}",
+    "new": "  announceConnectionState(\n    connectionState(strip.getAttribute(\"data-server\"), Math.floor(Date.now() / 1000)),\n  );\n}",
+    "tests": [
+      "tests/test_swap_lifecycle.py::test_the_freshness_strip_is_reseeded_after_returning_to_overview"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "reconnect the SSE stream on every page view instead of once",
+    "file": "src/bridge/static/live.js",
+    "old": "const liveSource = connect();",
+    "new": "const liveSource = connect();\nif (window.bridgePage) window.bridgePage.onEnter(connect);",
+    "tests": [
+      "tests/test_swap_lifecycle.py::test_only_one_event_source_across_many_navigations"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "restore live.js's module-scope freshness-strip capture",
+    "file": "src/bridge/static/live.js",
+    "old": "function initialIndexAt() {",
+    "new": "const initialStrip = query(\"[data-freshness-strip]\");\nfunction initialIndexAt() {",
+    "tests": [
+      "tests/test_shell_contract.py::test_no_module_scope_dom_capture[live.js]"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "remove the modifier-key click guard",
+    "file": "src/bridge/static/router.js",
+    "old": "    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;\n",
+    "new": "",
+    "tests": [
+      "tests/test_swap_lifecycle.py::test_router_ignores_a_modified_click_on_a_swappable_link"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "widen SWAPPABLE to include the project detail route",
+    "file": "src/bridge/static/router.js",
+    "old": "const SWAPPABLE = new Set([\"/\", \"/projects\", \"/schedule\", \"/diagnostics\", \"/settings\"]);",
+    "new": "const SWAPPABLE = new Set([\"/\", \"/projects\", \"/schedule\", \"/diagnostics\", \"/settings\", \"/project/\"]);",
+    "tests": [
+      "tests/test_shell_contract.py::test_router_only_intercepts_the_sidebar_destinations"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "stop awaiting bridgePage.leave() before the swap",
+    "file": "src/bridge/static/router.js",
+    "old": "    await window.bridgePage.leave();",
+    "new": "    window.bridgePage.leave();",
+    "tests": [
+      "tests/test_shell_contract.py::test_router_awaits_the_leave_flush_before_swapping"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "drop the catch's real-navigation fallback",
+    "file": "src/bridge/static/router.js",
+    "old": "  } catch (error) {\n    // Never strand the user on a link that did nothing. A real navigation is\n    // always correct -- it is only ever slower.\n    console.error(\"bridge: swap failed, falling back to a full load\", error);\n    window.location.assign(href);\n  }",
+    "new": "  } catch (error) {\n    // Never strand the user on a link that did nothing. A real navigation is\n    // always correct -- it is only ever slower.\n    console.error(\"bridge: swap failed, falling back to a full load\", error);\n  }",
+    "tests": [
+      "tests/test_swap_lifecycle.py::test_router_falls_back_to_a_real_navigation_on_a_failed_fetch",
+      "tests/test_shell_contract.py::test_router_falls_back_to_a_normal_navigation"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "drop the same-document hash-link guard",
+    "file": "src/bridge/static/router.js",
+    "old": "    if (url.pathname === window.location.pathname && url.hash) return;\n",
+    "new": "",
+    "tests": [
+      "tests/test_swap_lifecycle.py::test_router_lets_the_browser_handle_a_same_document_hash_link"
+    ],
+    "expect_count": 1
+  }
+]

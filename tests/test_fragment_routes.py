@@ -5,6 +5,8 @@ route tests all render full documents, and they stay valid only while a request
 WITHOUT the fragment header is byte-for-byte what it always was.
 """
 
+import re
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -87,6 +89,41 @@ def test_the_fragment_body_matches_the_full_documents_body(c, path, active):
     marker = '<div class="shell__body">'
     assert full[full.index(marker):].split("</div>")[0][:400] \
         == frag[frag.index(marker):].split("</div>")[0][:400]
+
+
+# Only overview.html and project.html override `{% block shell_status %}` --
+# the other four routes render the default spelled out independently in both
+# base.html and _fragment.html (Jinja blocks do not survive an `{% include
+# %}`, the same reason the sibling `.shell__body` markup above is duplicated
+# rather than shared). project.html has no fragment mode at all, so it is out
+# of scope here; overview.html's override renders a live "Xm ago" freshness
+# label that is not guaranteed byte-identical across two separate requests,
+# so it is excluded to keep this test non-flaky. That leaves the four routes
+# where nothing else compares the two copies -- a one-sided edit to either
+# would go undetected until a user hit one of them.
+SHELL_STATUS_DEFAULT_ROUTES = [(p, a) for p, a in ROUTES if a != "overview"]
+
+
+@pytest.mark.parametrize("path,active", SHELL_STATUS_DEFAULT_ROUTES)
+def test_the_shell_status_matches_the_full_documents_body(c, path, active):
+    """base.html and _fragment.html each spell out the .shell-status default.
+
+    Unlike `.shell__body` above, nothing else in the suite compares this
+    swap target's two copies -- a drift here would be invisible until a user
+    landed on the one route whose fragment (or whose full document) forgot
+    the edit. Whitespace is collapsed before comparing: base.html nests this
+    div inside `<aside>` at deeper indentation than _fragment.html's top-level
+    copy, by design -- that formatting difference is not the drift this test
+    guards against, and a naive byte comparison would fail on it every time.
+    """
+    full = c[0].get(path).text
+    frag = c[0].get(path, headers=FRAGMENT).text
+    marker = '<div class="shell-status">'
+
+    def normalize(html: str) -> str:
+        return re.sub(r"\s+", " ", html[html.index(marker):].split("</div>")[0]).strip()
+
+    assert normalize(full) == normalize(frag)
 
 
 def test_the_project_detail_route_has_no_fragment_mode(c):

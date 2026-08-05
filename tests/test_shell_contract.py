@@ -17,13 +17,6 @@ TEMPLATES = Path(__file__).resolve().parent.parent / "src" / "bridge" / "templat
 PAGE_SCRIPTS = ["shell.js", "copy.js", "launch.js", "schedule.js",
                 "live.js", "projects.js", "settings.js", "router.js"]
 
-# Tasks 3-7 of docs/superpowers/plans/2026-08-04-bridge-persistent-shell.md turn
-# each of these green, one file per task. Each xfail is removed by the task that
-# fixes its file -- `strict=True` means a premature fix fails loudly rather than
-# passing silently, so none of these can be quietly forgotten.
-pytestmark_known_red = pytest.mark.xfail(strict=True, reason="fixed in tasks 3-7")
-
-
 def source(name: str) -> str:
     """Source with comments stripped.
 
