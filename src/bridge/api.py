@@ -487,6 +487,23 @@ def create_app(
     refresh_coordinator: RefreshCoordinator | None = None,
 ) -> FastAPI:
     app = FastAPI(title="Bridge")
+
+    @app.middleware("http")
+    async def _fragment_never_cacheable(request: Request, call_next):
+        # A fragment and its full document share a URL, differing only by the
+        # request header `_layout_for` reads. Left cacheable, a browser can
+        # store the headless fragment under the page URL and then hand it back
+        # as the whole document on a back/forward navigation -- the page renders
+        # unstyled (no <head>, no app.css) until a manual reload. Chrome's memory
+        # cache keys on URL alone and ignores `Vary`, so `no-store` -- not `Vary`
+        # -- is what actually keeps the fragment from ever being reused as a
+        # document; `Vary` still marks the dependency for well-behaved caches.
+        response = await call_next(request)
+        if FRAGMENT_HEADER in request.headers:
+            response.headers["Cache-Control"] = "no-store"
+            response.headers["Vary"] = "X-Bridge-Fragment"
+        return response
+
     if refresh_coordinator is None:
         refresh_coordinator = RefreshCoordinator(store, cfg)
     app.state.refresh_coordinator = refresh_coordinator
