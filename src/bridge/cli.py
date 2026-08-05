@@ -353,6 +353,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("open", help="open the panel in a browser")
 
+    su = sub.add_parser("setup", help="interactive first-time setup")
+    su.add_argument("--launchd-only", action="store_true",
+                    help="regenerate and reinstall only the LaunchAgent plist")
+    su.add_argument("--uninstall", action="store_true",
+                    help="remove the LaunchAgent and optionally ~/.bridge/")
+
     # Accepted here so `bridge index` and `bridge serve` work, but handled by
     # bridge.__main__ and imported lazily: those open the database, and this
     # module must not.
@@ -376,6 +382,16 @@ HANDLERS = {
 }
 
 
+def _run_setup(args) -> int:
+    from bridge.setup import run_launchd_only, run_setup, run_uninstall
+
+    if args.uninstall:
+        return run_uninstall()
+    if args.launchd_only:
+        return run_launchd_only()
+    return run_setup()
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     try:
@@ -392,6 +408,8 @@ def main(argv: list[str] | None = None) -> int:
 
     handler = HANDLERS.get(args.cmd)
     if handler is None:
+        if args.cmd == "setup":
+            return _run_setup(args)
         parser.print_usage(sys.stderr)
         return 2
     return handler(args, load())
