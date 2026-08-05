@@ -23,18 +23,10 @@
   <span class="card__note" data-refresh-status role="status" aria-live="polite"></span>
 {% endcall %}
 {% endblock %}
-{% block shell_status %}
-  {% if model.freshness.server != "unavailable" and model.freshness.index_at is not none %}
-    <span class="shell-status__label"><span class="shell-status__signal" aria-hidden="true"></span>Connected</span>
-    <span class="shell-status__detail">Indexed {{ model.freshness.index_at | ago_epoch }} ago</span>
-  {% elif model.freshness.server == "unavailable" %}
-    <span class="shell-status__label">Unavailable</span>
-    <span class="shell-status__detail">Refresh to reconnect</span>
-  {% else %}
-    <span class="shell-status__label">Connected</span>
-    <span class="shell-status__detail">Not indexed yet</span>
-  {% endif %}
-{% endblock %}
+{# The sidebar connection/freshness readout is no longer overridden here: it is
+   now the global default in base.html (`shell_freshness()`), rendered the same
+   way on every page. Overview keeps only its own page-level, live-updating
+   freshness strip above (the one with the Refresh button). #}
 {% block content %}
 <div class="overview-command-strip" role="group" aria-label="System at a glance">
   <div class="command-cell{% if model.totals.running %} is-live{% endif %}">
