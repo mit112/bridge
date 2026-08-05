@@ -51,7 +51,10 @@
    private macro rather than a new registered filter. #}
 {% macro _duration_seconds(secs) %}{% set secs = [secs, 0] | max %}{% if secs < 3600 %}{{ (secs // 60) | int }}m{% elif secs < 86400 %}{{ (secs // 3600) | int }}h{% else %}{{ (secs // 86400) | int }}d{% endif %}{% endmacro %}
 
-{% macro project_summary_row(summary) %}
+{# `show_remote` adds the ahead/behind "Remote" column. Off by default so the
+   Overview recent list keeps its three-track grid; only the Projects index
+   opts in (and re-tracks `.projects-index .project-row` to four columns). #}
+{% macro project_summary_row(summary, show_remote=False) %}
 <div class="project-row">
   <span class="project-row__identity">
     <span class="project-row__name">{{ summary.name }}</span>
@@ -65,6 +68,11 @@
     <span class="project-row__session card__note">{{ summary.last_session_title }}{% if summary.last_session_age_seconds is not none %} · {{ _duration_seconds(summary.last_session_age_seconds) }} ago{% endif %}</span>
     {% endif %}
   </span>
+  {% if show_remote %}
+  {# Mirrors the detail page's Remote workspace fact: behind wins over ahead,
+     else Synced. No upstream (both None) also reads Synced. #}
+  <span class="project-row__remote">{% if summary.behind %}{{ summary.behind }} behind{% elif summary.ahead %}{{ summary.ahead }} ahead{% else %}Synced{% endif %}</span>
+  {% endif %}
   <span class="project-row__action">
     <a class="btn" href="/project/{{ summary.project_id }}">Open project</a>
   </span>

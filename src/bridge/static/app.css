@@ -64,6 +64,13 @@
   --nav-text: var(--p-nav-text);
   --nav-text-secondary: var(--p-nav-text-2);
   --nav-accent: var(--p-nav-accent);
+  /* Sidebar overlay tints -- translucent white over the dark nav chrome. No
+     translucent primitive exists to alias, so the value lives here at the
+     semantic tier; components reference the role, never the literal. Theme-
+     invariant today (the sidebar is always dark), like the --nav-* above. */
+  --nav-overlay-hover: rgb(255 255 255 / 8%);
+  --nav-overlay-active: rgb(255 255 255 / 12%);
+  --nav-overlay-border: rgb(255 255 255 / 14%);
 
   /* Legacy semantic names, repointed at the primitives above so existing
      component CSS and templates keep working unchanged. */
@@ -552,7 +559,7 @@ a { color: var(--accent); text-underline-offset: .16em; }
   cursor: pointer;
 }
 @media (min-width: 1024px) { .sidebar-toggle { display: inline-flex; } }
-.sidebar-toggle:hover { color: var(--nav-text); background: rgb(255 255 255 / 8%); }
+.sidebar-toggle:hover { color: var(--nav-text); background: var(--nav-overlay-hover); }
 
 .sidebar__group + .sidebar__group { margin-top: var(--space-2); }
 .sidebar__group-title {
@@ -574,11 +581,11 @@ a { color: var(--accent); text-underline-offset: .16em; }
   text-decoration: none;
 }
 @media (max-width: 1023px) { .sidebar__link { min-height: 44px; } }
-.sidebar__link:hover { color: var(--nav-item-fg-active); background: rgb(255 255 255 / 8%); }
+.sidebar__link:hover { color: var(--nav-item-fg-active); background: var(--nav-overlay-hover); }
 .sidebar__link[aria-current="page"] {
   color: var(--nav-item-fg-active);
   font-weight: 600;
-  background: rgb(255 255 255 / 12%);
+  background: var(--nav-overlay-active);
   box-shadow: inset 3px 0 0 var(--nav-accent);
 }
 .sidebar__icon { flex: 0 0 auto; }
@@ -588,7 +595,7 @@ a { color: var(--accent); text-underline-offset: .16em; }
   gap: var(--space-1);
   margin-top: auto;
   padding: var(--space-4) var(--space-2) 0;
-  border-top: 1px solid rgb(255 255 255 / 14%);
+  border-top: 1px solid var(--nav-overlay-border);
   color: var(--nav-text-secondary);
 }
 .shell-status__label { color: var(--nav-text); font-size: var(--text-sm); font-weight: 600; }
@@ -1930,7 +1937,7 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
 }
 .projects-index-head__row {
   display: grid;
-  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr) 16ch;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr) 9ch 16ch;
   gap: var(--space-4);
 }
 .projects-index-head__label {
@@ -1953,7 +1960,7 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
   gap: var(--space-6);
 }
 .projects-index .project-row {
-  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr) 16ch;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr) 9ch 16ch;
 }
 /* Target size is padded independently of row height, so Task 2's density pass
    can shrink the row without shrinking the hit areas with it. `min-height`
@@ -2031,6 +2038,16 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
 }
 /* Figures line up column-wise down the list rather than jittering per row. */
 .projects-index .project-row__dirty { font-variant-numeric: tabular-nums; }
+/* Numeric Remote column: right-aligned with tabular figures so ahead/behind
+   counts line up their ones place down the list. Header label matches. */
+.projects-index .project-row__remote {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+}
+.projects-index-head__label--num { text-align: right; }
 /* The last-session note keeps the base rule's own full-width basis, so the
    activity column reads as two lines: status/branch/dirty, then the note.
    Riding it on the status line instead looked like it bought a shorter row,
@@ -2186,7 +2203,7 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   grid-template-rows: auto auto 1fr;
-  grid-template-areas: "identity identity" "activity activity" "open actions";
+  grid-template-areas: "identity remote" "activity activity" "open actions";
   gap: var(--space-2) var(--space-4);
   padding: var(--space-4);
   /* The status edge becomes the card's top border, which is the same signal in
@@ -2199,6 +2216,13 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
 }
 [data-projects-view="grid"] .projects-index .project-row__identity { grid-area: identity; }
 [data-projects-view="grid"] .projects-index .project-row__activity { grid-area: activity; align-content: start; }
+/* In card view the Remote count rides the top-right corner beside the name,
+   right-aligned rather than trailing a table column. */
+[data-projects-view="grid"] .projects-index .project-row__remote {
+  grid-area: remote;
+  justify-self: end;
+  align-self: start;
+}
 [data-projects-view="grid"] .projects-index .project-row__action {
   grid-area: open;
   justify-self: start;
@@ -2329,7 +2353,12 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
     row-gap: var(--space-2);
   }
   .projects-index .project-row__action { grid-column: 1 / -1; justify-self: end; }
+  /* Two-track sub-desktop row: give Remote its own full-width right-aligned
+     line rather than letting it break the identity/activity pairing, and drop
+     its header label since there is no distinct right-hand track to head. */
+  .projects-index .project-row__remote { grid-column: 1 / -1; justify-self: end; }
   .projects-index-head__row { grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); }
+  .projects-index-head__label--num { display: none; }
 }
 
 @media (max-width: 1023px) {
