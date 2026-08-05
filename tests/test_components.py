@@ -88,6 +88,29 @@ def test_status_pill_emits_state_word_and_class():
     assert 'class="pill pill--running"' in html
 
 
+def test_every_scheduled_status_has_a_defined_pill_colour():
+    """`schedule_row` renders `pill pill--<status>` straight off a run's status
+    word (and the Overview's "Up next" does the same for `pending`), so any
+    scheduled status without a matching rule in app.css renders an invisible,
+    uncoloured pill -- text on the card surface. Guards every status the
+    scheduler can write, derived from the schedule_view vocabulary so a new
+    status can't be added without a colour."""
+    from bridge.schedule_view import ACTIVE_STATUSES, ATTENTION_STATUSES
+
+    css = (
+        Path(__file__).resolve().parent.parent
+        / "src" / "bridge" / "static" / "app.css"
+    ).read_text()
+    # The quiet terminal states that reach a pill but are neither active nor
+    # attention-worthy; `superseded`/`cancelled` come off store transitions.
+    quiet = ("cancelled", "superseded")
+    for status in (*ACTIVE_STATUSES, *ATTENTION_STATUSES, *quiet):
+        assert f".pill--{status}" in css, (
+            f"scheduled status {status!r} has no pill--{status} rule in app.css; "
+            f"it would render as an uncoloured pill"
+        )
+
+
 def test_empty_state_emits_message_and_class():
     html = _module().empty_state("No projects yet")
     assert 'class="empty"' in html
