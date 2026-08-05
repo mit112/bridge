@@ -1,8 +1,8 @@
 [
   {
-    "name": "disconnect compose Run now from the card launch controls",
+    "name": "disconnect compose Run now from its own launch controls",
     "file": "src/bridge/templates/_launch.html",
-    "old": "              data-compose-launch=\"launch-{{ card.project_id }}\">Run now</button>",
+    "old": "              data-compose-launch=\"{{ cid }}\">Run now</button>",
     "new": "              data-compose-launch=\"\">Run now</button>",
     "tests": [
       "tests/test_api.py::test_a_card_with_no_queued_handoff_still_renders_a_launch_band"

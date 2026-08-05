@@ -1223,7 +1223,12 @@ def test_a_card_with_no_queued_handoff_still_renders_a_launch_band(launch_app):
     html = c.get(f"/project/{pid}?tab=current").text
 
     assert f'data-launch="launch-{pid}"' in html
-    assert f'data-compose-launch="launch-{pid}"' in html
+    # The compose box is self-contained (Task 5 fix round 2): it owns its own
+    # launch selects and points `data-compose-launch` at its own `cid`, never
+    # at the launch band's `lid` -- a queued-handoff page has no band keyed
+    # off the project id at all, so borrowing the band's id would resolve to
+    # nothing.
+    assert f'data-compose-launch="compose-{pid}"' in html
     assert f'id="launch-{pid}-model"' in html
     assert f'data-launch-status="launch-{pid}"' in html
     # ...and no queued-handoff artifacts. The compose box's own textarea is
@@ -1251,9 +1256,11 @@ def test_every_new_control_is_labelled_and_none_leaves_the_tab_order(launch_app)
     labelled = set(re.findall(r'<label[^>]*\sfor="([^"]+)"', html))
     fields = re.findall(r"<(?:select|textarea)\b[^>]*>", html)
     # Three launch-band selects and the handoff's own prompt field, plus
-    # Task 5's compose box (its prompt field and its own mode select) and the
-    # handoff's "Schedule…" reveal (one more mode select).
-    assert len(fields) == 7, "three launch selects, two mode selects, two prompts"
+    # Task 5's compose box (its prompt field, its own three launch selects --
+    # fix round 2 gave it its own model/effort/permission controls -- and its
+    # own mode select) and the handoff's "Schedule…" reveal (one more mode
+    # select).
+    assert len(fields) == 10, "six launch selects, two mode selects, two prompts"
     for tag in fields:
         ident = re.search(r'\sid="([^"]+)"', tag)
         assert (ident and ident.group(1) in labelled) or "aria-label=" in tag, tag

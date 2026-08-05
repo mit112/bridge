@@ -680,10 +680,36 @@ def test_stacked_launch_bands_get_unique_ids_per_handoff(tmp_path):
         assert f'id="{lid}-perm"' in html
         assert f'for="{lid}-model"' in html
 
-    # Neither band is a stray project-id-keyed leftover (the compose box's own
-    # `data-compose-launch="launch-<project_id>"` is unrelated and unaffected
-    # by this fix, so this checks the launch BAND hook specifically).
+    # Neither band is a stray project-id-keyed leftover. (The compose box's
+    # own `data-compose-launch` is keyed off its own `cid`, not `lid` --
+    # covered separately below -- so this checks the launch BAND hook only.)
     assert f'data-launch="launch-{pid}"' not in html
+    store.close()
+
+
+def test_compose_run_now_has_its_own_selects_when_a_handoff_is_queued(tmp_path):
+    """Task 5 fix round 2 (IMPORTANT regression): the compose box's Run-now
+    button used to point `data-compose-launch` at `launch-<project_id>` --
+    the launch band's own id. That worked by accident before fix round 1
+    (every stacked band shared that same id), but once bands were correctly
+    keyed off their own handoff id, a page with >=1 queued handoff has NO
+    band left with a project-id-keyed `lid` at all -- so the compose box's
+    `bridgeLaunchBody` lookup resolved to nothing and silently posted
+    `model: null, effort: null, permission_mode: null`. The compose box now
+    owns its own selects (keyed on its own `cid`) via the shared
+    `launch_options` macro, so `data-compose-launch` always names a select
+    that is actually present on the page."""
+    c, store, pid = _client_with_handoff(tmp_path)
+    html = c.get(f"/project/{pid}?tab=current").text
+    cid = f"compose-{pid}"
+
+    assert f'data-compose-launch="{cid}"' in html
+    assert f'data-launch-model="{cid}"' in html
+    assert f'data-launch-effort="{cid}"' in html
+    assert f'data-launch-perm="{cid}"' in html
+    assert f'id="{cid}-model"' in html
+    assert f'id="{cid}-effort"' in html
+    assert f'id="{cid}-perm"' in html
     store.close()
 
 

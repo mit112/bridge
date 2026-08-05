@@ -45,15 +45,18 @@
     <h2 class="compose__title" id="{{ cid }}-title">New session</h2>
     <label class="compose__label" for="{{ cid }}">Prompt for {{ card.name }}</label>
     <textarea class="compose__prompt" id="{{ cid }}" data-compose-prompt="{{ cid }}"></textarea>
+    {{ launch_options(card, cid) }}
     <p class="compose__actions">
-      {# `launch-{{ card.project_id }}` inline, not a shared `{% set lid %}`
-         with `launch_band` below: the two macros are independent call sites
-         now, and `launch_band` owns the one `{% set lid %}` the
-         handoff-id-collision mutation spec anchors on -- this stays a
-         literal so that anchor keeps matching exactly once. #}
+      {# Keyed on the compose box's OWN `cid`, not `launch_band`'s `lid`: the
+         compose box starts a brand-new ad hoc session, independent of
+         whatever handoffs are queued, so it owns its own selects (rendered
+         just above via the shared `launch_options` macro) rather than
+         reading a launch band's -- which may not even be on the page (every
+         queued-handoff band is keyed off that handoff's own id, and the
+         no-handoff band renders only when nothing is queued at all). #}
       <button type="button" class="btn" data-compose-run="{{ cid }}"
               data-compose-path="{{ card.path }}"
-              data-compose-launch="launch-{{ card.project_id }}">Run now</button>
+              data-compose-launch="{{ cid }}">Run now</button>
       <button type="button" class="btn" data-schedule-toggle="{{ panel }}"
               aria-expanded="false" aria-controls="{{ panel }}">Schedule…</button>
       <span class="compose__status" role="status" aria-live="polite"
@@ -169,41 +172,25 @@
    `<details>` ("Change options"), leaving the button itself outside so it
    stays visible without opening the disclosure. Neither is passed by
    `_card.html`, so its band is unchanged. #}
-{% macro launch_band(card, handoff, primary=False, collapse_options=False) %}
-  {# Keyed off the HANDOFF, not the project, whenever one is passed: this band
-     now renders once per queued handoff (`_workspace_current.html`'s
-     `for h in card.handoffs` loop), so a project-id-keyed `lid` would repeat
-     verbatim across every stacked band -- every `<select id>`/`<label for>`/
-     `data-*` pair would collide, and `launch.js`'s exact-match selectors
-     (keyed off this same `lid`) would then resolve to whichever band happened
-     to render first, silently launching the wrong handoff's model/effort/
-     permission. The null-handoff "Start session" fallback
-     (`launch_band(card, none, ...)`) has no handoff to key off and keeps the
-     project-id form, unchanged from before. #}
-  {% set lid = ("launch-" ~ handoff.id) if handoff else ("launch-" ~ card.project_id) %}
-  {% set sm = handoff.suggested_model if handoff else None %}
-  {% set se = handoff.suggested_effort if handoff else None %}
-  {# `card.launch_models` already has an off-catalog suggestion prepended --
-     `cards.model_options` does it, because building a ModelChoice here would
-     mean exposing the class to the template environment. Effort has no
-     versions to name, so it stays a bare list and keeps its inline prepend. #}
+{# The three launch-option selects (model, effort, permission). Shared by
+   `launch_band` (per-handoff, or the no-handoff "Start session" band) and
+   `compose_box` (the ad hoc "New session" box) -- extracted in Task 5 fix
+   round 2, when `compose_box`'s Run-now button (`data-compose-launch`) lost
+   the ONE launch band it used to be able to point at: once any handoff is
+   queued, every rendered band is keyed off that handoff's own id, and no
+   band keyed off the project id exists on the page at all, so the compose
+   box's launch had nothing to read and posted null model/effort/permission.
+   Giving the compose box its OWN selects (keyed on its own `cid`) via this
+   shared macro is what makes it self-contained instead of borrowing someone
+   else's. Copied verbatim out of `launch_band` -- every id/data-* substring
+   below is byte-identical to before the extraction, which is what keeps the
+   existing mutation anchors on these lines matching unchanged. `sm`/`se`
+   default to `None`: `launch_band` passes a handoff's suggestion when it has
+   one, `compose_box` never has one to pass, so its selects always land on
+   the first catalog entry -- the same behaviour the no-handoff launch band
+   already had. #}
+{% macro launch_options(card, lid, sm=None, se=None) %}
   {% set effort_options = ([se] if se and se not in card.launch_efforts else []) + card.launch_efforts %}
-  {# With a handoff, the band launches the queued prompt (`handoff-<id>`). With
-     none, the workspace's primary action IS the compose box: `data-launch-prompt`
-     points at that ad hoc textarea (`compose-<project_id>`) so "Start session"
-     posts its text rather than an empty body that would 422. The button below
-     renders `disabled` until there is text (launch.js toggles it on input). The
-     dashboard's own band (`primary=False`) passes neither and is unchanged. #}
-  <p class="launch" data-launch="{{ lid }}" data-launch-path="{{ card.path }}"
-     {%- if handoff %} data-launch-handoff="{{ handoff.id }}"
-     data-launch-prompt="{{ "handoff-" ~ handoff.id }}"
-     {%- elif primary %} data-launch-prompt="{{ "compose-" ~ card.project_id }}"{% endif %}>
-    {% if primary %}
-    <button type="button" class="btn btn--primary" data-launch-button="{{ lid }}"
-            {%- if not handoff %} disabled{% endif %}
-            aria-label="{{ 'Continue' if handoff else 'Start' }} a session for {{ card.name }} in Terminal">{{ "Continue in Terminal" if handoff else "Start session" }}</button>
-    {% endif %}
-    {% if collapse_options %}<details class="launch__options"><summary><span class="launch__effective">{{ sm or card.launch_models[0].value }} · {{ se or card.launch_efforts[0] }} · Ask as usual</span><span class="launch__change">Change options</span></summary>{% endif %}
     <span class="launch__field">
       <label class="launch__label" for="{{ lid }}-model">Model</label>
       <select class="launch__select" id="{{ lid }}-model" data-launch-model="{{ lid }}">
@@ -231,6 +218,45 @@
         {%- endfor %}
       </select>
     </span>
+{% endmacro %}
+
+{% macro launch_band(card, handoff, primary=False, collapse_options=False) %}
+  {# Keyed off the HANDOFF, not the project, whenever one is passed: this band
+     now renders once per queued handoff (`_workspace_current.html`'s
+     `for h in card.handoffs` loop), so a project-id-keyed `lid` would repeat
+     verbatim across every stacked band -- every `<select id>`/`<label for>`/
+     `data-*` pair would collide, and `launch.js`'s exact-match selectors
+     (keyed off this same `lid`) would then resolve to whichever band happened
+     to render first, silently launching the wrong handoff's model/effort/
+     permission. The null-handoff "Start session" fallback
+     (`launch_band(card, none, ...)`) has no handoff to key off and keeps the
+     project-id form, unchanged from before. #}
+  {% set lid = ("launch-" ~ handoff.id) if handoff else ("launch-" ~ card.project_id) %}
+  {% set sm = handoff.suggested_model if handoff else None %}
+  {% set se = handoff.suggested_effort if handoff else None %}
+  {# `card.launch_models` already has an off-catalog suggestion prepended --
+     `cards.model_options` does it, because building a ModelChoice here would
+     mean exposing the class to the template environment. Effort has no
+     versions to name, so it stays a bare list and keeps its inline prepend
+     (`launch_options` recomputes it from `se`, since a macro cannot see a
+     caller's own `{% set %}`). #}
+  {# With a handoff, the band launches the queued prompt (`handoff-<id>`). With
+     none, the workspace's primary action IS the compose box: `data-launch-prompt`
+     points at that ad hoc textarea (`compose-<project_id>`) so "Start session"
+     posts its text rather than an empty body that would 422. The button below
+     renders `disabled` until there is text (launch.js toggles it on input). The
+     dashboard's own band (`primary=False`) passes neither and is unchanged. #}
+  <p class="launch" data-launch="{{ lid }}" data-launch-path="{{ card.path }}"
+     {%- if handoff %} data-launch-handoff="{{ handoff.id }}"
+     data-launch-prompt="{{ "handoff-" ~ handoff.id }}"
+     {%- elif primary %} data-launch-prompt="{{ "compose-" ~ card.project_id }}"{% endif %}>
+    {% if primary %}
+    <button type="button" class="btn btn--primary" data-launch-button="{{ lid }}"
+            {%- if not handoff %} disabled{% endif %}
+            aria-label="{{ 'Continue' if handoff else 'Start' }} a session for {{ card.name }} in Terminal">{{ "Continue in Terminal" if handoff else "Start session" }}</button>
+    {% endif %}
+    {% if collapse_options %}<details class="launch__options"><summary><span class="launch__effective">{{ sm or card.launch_models[0].value }} · {{ se or card.launch_efforts[0] }} · Ask as usual</span><span class="launch__change">Change options</span></summary>{% endif %}
+    {{ launch_options(card, lid, sm, se) }}
     {% if collapse_options %}</details>{% endif %}
     {% if not primary %}
     <button type="button" class="btn btn--icon" data-launch-button="{{ lid }}"
