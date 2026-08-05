@@ -248,6 +248,10 @@ def test_launch_exits_one_where_handoff_exits_zero_on_the_same_closed_port(tmp_p
     only copy of something. `launch` must not, because a launch that did not
     happen has lost nothing and a launch deferred to some later boot is worse
     than one that never fired.
+
+    `--handoff` is passed so `launch` reaches the POST (and its unreachable
+    handling) directly rather than failing earlier at the GET this task added;
+    that GET's own panel-down handling has its own coverage above.
     """
     port = closed_port()
     home = tmp_path / "home"
@@ -262,7 +266,7 @@ def test_launch_exits_one_where_handoff_exits_zero_on_the_same_closed_port(tmp_p
             cwd=str(tmp_path), env=env,
         )
 
-    launch = run(["launch", "--project", DEMO])
+    launch = run(["launch", "--project", DEMO, "--handoff", "h1"])
     handoff = run(["handoff", "--prompt-file", "-", "--project", DEMO], HOSTILE)
 
     assert (launch.returncode, handoff.returncode) == (1, 0), (
@@ -273,15 +277,43 @@ def test_launch_exits_one_where_handoff_exits_zero_on_the_same_closed_port(tmp_p
     assert "panel unreachable" in launch.stderr
 
 
-def test_a_failed_launch_writes_no_spool_file(tmp_path):
-    """A spooled launch would fire at an unpredictable later time. Nothing at all
-    must be left behind that a drain could pick up."""
+def test_launch_with_neither_flag_and_the_panel_down_exits_one_and_posts_nothing(
+    tmp_path
+):
+    """With no `--prompt-file` and no `--handoff`, target resolution GETs
+    `/api/handoffs` before ever reaching the POST this task's other tests
+    exercise directly; a genuinely closed port covers that GET's own
+    unreachable handling, on a real socket rather than a mocked transport."""
     port = closed_port()
     home = tmp_path / "home"
     home.mkdir()
 
     proc = subprocess.run(
         [sys.executable, "-m", "bridge", "launch", "--project", DEMO],
+        input="", capture_output=True, text=True, cwd=str(tmp_path),
+        env={"HOME": str(home), "PATH": "/usr/bin:/bin",
+             "BRIDGE_PORT": str(port), "PYTHONDONTWRITEBYTECODE": "1"},
+    )
+
+    assert proc.returncode == 1, f"stderr:\n{proc.stderr}"
+    assert proc.stdout == ""
+    assert "panel unreachable" in proc.stderr
+    left = [p for p in (home / ".bridge").rglob("*") if p.is_file()]
+    assert left == [], f"a failed launch left files behind: {left}"
+
+
+def test_a_failed_launch_writes_no_spool_file(tmp_path):
+    """A spooled launch would fire at an unpredictable later time. Nothing at all
+    must be left behind that a drain could pick up.
+
+    `--handoff` reaches the POST directly, same rationale as above."""
+    port = closed_port()
+    home = tmp_path / "home"
+    home.mkdir()
+
+    proc = subprocess.run(
+        [sys.executable, "-m", "bridge", "launch", "--project", DEMO,
+         "--handoff", "h1"],
         input="", capture_output=True, text=True, cwd=str(tmp_path),
         env={"HOME": str(home), "PATH": "/usr/bin:/bin",
              "BRIDGE_PORT": str(port), "PYTHONDONTWRITEBYTECODE": "1"},
