@@ -170,7 +170,17 @@
    stays visible without opening the disclosure. Neither is passed by
    `_card.html`, so its band is unchanged. #}
 {% macro launch_band(card, handoff, primary=False, collapse_options=False) %}
-  {% set lid = "launch-" ~ card.project_id %}
+  {# Keyed off the HANDOFF, not the project, whenever one is passed: this band
+     now renders once per queued handoff (`_workspace_current.html`'s
+     `for h in card.handoffs` loop), so a project-id-keyed `lid` would repeat
+     verbatim across every stacked band -- every `<select id>`/`<label for>`/
+     `data-*` pair would collide, and `launch.js`'s exact-match selectors
+     (keyed off this same `lid`) would then resolve to whichever band happened
+     to render first, silently launching the wrong handoff's model/effort/
+     permission. The null-handoff "Start session" fallback
+     (`launch_band(card, none, ...)`) has no handoff to key off and keeps the
+     project-id form, unchanged from before. #}
+  {% set lid = ("launch-" ~ handoff.id) if handoff else ("launch-" ~ card.project_id) %}
   {% set sm = handoff.suggested_model if handoff else None %}
   {% set se = handoff.suggested_effort if handoff else None %}
   {# `card.launch_models` already has an off-catalog suggestion prepended --

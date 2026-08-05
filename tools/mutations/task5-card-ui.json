@@ -23,7 +23,8 @@
     "old": "{% macro handoff_block(card, handoff, totals, collapse_prompt=False, show_span_line=False) %}\n  {% if handoff %}\n    {% set hid = \"handoff-\" ~ handoff.id %}",
     "new": "{% macro handoff_block(card, handoff, totals, collapse_prompt=False, show_span_line=False) %}\n  {% if True %}\n    {% set hid = \"handoff-\" ~ handoff.id %}",
     "tests": [
-      "tests/test_api.py::test_a_card_with_no_handoff_shows_no_empty_affordance"
+      "tests/test_api.py::test_a_card_with_no_handoff_shows_no_empty_affordance",
+      "tests/test_launch_template.py::test_handoff_block_renders_nothing_for_a_falsy_handoff"
     ]
   },
   {

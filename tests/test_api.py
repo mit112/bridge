@@ -1137,7 +1137,7 @@ def test_both_launch_selects_are_labelled_and_preselect_the_suggestion(launch_ap
     ).json()["project_id"]
 
     html = c.get(f"/project/{pid}?tab=current").text
-    lid = f"launch-{pid}"
+    lid = "launch-h1"
 
     assert f'<label class="launch__label" for="{lid}-model">Model</label>' in html
     assert f'<label class="launch__label" for="{lid}-effort">Effort</label>' in html
@@ -1176,7 +1176,7 @@ def test_a_suggestion_the_config_does_not_list_is_still_preselected(launch_app):
     html = c.get(f"/project/{pid}?tab=current").text
 
     assert f'<option value="{off_catalog}" selected>{off_catalog}</option>' in html
-    assert f'id="launch-{pid}-model"' in html
+    assert 'id="launch-h1-model"' in html
 
 
 def test_with_no_suggestion_the_first_catalog_entry_is_selected(launch_app):
@@ -1360,7 +1360,7 @@ def test_the_permission_select_is_labelled_and_marked_dangerous(launch_app):
     c, _, _, _ = launch_app
     pid = c.post("/api/handoff", json=body("h1")).json()["project_id"]
     html = c.get(f"/project/{pid}?tab=current").text
-    assert re.search(r'<label[^>]*for="launch-\d+-perm">Permissions</label>', html)
+    assert re.search(r'<label[^>]*for="launch-h1-perm">Permissions</label>', html)
     # Colour is never the only signal: the option says so in words.
     assert "SKIP ALL CHECKS" in html
 

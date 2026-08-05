@@ -171,6 +171,96 @@ def test_launch_js_sends_the_empty_default_rather_than_omitting_it(tmp_path):
     assert body["permission_mode"] == ""
 
 
+# --- Task 5 fix round 1: stacked launch bands fire independently -------------
+#
+# `_launch.html` now renders one `launch_band` per queued handoff, each with
+# its own `lid` (`launch-<handoff-id>`, keyed off the handoff since the fix).
+# This harness puts TWO such bands' worth of controls in the DOM stub at once
+# -- `launch-h1` and `launch-h2` -- with deliberately DIFFERENT model/effort/
+# permission values, and clicks the SECOND band's button. Every selector
+# `launch.js` resolves is an exact match on the id read off the clicked
+# element, so this is the only way to prove a click on one stacked band can
+# never read another's selects (the bug `lid` colliding on `card.project_id`
+# used to cause: whichever band happened to match first would answer, however
+# many handoffs were queued).
+STACKED_HARNESS = """
+globalThis.window = globalThis;
+let clickHandlers = [];
+const controls = {
+  '[data-launch-model="launch-h1"]': { value: "claude-opus-4-8" },
+  '[data-launch-effort="launch-h1"]': { value: "low" },
+  '[data-launch-perm="launch-h1"]': { value: "" },
+  '[data-launch="launch-h1"]': {
+    getAttribute: (name) => ({
+      "data-launch-path": "/Users/mitsheth/dev/demo",
+      "data-launch-handoff": "h1",
+      "data-launch-prompt": "handoff-h1",
+    }[name] ?? null),
+  },
+  '[data-launch-model="launch-h2"]': { value: "claude-sonnet-5" },
+  '[data-launch-effort="launch-h2"]': { value: "xhigh" },
+  '[data-launch-perm="launch-h2"]': { value: "bypassPermissions" },
+  '[data-launch="launch-h2"]': {
+    getAttribute: (name) => ({
+      "data-launch-path": "/Users/mitsheth/dev/demo",
+      "data-launch-handoff": "h2",
+      "data-launch-prompt": "handoff-h2",
+    }[name] ?? null),
+  },
+};
+const fields = {
+  "handoff-h1": { value: "prompt for h1" },
+  "handoff-h2": { value: "prompt for h2" },
+};
+globalThis.document = {
+  addEventListener(type, fn) { if (type === "click") clickHandlers.push(fn); },
+  getElementById: (id) => fields[id] ?? null,
+  querySelector: (sel) => controls[sel] ?? null,
+  createRange: () => ({}),
+};
+globalThis.navigator = { clipboard: { writeText: async () => {} } };
+let sentBody = null;
+globalThis.fetch = async (url, init) => {
+  sentBody = JSON.parse(init.body);
+  return { ok: true, status: 200, json: async () => ({ outcome: "started" }) };
+};
+const fs = require("fs");
+eval(fs.readFileSync(process.argv[2], "utf8"));
+
+// Only the SECOND band's button is clicked -- the first band's controls are
+// present in `controls` above purely as a decoy the click must not read.
+const button = {
+  getAttribute: () => "launch-h2",
+  closest: () => button,
+  disabled: false,
+  setAttribute() {}, removeAttribute() {},
+};
+const event = { target: { closest: (sel) =>
+  sel === "[data-launch-button]" ? button : null } };
+Promise.all(clickHandlers.map((fn) => fn(event))).then(() => {
+  console.log(JSON.stringify(sentBody));
+});
+"""
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_launch_button_click_reads_only_its_own_stacked_band(tmp_path):
+    harness = tmp_path / "stacked_harness.js"
+    harness.write_text(STACKED_HARNESS)
+    proc = subprocess.run(
+        [_node(), str(harness), str(LAUNCH_JS)], capture_output=True, text=True
+    )
+    assert proc.returncode == 0, proc.stderr
+    body = json.loads(proc.stdout)
+
+    # The second band's own values -- never the first band's.
+    assert body["model"] == "claude-sonnet-5"
+    assert body["effort"] == "xhigh"
+    assert body["permission_mode"] == "bypassPermissions"
+    assert body["handoff_id"] == "h2"
+    assert body["prompt"] == "prompt for h2"
+
+
 # --- Empty-state primary action drives the compose textarea, never a 422 -----
 #
 # With no queued handoff, the workspace's "Start session" band names the ad hoc
