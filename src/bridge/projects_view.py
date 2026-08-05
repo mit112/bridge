@@ -81,7 +81,14 @@ def build_projects(
         "needs_attention": sum(
             1 for card in cards if card.handoffs or card.live is not None or card.is_stale
         ),
-        "running": sum(1 for card in cards if card.live is not None),
+        # A live session on a card that also has a queued handoff renders as
+        # "queued" (a handoff outranks a running session in _status_word), and
+        # the Running filter matches that rendered state -- so it must not be
+        # counted here either, or the Running badge would outnumber the rows the
+        # Running filter shows. It is still counted under `queued` below.
+        "running": sum(
+            1 for card in cards if card.live is not None and not card.handoffs
+        ),
         "queued": sum(len(card.handoffs) for card in cards),
         "hidden": len(hidden),
     }
