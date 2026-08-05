@@ -504,6 +504,167 @@ def test_dismiss_handoff_repoints_band_at_compose_and_disables_start(tmp_path):
     assert result["launchButtonDisabled"] is True
 
 
+# --- Task 6 fix round 1: dismiss binds per stacked handoff too -------------
+#
+# The Task 3.3 `DISMISS_HARNESS` above proves the dismiss handler's *shape*
+# (PATCH, DOM patched in place, band demoted) with only ONE handoff on the
+# page. It says nothing about two handoffs stacked on the same project card
+# (Task 5): the handler resolves `id` off the CLICKED button
+# (`event.target.closest("[data-handoff-dismiss]")`, then
+# `button.getAttribute("data-handoff-dismiss")`), then reaches every other
+# node through that same id (`[data-handoff-section="${id}"]`,
+# `[data-launch-handoff="${id}"]`, `[data-handoff-dismiss-status="${id}"]`).
+# This harness stacks two full sets of those nodes (h1, h2) and fires dismiss
+# on only one -- proving the PATCH and every DOM patch land on that handoff
+# alone and the sibling's section/band/status are untouched.
+#
+# `dismissDecoy` is the trap: the real handler never calls a bare
+# `document.querySelector("[data-handoff-dismiss]")` (the button comes from
+# `event.target.closest`, not a document-level lookup), so this selector is
+# never hit by correct code. If the handler regressed to that first-match
+# form, `button` would resolve here to a hard-coded "h1" -- silently
+# answering for a click actually aimed at h2 -- and every assertion below
+# would fail. The same trap is set on the bare (id-less) section/band/status
+# selectors: dropping the id interpolation on any one of them would resolve
+# to h1's node instead of returning null, which the assertions also catch.
+STACKED_DISMISS_HARNESS = """
+globalThis.window = globalThis;
+let clickHandlers = [];
+
+function section(hidden) { return { hidden }; }
+function band(id, launchId) {
+  const self = {
+    attrs: {
+      "data-launch-handoff": id,
+      "data-launch-prompt": `handoff-${id}`,
+      "data-launch": launchId,
+    },
+    getAttribute(name) { return Object.prototype.hasOwnProperty.call(this.attrs, name) ? this.attrs[name] : null; },
+    setAttribute(name, value) { this.attrs[name] = value; },
+    removeAttribute(name) { delete this.attrs[name]; },
+    querySelector(sel) { return sel === "[data-launch-button]" ? self.launchButton : null; },
+  };
+  self.launchButton = { textContent: "Continue in Terminal", disabled: false };
+  return self;
+}
+function status() { return { textContent: "" }; }
+
+const sectionH1 = section(false);
+const sectionH2 = section(false);
+const bandH1 = band("h1", "launch-1");
+const bandH2 = band("h2", "launch-2");
+const statusH1 = status();
+const statusH2 = status();
+const empty = { hidden: true };
+const composeFields = { "compose-1": { value: "" }, "compose-2": { value: "" } };
+
+// Decoys: a correct handler never reaches these bare (id-less) selectors.
+const dismissDecoy = { getAttribute: () => "h1" };
+
+const nodes = {
+  '[data-handoff-section="h1"]': sectionH1,
+  '[data-handoff-section="h2"]': sectionH2,
+  '[data-launch-handoff="h1"]': bandH1,
+  '[data-launch-handoff="h2"]': bandH2,
+  '[data-handoff-dismiss-status="h1"]': statusH1,
+  '[data-handoff-dismiss-status="h2"]': statusH2,
+  "[data-handoff-empty]": empty,
+  "[data-handoff-dismiss]": dismissDecoy,
+  "[data-handoff-section]": sectionH1,
+  "[data-launch-handoff]": bandH1,
+  "[data-handoff-dismiss-status]": statusH1,
+};
+
+globalThis.document = {
+  addEventListener(type, fn) { if (type === "click") clickHandlers.push(fn); },
+  querySelector: (sel) => nodes[sel] ?? null,
+  getElementById: (id) => composeFields[id] ?? null,
+};
+
+const fetchCalls = [];
+globalThis.fetch = async (url, init) => {
+  fetchCalls.push({ url, method: init.method, body: init.body });
+  return { ok: true, status: 200, json: async () => ({}) };
+};
+
+const fs = require("fs");
+eval(fs.readFileSync(process.argv[2], "utf8"));
+
+// The button that ACTUALLY fired -- its own `closest` resolves to itself,
+// mirroring a real click event's `.target.closest(...)`.
+function dismissButton(id) {
+  const self = {
+    getAttribute: () => id,
+    disabled: false,
+    closest: (sel) => (sel === "[data-handoff-dismiss]" ? self : null),
+  };
+  return self;
+}
+const buttonH1 = dismissButton("h1");
+const buttonH2 = dismissButton("h2");
+
+const target = TARGET === "h1" ? buttonH1 : buttonH2;
+const event = { target };
+Promise.all(clickHandlers.map((fn) => fn(event))).then(() => {
+  console.log(JSON.stringify({
+    fetchCalls,
+    sectionH1Hidden: sectionH1.hidden,
+    sectionH2Hidden: sectionH2.hidden,
+    bandH1HasHandoff: Object.prototype.hasOwnProperty.call(bandH1.attrs, "data-launch-handoff"),
+    bandH2HasHandoff: Object.prototype.hasOwnProperty.call(bandH2.attrs, "data-launch-handoff"),
+    statusH1: statusH1.textContent,
+    statusH2: statusH2.textContent,
+  }));
+});
+"""
+
+
+def _run_stacked_dismiss(tmp_path, target: str) -> dict:
+    harness = tmp_path / f"stacked_dismiss_{target}.js"
+    harness.write_text(STACKED_DISMISS_HARNESS.replace("TARGET", json.dumps(target)))
+    proc = subprocess.run(
+        [_node(), str(harness), str(LAUNCH_JS)], capture_output=True, text=True
+    )
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout)
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_dismissing_the_second_stacked_handoff_never_touches_the_first(tmp_path):
+    got = _run_stacked_dismiss(tmp_path, "h2")
+    assert len(got["fetchCalls"]) == 1
+    call = got["fetchCalls"][0]
+    assert call["url"] == "/api/handoff/h2"
+    assert call["method"] == "PATCH"
+    assert json.loads(call["body"]) == {"status": "dismissed"}
+    assert got["sectionH2Hidden"] is True
+    assert got["bandH2HasHandoff"] is False
+    assert "Dismissed" in got["statusH2"]
+    # The sibling handoff's section, band, and status are untouched.
+    assert got["sectionH1Hidden"] is False
+    assert got["bandH1HasHandoff"] is True
+    assert got["statusH1"] == ""
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_dismissing_the_first_stacked_handoff_never_touches_the_second(tmp_path):
+    """Firing on the FIRST stacked dismiss button must resolve to h1, not
+    fall through to h2 -- proving the id comes from the clicked button
+    itself, not from DOM order or a single first-match lookup that would
+    always answer with whichever handoff is first."""
+    got = _run_stacked_dismiss(tmp_path, "h1")
+    assert len(got["fetchCalls"]) == 1
+    call = got["fetchCalls"][0]
+    assert call["url"] == "/api/handoff/h1"
+    assert json.loads(call["body"]) == {"status": "dismissed"}
+    assert got["sectionH1Hidden"] is True
+    assert got["bandH1HasHandoff"] is False
+    assert "Dismissed" in got["statusH1"]
+    assert got["sectionH2Hidden"] is False
+    assert got["bandH2HasHandoff"] is True
+    assert got["statusH2"] == ""
+
+
 # --- Task 6: prompt-save (focusout) binds per element, not a shared lookup --
 #
 # `launch.js`'s focusout listener resolves the handoff id off the FIELD THAT
