@@ -638,7 +638,23 @@ a { color: var(--accent); text-underline-offset: .16em; }
   width: min(100%, 74rem);
   margin-inline: auto;
   padding: var(--space-6) var(--space-6) var(--space-4);
-  border-bottom: 3px double var(--text);
+  position: relative;
+  /* An editorial "Scotch rule" -- a heavier line over a thin hairline with a
+     real gap between them -- rather than `3px double`, whose 1px/1px/1px bands
+     collapse into one chunky line at screen density and never read as two
+     rules. The hairline is a pseudo-element (not a second border) so it can sit
+     a clear gap below the thick line; it is inset by the head's own horizontal
+     padding so it spans the same width as the border above it. */
+  border-bottom: 2px solid var(--text);
+}
+.page-head::after {
+  content: "";
+  position: absolute;
+  left: calc(-1 * var(--space-6));
+  right: calc(-1 * var(--space-6));
+  bottom: -4px;
+  height: 1px;
+  background: var(--text);
 }
 .page-eyebrow {
   margin: 0 0 var(--space-2);
