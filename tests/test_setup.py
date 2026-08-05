@@ -276,6 +276,17 @@ def test_launchd_only_regenerates_the_plist_with_the_configured_port(
     assert launchctl.calls == []  # declined → launchctl never touched
 
 
+def test_launchd_only_rejects_an_invalid_bridge_port(home, launchctl, monkeypatch):
+    """A typo in BRIDGE_PORT fails with a clear ConfigError before any write,
+    matching `config.load` rather than the raw ValueError `int()` used to raise."""
+    from bridge.config import ConfigError
+
+    monkeypatch.setenv("BRIDGE_PORT", "not-a-port")
+    with pytest.raises(ConfigError):
+        setup.run_launchd_only()
+    assert not setup.LAUNCHD_PLIST_PATH.exists()  # bailed before writing
+
+
 def test_launchd_only_reinstall_bootstraps_the_bridge_label(
     home, launchctl, monkeypatch
 ):

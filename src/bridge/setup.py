@@ -666,10 +666,13 @@ def run_setup() -> int:
 
 def run_launchd_only() -> int:
     """Regenerate and reinstall just the LaunchAgent plist."""
-    # Read port from config.toml (written by `bridge setup`), falling back
-    # to the env var or the default.
-    port = _configured_port() or DEFAULT_PORT
-    port = int(os.environ.get("BRIDGE_PORT", str(port)))
+    # Port precedence matches `config.load`: BRIDGE_PORT (validated) wins, then
+    # the port config.toml recorded, then the default. Routing the env var
+    # through `_env_port` means a typo fails with a clear ConfigError here too,
+    # not the raw ValueError `int()` used to raise.
+    from bridge.config import _env_port
+
+    port = _env_port() or _configured_port() or DEFAULT_PORT
     python_path = sys.executable
     claude_dir = _resolve_claude_path()
 
