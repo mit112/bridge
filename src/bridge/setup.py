@@ -13,6 +13,7 @@ package update if the venv path changed).
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shlex
@@ -22,6 +23,8 @@ import subprocess
 import sys
 import textwrap
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 HOME = Path.home()
@@ -125,6 +128,49 @@ def _find_free_port(start: int = DEFAULT_PORT, attempts: int = 20) -> int:
     return start  # fallback
 
 
+def _configured_port() -> int | None:
+    """The port a prior `bridge setup` recorded in config.toml, or None.
+
+    Read straight from the file (not `config.load`) so a re-run can recover the
+    user's chosen port before any other step runs, and so a malformed or
+    portless config degrades to None rather than raising.
+    """
+    from bridge.config import config_path
+
+    cfg_path = config_path()
+    if not cfg_path.exists():
+        return None
+    try:
+        import tomllib
+
+        data = tomllib.loads(cfg_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    port = data.get("port")
+    return port if isinstance(port, int) else None
+
+
+def _bridge_is_serving(port: int, host: str = "127.0.0.1", timeout: float = 0.5) -> bool:
+    """True if the process holding `host:port` is a Bridge panel.
+
+    A prior install's LaunchAgent keeps the panel running, so on a re-run the
+    configured port reads as "in use" when it is simply our own instance. Probe
+    Bridge's diagnostics endpoint to tell "my own panel" apart from "another app
+    grabbed the port" — only the former should be kept idempotently.
+    """
+    url = f"http://{host}:{port}/api/diagnostics"
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as resp:  # noqa: S310
+            if resp.status != 200:
+                return False
+            data = json.load(resp)
+    except (urllib.error.URLError, OSError, ValueError, TimeoutError):
+        return False
+    # Keys unique to Bridge's diagnostics payload; a generic JSON responder on
+    # the port will not carry both.
+    return isinstance(data, dict) and "live_source" in data and "spool_depth" in data
+
+
 # ── Step: discover project roots ────────────────────────────────────────────
 
 
@@ -195,15 +241,30 @@ def _step_discovery() -> list[str]:
 # ── Step: port ──────────────────────────────────────────────────────────────
 
 
-def _step_port() -> int:
-    """Confirm the port. If 8787 is taken, offer alternatives."""
-    _banner("Port")
-    if _port_is_free(DEFAULT_PORT):
-        _ok(f"Port {DEFAULT_PORT} is available.")
-        return DEFAULT_PORT
+def _step_port(configured_port: int | None = None) -> int:
+    """Confirm the port. Prefer the port a prior run recorded; if that port is
+    taken, offer alternatives.
 
-    _warn(f"Port {DEFAULT_PORT} is in use.")
-    alt = _find_free_port(DEFAULT_PORT + 1)
+    Re-running setup against our own running panel must be idempotent: the
+    prior install's LaunchAgent keeps the panel up, so the configured port
+    reads as "in use" when it is simply our own instance. Keep it in that case,
+    and only offer to migrate when some *other* process holds the port —
+    migrating silently would rewrite config.toml + the plist and break every
+    hook and bookmark pinned to the original port.
+    """
+    _banner("Port")
+    preferred = configured_port if configured_port is not None else DEFAULT_PORT
+
+    if _port_is_free(preferred):
+        _ok(f"Port {preferred} is available.")
+        return preferred
+
+    if _bridge_is_serving(preferred):
+        _ok(f"Bridge is already running on port {preferred} — keeping it.")
+        return preferred
+
+    _warn(f"Port {preferred} is in use.")
+    alt = _find_free_port(preferred + 1)
     answer = _ask(f"Use port {alt} instead?", str(alt))
     try:
         return int(answer)
@@ -569,8 +630,9 @@ def run_setup() -> int:
     # 1. Discover project roots
     discovery_paths = _step_discovery()
 
-    # 2. Choose port
-    port = _step_port()
+    # 2. Choose port — prefer the port a prior run recorded so re-running
+    #    against our own running panel keeps it rather than migrating.
+    port = _step_port(_configured_port())
 
     # 3. Write config
     _step_config(discovery_paths, port)
@@ -606,19 +668,7 @@ def run_launchd_only() -> int:
     """Regenerate and reinstall just the LaunchAgent plist."""
     # Read port from config.toml (written by `bridge setup`), falling back
     # to the env var or the default.
-    from bridge.config import config_path as _config_path
-
-    cfg_path = _config_path()
-    port = DEFAULT_PORT
-    if cfg_path.exists():
-        try:
-            import tomllib
-
-            data = tomllib.loads(cfg_path.read_text(encoding="utf-8"))
-            if isinstance(data.get("port"), int):
-                port = data["port"]
-        except Exception:
-            pass
+    port = _configured_port() or DEFAULT_PORT
     port = int(os.environ.get("BRIDGE_PORT", str(port)))
     python_path = sys.executable
     claude_dir = _resolve_claude_path()
