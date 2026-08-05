@@ -171,5 +171,65 @@
       "tests/test_swap_lifecycle.py::test_router_lets_the_browser_handle_a_same_document_hash_link"
     ],
     "expect_count": 1
+  },
+  {
+    "name": "re-add a scripts block override to settings.html",
+    "file": "src/bridge/templates/settings.html",
+    "old": "</div>\n</div>\n\n{% endblock %}",
+    "new": "</div>\n</div>\n\n{% endblock %}\n{% block scripts %}\n<script src=\"/static/settings.js\" defer></script>\n{% endblock %}",
+    "tests": [
+      "tests/test_shell_contract.py::test_no_template_overrides_the_scripts_block"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "stop registering prefillLaunchDefaults as a per-page-view hook",
+    "file": "src/bridge/static/launch.js",
+    "old": "if (window.bridgePage) {\n  window.bridgePage.onLeave(() => Promise.all(\n    Array.from(document.querySelectorAll(\"[data-prompt-handoff]\")).map(savePrompt),\n  ));\n  window.bridgePage.onEnter(prefillLaunchDefaults);\n}\nif (!window.bridgePage) prefillLaunchDefaults();",
+    "new": "if (window.bridgePage) {\n  window.bridgePage.onLeave(() => Promise.all(\n    Array.from(document.querySelectorAll(\"[data-prompt-handoff]\")).map(savePrompt),\n  ));\n}\nprefillLaunchDefaults();",
+    "tests": [
+      "tests/test_shell_contract.py::test_per_page_behaviour_is_registered_on_the_registry[launch.js]"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "revert settings.js's delegated change listener to a direct module-scope capture",
+    "file": "src/bridge/static/settings.js",
+    "old": "document.addEventListener(\"change\", (event) => {\n  if (!event.target || !event.target.closest) return;\n  for (const [selector, key, onChange] of SELECT_KEYS) {\n    const el = event.target.closest(selector);\n    if (!el) continue;\n    localStorage.setItem(key, el.value);\n    if (onChange) onChange();\n    return;\n  }\n});",
+    "new": "const themeEl = document.querySelector(\"[data-settings-theme]\");\nif (themeEl) themeEl.addEventListener(\"change\", () => {\n  localStorage.setItem(APPEARANCE_KEY, themeEl.value);\n  applyTheme();\n});",
+    "tests": [
+      "tests/test_shell_contract.py::test_no_module_scope_dom_capture[settings.js]"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "_layout_for always returns the fragment layout, even without the header",
+    "file": "src/bridge/api.py",
+    "old": "return \"_fragment.html\" if request.headers.get(FRAGMENT_HEADER) else \"base.html\"",
+    "new": "return \"_fragment.html\"",
+    "tests": [
+      "tests/test_fragment_routes.py::test_a_request_without_the_header_is_unchanged"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "drop the shell_status block from _fragment.html",
+    "file": "src/bridge/templates/_fragment.html",
+    "old": "<div class=\"shell-status\">\n  {% block shell_status %}\n    <span class=\"shell-status__label\">Local control plane</span>\n    <span class=\"shell-status__detail\">Repository access \u00b7 read only</span>\n  {% endblock %}\n</div>",
+    "new": "<div class=\"not-shell-status\"></div>",
+    "tests": [
+      "tests/test_fragment_routes.py::test_fragment_carries_every_swap_target"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "reword _fragment.html's page-head so it no longer matches base.html's",
+    "file": "src/bridge/templates/_fragment.html",
+    "old": "<header class=\"page-head\">",
+    "new": "<header class=\"page-head-mutated\">",
+    "tests": [
+      "tests/test_fragment_routes.py::test_the_fragment_body_matches_the_full_documents_body"
+    ],
+    "expect_count": 1
   }
 ]
