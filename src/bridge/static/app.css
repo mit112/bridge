@@ -638,7 +638,23 @@ a { color: var(--accent); text-underline-offset: .16em; }
   width: min(100%, 74rem);
   margin-inline: auto;
   padding: var(--space-6) var(--space-6) var(--space-4);
-  border-bottom: 3px double var(--text);
+  position: relative;
+  /* An editorial "Scotch rule" -- a heavier line over a thin hairline with a
+     real gap between them -- rather than `3px double`, whose 1px/1px/1px bands
+     collapse into one chunky line at screen density and never read as two
+     rules. The hairline is a pseudo-element (not a second border) so it can sit
+     a clear gap below the thick line; it is inset by the head's own horizontal
+     padding so it spans the same width as the border above it. */
+  border-bottom: 2px solid var(--text);
+}
+.page-head::after {
+  content: "";
+  position: absolute;
+  left: calc(-1 * var(--space-6));
+  right: calc(-1 * var(--space-6));
+  bottom: -4px;
+  height: 1px;
+  background: var(--text);
 }
 .page-eyebrow {
   margin: 0 0 var(--space-2);
@@ -883,6 +899,28 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
 .pill--st-attention { color: var(--pill-work-fg); background: var(--pill-work-bg); }
 .pill--st-review { color: var(--pill-review-fg); background: var(--pill-review-bg); }
 .pill--st-risk { color: var(--pill-risk-fg); background: var(--pill-risk-bg); }
+
+/* Scheduled-run statuses. `schedule_row` (and the Overview's "Up next", which
+   only ever shows `pending`) renders `pill--<status>` straight off the run's
+   status word, so every status the scheduler can write needs a rule here or the
+   pill renders with no colour at all -- text on the card surface,
+   indistinguishable from a label. They resolve through the SAME taxonomy slots as everything
+   above: firing is the run (green) pair; a hard failure is the rust alarm
+   (risk); indeterminate/missed still need a human but are not emergencies, so
+   they read as review (gold); and the quiet terminal/upcoming states
+   (pending/cancelled/superseded) stay a bordered neutral rather than minting
+   another colour, matching `recent`/`idle`. */
+.pill--launching { color: var(--pill-run-fg); background: var(--pill-run-bg); }
+.pill--failed { color: var(--pill-risk-fg); background: var(--pill-risk-bg); }
+.pill--indeterminate,
+.pill--missed { color: var(--pill-review-fg); background: var(--pill-review-bg); }
+.pill--pending,
+.pill--cancelled,
+.pill--superseded {
+  color: var(--text-secondary);
+  background: var(--surface);
+  border: 1px solid var(--rule);
+}
 
 /* --- Phase 3: the launch band ---------------------------------------------- */
 
