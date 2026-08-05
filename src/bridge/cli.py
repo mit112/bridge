@@ -189,8 +189,16 @@ def cmd_launch(args, cfg) -> int:
             return 2
         permission_mode = "bypassPermissions"
 
+    if args.prompt_file and args.handoff:
+        print(
+            "bridge launch: --prompt-file contradicts --handoff; pick one",
+            file=sys.stderr,
+        )
+        return 2
+
+    project = args.project or os.getcwd()
     payload = {
-        "project_path": args.project or os.getcwd(),
+        "project_path": project,
         "mode": args.mode,
         "model": args.model,
         "effort": args.effort,
@@ -207,6 +215,38 @@ def cmd_launch(args, cfg) -> int:
                   file=sys.stderr)
             return 2
         payload["prompt"] = prompt
+    elif args.handoff:
+        # An explicit target: no prompt is read, so this launches exactly the
+        # queued handoff the caller named rather than whatever the server
+        # would otherwise have to guess.
+        payload["handoff_id"] = args.handoff
+    else:
+        # The server no longer auto-picks (Task 3 removed that fallback), so
+        # the one auto-pick left lives here, and only for the unambiguous case.
+        query = urllib.parse.urlencode({"project_path": project})
+        try:
+            status, body = _request("GET", f"{_base(cfg)}/api/handoffs?{query}")
+        except Exception as exc:  # noqa: BLE001
+            print(f"bridge launch: panel unreachable "
+                  f"({type(exc).__name__}: {exc}); nothing was launched",
+                  file=sys.stderr)
+            return 1
+        if not 200 <= status < 300:
+            print(f"bridge launch: server returned {status}{_detail(body)}",
+                  file=sys.stderr)
+            return 1
+        handoffs = body or []
+        if len(handoffs) == 0:
+            print(f"bridge launch: nothing queued for {project}; pass a prompt "
+                  f"(--prompt-file) or a handoff (--handoff)", file=sys.stderr)
+            return 2
+        if len(handoffs) > 1:
+            print("bridge launch: multiple handoffs queued; choose one with "
+                  "--handoff <id>:", file=sys.stderr)
+            for h in handoffs:
+                print(f"  {h['id']}: {h['summary']}", file=sys.stderr)
+            return 2
+        payload["handoff_id"] = handoffs[0]["id"]
     # Otherwise no `prompt` key at all, rather than an empty one: the server holds
     # the queued handoff already, so round-tripping it through the client would
     # only add a way for the two to disagree about what got launched.
@@ -301,6 +341,8 @@ def build_parser() -> argparse.ArgumentParser:
     la.add_argument("--prompt-file",
                     help="path to a prompt, or - for stdin; "
                          "defaults to the project's queued handoff")
+    la.add_argument("--handoff",
+                    help="launch this queued handoff by id")
 
     n = sub.add_parser("next", help="print the queued prompt to stdout")
     n.add_argument("--project")
