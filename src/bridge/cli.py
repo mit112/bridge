@@ -339,8 +339,9 @@ def build_parser() -> argparse.ArgumentParser:
     la.add_argument("--dangerously-skip-permissions", action="store_true",
                     help="alias for --permission-mode bypassPermissions")
     la.add_argument("--prompt-file",
-                    help="path to a prompt, or - for stdin; "
-                         "defaults to the project's queued handoff")
+                    help="path to a prompt, or - for stdin; optional -- with "
+                         "neither this nor --handoff, launches the project's "
+                         "sole queued handoff, or lists choices if several")
     la.add_argument("--handoff",
                     help="launch this queued handoff by id")
 

@@ -369,7 +369,7 @@ def test_empty_state_primary_button_enables_and_launches_the_composed_prompt(tmp
     assert got["handoffId"] is None
 
 
-# --- Task 3.3 fix round: the "Dismiss handoff" click handler -----------------
+# --- Final-review fix round: the "Dismiss handoff" click handler -----------
 #
 # `launch.js` registers a SECOND delegated "click" listener for
 # `[data-handoff-dismiss]` (Task 3.3). This harness mirrors `LAUNCH_HARNESS`'s
@@ -377,38 +377,66 @@ def test_empty_state_primary_button_enables_and_launches_the_composed_prompt(tmp
 # file evaluated under `node` -- but drives that second listener instead of
 # the launch-button one, and inspects the DOM nodes the handler is supposed to
 # patch directly (never `innerHTML`, never a reload).
+#
+# Two handoffs (h1, h2) are staged, dismissed one at a time in the same
+# harness run, and BOTH intermediate and final DOM state are captured. That
+# is what the previous version of this harness got wrong: it fabricated a
+# lone handoff whose id ("1") happened to equal the compose box's project-id
+# suffix ("compose-1") -- an alignment the real template never produces
+# (handoff ids are opaque strings; the compose id is `compose-<project_id>`,
+# always rendered regardless of which handoffs are queued). That let a
+# now-deleted "demote the band to the compose id" code path look correct by
+# coincidence. `compose-42` here is a project id that matches NEITHER handoff
+# id, closing that gap; the dismiss handler no longer touches it at all,
+# which this harness proves by never exercising `getElementById` from the
+# handler's own code path.
 DISMISS_HARNESS = """
 globalThis.window = globalThis;
 let clickHandlers = [];
-const section = { hidden: false };
-const launchButton = { textContent: "Continue in Terminal", disabled: false };
-// The ad hoc compose textarea the demoted band must re-point at. Starts empty,
-// so the demoted button must land disabled -- exactly the server-rendered
-// empty state.
+
+function section() { return { hidden: false }; }
+function band(id) {
+  return {
+    attrs: { "data-launch-handoff": id, "data-launch-prompt": `handoff-${id}`, "data-launch": `launch-${id}` },
+    hidden: false,
+  };
+}
+function dismissButton(id) {
+  const self = { getAttribute: () => id, disabled: false, hidden: false, closest: (sel) => (sel === "[data-handoff-dismiss]" ? self : null) };
+  return self;
+}
+function status() { return { textContent: "" }; }
+
 const composeField = { value: "" };
-const band = {
-  attrs: {
-    "data-launch-handoff": "h1",
-    "data-launch-prompt": "handoff-h1",
-    "data-launch": "launch-1",
-  },
-  getAttribute(name) { return Object.prototype.hasOwnProperty.call(this.attrs, name) ? this.attrs[name] : null; },
-  setAttribute(name, value) { this.attrs[name] = value; },
-  removeAttribute(name) { delete this.attrs[name]; },
-  querySelector(sel) { return sel === "[data-launch-button]" ? launchButton : null; },
-};
+const sectionH1 = section();
+const sectionH2 = section();
+const bandH1 = band("h1");
+const bandH2 = band("h2");
+const buttonH1 = dismissButton("h1");
+const buttonH2 = dismissButton("h2");
+const statusH1 = status();
+const statusH2 = status();
 const empty = { hidden: true };
-const status = { textContent: "" };
-const controls = {
-  '[data-handoff-section="h1"]': section,
-  '[data-launch-handoff="h1"]': band,
+
+const nodes = {
+  '[data-handoff-section="h1"]': sectionH1,
+  '[data-handoff-section="h2"]': sectionH2,
+  '[data-launch-handoff="h1"]': bandH1,
+  '[data-launch-handoff="h2"]': bandH2,
+  '[data-handoff-dismiss-status="h1"]': statusH1,
+  '[data-handoff-dismiss-status="h2"]': statusH2,
   "[data-handoff-empty]": empty,
-  '[data-handoff-dismiss-status="h1"]': status,
 };
+const sections = { h1: sectionH1, h2: sectionH2 };
+
 globalThis.document = {
   addEventListener(type, fn) { if (type === "click") clickHandlers.push(fn); },
-  querySelector: (sel) => controls[sel] ?? null,
-  getElementById: (id) => (id === "compose-1" ? composeField : null),
+  querySelector: (sel) => nodes[sel] ?? null,
+  querySelectorAll(sel) {
+    if (sel === "[data-handoff-section]") return Object.values(sections);
+    return [];
+  },
+  getElementById: (id) => (id === "compose-42" ? composeField : null),
 };
 // A reload or a `location.href` assignment would be the "no reload" contract
 // broken -- neither is ever referenced by the handler, but stubbing both as
@@ -428,25 +456,31 @@ globalThis.fetch = async (url, init) => {
 const fs = require("fs");
 eval(fs.readFileSync(process.argv[2], "utf8"));
 
-const button = {
-  getAttribute: () => "h1",
-  disabled: false,
-  closest: (sel) => (sel === "[data-handoff-dismiss]" ? button : null),
-};
-const event = { target: button };
-Promise.all(clickHandlers.map((fn) => fn(event))).then(() => {
-  console.log(JSON.stringify({
-    fetchCalls,
-    sectionHidden: section.hidden,
+function fire(button) {
+  return Promise.all(clickHandlers.map((fn) => fn({ target: button })));
+}
+function snapshot() {
+  return {
+    fetchCalls: fetchCalls.slice(),
+    sectionH1Hidden: sectionH1.hidden,
+    sectionH2Hidden: sectionH2.hidden,
+    bandH1Hidden: bandH1.hidden,
+    bandH2Hidden: bandH2.hidden,
+    buttonH1Hidden: buttonH1.hidden,
+    buttonH2Hidden: buttonH2.hidden,
+    statusH1: statusH1.textContent,
+    statusH2: statusH2.textContent,
     emptyHidden: empty.hidden,
-    bandStillHasHandoff: Object.prototype.hasOwnProperty.call(band.attrs, "data-launch-handoff"),
-    bandPromptTarget: Object.prototype.hasOwnProperty.call(band.attrs, "data-launch-prompt") ? band.attrs["data-launch-prompt"] : null,
-    launchButtonText: launchButton.textContent,
-    launchButtonDisabled: launchButton.disabled,
-    statusText: status.textContent,
     reloadCalled,
     hrefAssigned,
-  }));
+  };
+}
+
+fire(buttonH1).then(() => {
+  const afterH1 = snapshot();
+  return fire(buttonH2).then(() => {
+    console.log(JSON.stringify({ afterH1, afterH2: snapshot() }));
+  });
 });
 """
 
@@ -466,8 +500,9 @@ def test_dismiss_handoff_patches_the_existing_endpoint_with_no_new_write_path(
     tmp_path,
 ):
     result = _run_dismiss_harness(tmp_path)
-    assert len(result["fetchCalls"]) == 1
-    call = result["fetchCalls"][0]
+    after_h1 = result["afterH1"]
+    assert len(after_h1["fetchCalls"]) == 1
+    call = after_h1["fetchCalls"][0]
     assert call["url"] == "/api/handoff/h1"
     assert call["method"] == "PATCH"
     assert json.loads(call["body"]) == {"status": "dismissed"}
@@ -476,40 +511,66 @@ def test_dismiss_handoff_patches_the_existing_endpoint_with_no_new_write_path(
 @pytest.mark.skipif(_node() is None, reason="node is not installed")
 def test_dismiss_handoff_updates_the_dom_in_place_on_success(tmp_path):
     result = _run_dismiss_harness(tmp_path)
-    # The handoff section hides and the empty state reveals -- both by
-    # flipping `hidden` on already-rendered nodes, never by rebuilding either
-    # one's markup.
-    assert result["sectionHidden"] is True
-    assert result["emptyHidden"] is False
-    # The launch band that was driving the now-dismissed handoff is demoted:
-    # the attribute naming it is gone, and its primary button falls back to
-    # the empty-state label.
-    assert result["bandStillHasHandoff"] is False
-    assert result["launchButtonText"] == "Start session"
+    after_h1 = result["afterH1"]
+    # The handoff section, its launch band, and its dismiss button all hide
+    # in place -- flipping `hidden` on already-rendered nodes, never
+    # rebuilding markup and never leaving a mis-targeted control behind (the
+    # obsolete "demote to the compose id" path is gone entirely: there is no
+    # band left keyed off `handoff-h1` for a stray click to reach).
+    assert after_h1["sectionH1Hidden"] is True
+    assert after_h1["bandH1Hidden"] is True
+    assert after_h1["buttonH1Hidden"] is True
     # A role=status announcement, not a reload.
-    assert "Dismissed" in result["statusText"]
-    assert result["reloadCalled"] is False
-    assert result["hrefAssigned"] is False
+    assert "Dismissed" in after_h1["statusH1"]
+    assert after_h1["reloadCalled"] is False
+    assert after_h1["hrefAssigned"] is False
 
 
 @pytest.mark.skipif(_node() is None, reason="node is not installed")
-def test_dismiss_handoff_repoints_band_at_compose_and_disables_start(tmp_path):
-    # Demoting the band must land it on the SAME empty-state wiring the server
-    # renders when nothing is queued: `data-launch-prompt` names the ad hoc
-    # compose textarea (`compose-<project_id>`, derived from the band's own
-    # `launch-<project_id>` id) and the primary button starts disabled. Without
-    # this, "Start session" would fire immediately with no prompt and 422.
+def test_dismiss_handoff_status_span_stays_live_while_its_button_hides(tmp_path):
+    # The status span is a SIBLING of the dismiss button, not a descendant --
+    # hiding the button must never take the span down with it, since
+    # `announce(key, "✓ Dismissed")` only reaches something still in the
+    # accessibility tree.
     result = _run_dismiss_harness(tmp_path)
-    assert result["bandPromptTarget"] == "compose-1"
-    assert result["launchButtonDisabled"] is True
+    after_h1 = result["afterH1"]
+    assert after_h1["buttonH1Hidden"] is True
+    assert after_h1["statusH1"] == "✓ Dismissed"
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_dismissing_one_handoff_leaves_its_sibling_untouched_and_the_empty_state_hidden(
+    tmp_path,
+):
+    # This is the case that catches the regression the review found: the old
+    # handler unhid the empty-state UNCONDITIONALLY on every dismiss. With a
+    # sibling handoff still queued, "no session in progress" must stay a lie
+    # the page never tells.
+    result = _run_dismiss_harness(tmp_path)
+    after_h1 = result["afterH1"]
+    assert after_h1["sectionH2Hidden"] is False
+    assert after_h1["bandH2Hidden"] is False
+    assert after_h1["buttonH2Hidden"] is False
+    assert after_h1["statusH2"] == ""
+    assert after_h1["emptyHidden"] is True
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_dismissing_every_queued_handoff_reveals_the_empty_state(tmp_path):
+    result = _run_dismiss_harness(tmp_path)
+    after_h2 = result["afterH2"]
+    assert after_h2["sectionH1Hidden"] is True
+    assert after_h2["sectionH2Hidden"] is True
+    assert after_h2["emptyHidden"] is False
 
 
 # --- Task 6 fix round 1: dismiss binds per stacked handoff too -------------
 #
-# The Task 3.3 `DISMISS_HARNESS` above proves the dismiss handler's *shape*
-# (PATCH, DOM patched in place, band demoted) with only ONE handoff on the
-# page. It says nothing about two handoffs stacked on the same project card
-# (Task 5): the handler resolves `id` off the CLICKED button
+# The `DISMISS_HARNESS` above proves the dismiss handler's *shape* (PATCH,
+# DOM patched in place, band + button hidden, empty-state gated on remaining
+# sections) by dismissing two stacked handoffs in sequence. It says nothing
+# about SELECTOR precision when two handoffs are BOTH still on the page: the
+# handler resolves `id` off the CLICKED button
 # (`event.target.closest("[data-handoff-dismiss]")`, then
 # `button.getAttribute("data-handoff-dismiss")`), then reaches every other
 # node through that same id (`[data-handoff-section="${id}"]`,
@@ -533,30 +594,25 @@ let clickHandlers = [];
 
 function section(hidden) { return { hidden }; }
 function band(id, launchId) {
-  const self = {
+  return {
     attrs: {
       "data-launch-handoff": id,
       "data-launch-prompt": `handoff-${id}`,
       "data-launch": launchId,
     },
-    getAttribute(name) { return Object.prototype.hasOwnProperty.call(this.attrs, name) ? this.attrs[name] : null; },
-    setAttribute(name, value) { this.attrs[name] = value; },
-    removeAttribute(name) { delete this.attrs[name]; },
-    querySelector(sel) { return sel === "[data-launch-button]" ? self.launchButton : null; },
+    hidden: false,
   };
-  self.launchButton = { textContent: "Continue in Terminal", disabled: false };
-  return self;
 }
 function status() { return { textContent: "" }; }
 
 const sectionH1 = section(false);
 const sectionH2 = section(false);
-const bandH1 = band("h1", "launch-1");
-const bandH2 = band("h2", "launch-2");
+const bandH1 = band("h1", "launch-h1");
+const bandH2 = band("h2", "launch-h2");
 const statusH1 = status();
 const statusH2 = status();
 const empty = { hidden: true };
-const composeFields = { "compose-1": { value: "" }, "compose-2": { value: "" } };
+const composeField = { value: "" };
 
 // Decoys: a correct handler never reaches these bare (id-less) selectors.
 const dismissDecoy = { getAttribute: () => "h1" };
@@ -574,11 +630,16 @@ const nodes = {
   "[data-launch-handoff]": bandH1,
   "[data-handoff-dismiss-status]": statusH1,
 };
+const sections = { h1: sectionH1, h2: sectionH2 };
 
 globalThis.document = {
   addEventListener(type, fn) { if (type === "click") clickHandlers.push(fn); },
   querySelector: (sel) => nodes[sel] ?? null,
-  getElementById: (id) => composeFields[id] ?? null,
+  querySelectorAll(sel) {
+    if (sel === "[data-handoff-section]") return Object.values(sections);
+    return [];
+  },
+  getElementById: (id) => (id === "compose-42" ? composeField : null),
 };
 
 const fetchCalls = [];
@@ -596,6 +657,7 @@ function dismissButton(id) {
   const self = {
     getAttribute: () => id,
     disabled: false,
+    hidden: false,
     closest: (sel) => (sel === "[data-handoff-dismiss]" ? self : null),
   };
   return self;
@@ -610,10 +672,13 @@ Promise.all(clickHandlers.map((fn) => fn(event))).then(() => {
     fetchCalls,
     sectionH1Hidden: sectionH1.hidden,
     sectionH2Hidden: sectionH2.hidden,
-    bandH1HasHandoff: Object.prototype.hasOwnProperty.call(bandH1.attrs, "data-launch-handoff"),
-    bandH2HasHandoff: Object.prototype.hasOwnProperty.call(bandH2.attrs, "data-launch-handoff"),
+    bandH1Hidden: bandH1.hidden,
+    bandH2Hidden: bandH2.hidden,
+    buttonH1Hidden: buttonH1.hidden,
+    buttonH2Hidden: buttonH2.hidden,
     statusH1: statusH1.textContent,
     statusH2: statusH2.textContent,
+    emptyHidden: empty.hidden,
   }));
 });
 """
@@ -638,12 +703,16 @@ def test_dismissing_the_second_stacked_handoff_never_touches_the_first(tmp_path)
     assert call["method"] == "PATCH"
     assert json.loads(call["body"]) == {"status": "dismissed"}
     assert got["sectionH2Hidden"] is True
-    assert got["bandH2HasHandoff"] is False
+    assert got["bandH2Hidden"] is True
+    assert got["buttonH2Hidden"] is True
     assert "Dismissed" in got["statusH2"]
-    # The sibling handoff's section, band, and status are untouched.
+    # The sibling handoff's section, band, button, and status are untouched.
     assert got["sectionH1Hidden"] is False
-    assert got["bandH1HasHandoff"] is True
+    assert got["bandH1Hidden"] is False
+    assert got["buttonH1Hidden"] is False
     assert got["statusH1"] == ""
+    # A sibling handoff is still queued, so the empty-state must stay hidden.
+    assert got["emptyHidden"] is True
 
 
 @pytest.mark.skipif(_node() is None, reason="node is not installed")
@@ -658,11 +727,14 @@ def test_dismissing_the_first_stacked_handoff_never_touches_the_second(tmp_path)
     assert call["url"] == "/api/handoff/h1"
     assert json.loads(call["body"]) == {"status": "dismissed"}
     assert got["sectionH1Hidden"] is True
-    assert got["bandH1HasHandoff"] is False
+    assert got["bandH1Hidden"] is True
+    assert got["buttonH1Hidden"] is True
     assert "Dismissed" in got["statusH1"]
     assert got["sectionH2Hidden"] is False
-    assert got["bandH2HasHandoff"] is True
+    assert got["bandH2Hidden"] is False
+    assert got["buttonH2Hidden"] is False
     assert got["statusH2"] == ""
+    assert got["emptyHidden"] is True
 
 
 # --- Task 6: prompt-save (focusout) binds per element, not a shared lookup --
