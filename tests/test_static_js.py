@@ -504,6 +504,106 @@ def test_dismiss_handoff_repoints_band_at_compose_and_disables_start(tmp_path):
     assert result["launchButtonDisabled"] is True
 
 
+# --- Task 6: prompt-save (focusout) binds per element, not a shared lookup --
+#
+# `launch.js`'s focusout listener resolves the handoff id off the FIELD THAT
+# FIRED -- `event.target.closest("[data-prompt-handoff]")`, then
+# `field.getAttribute("data-prompt-handoff")` -- rather than a single
+# `document.querySelector('[data-prompt-handoff]')` that would always answer
+# with whichever prompt textarea happens to be first in the DOM. Two queued
+# handoffs on one project (Task 5) each render their own prompt textarea; this
+# harness puts BOTH in the DOM stub at once, each with its own edited value,
+# and fires focusout on only ONE of them per run -- proving a save on either
+# field reaches its OWN handoff's PATCH and its OWN status span, never the
+# other stacked field's.
+PROMPT_SAVE_HARNESS = """
+globalThis.window = globalThis;
+let focusoutHandlers = [];
+
+function field(id, handoffId, value, saved) {
+  const self = {
+    id, value, defaultValue: saved, dataset: {},
+    getAttribute(name) { return name === "data-prompt-handoff" ? handoffId : null; },
+    closest(sel) { return sel === "[data-prompt-handoff]" ? self : null; },
+  };
+  return self;
+}
+
+const fieldH1 = field("handoff-h1", "h1", "EDITED prompt for h1", "original prompt for h1");
+const fieldH2 = field("handoff-h2", "h2", "EDITED prompt for h2", "original prompt for h2");
+
+const statusNodes = {
+  '[data-prompt-status="handoff-h1"]': { textContent: "" },
+  '[data-prompt-status="handoff-h2"]': { textContent: "" },
+};
+
+globalThis.document = {
+  addEventListener(type, fn) { if (type === "focusout") focusoutHandlers.push(fn); },
+  querySelector: (sel) => statusNodes[sel] ?? null,
+};
+globalThis.navigator = { clipboard: { writeText: async () => {} } };
+
+const fetchCalls = [];
+globalThis.fetch = async (url, init) => {
+  fetchCalls.push({ url, method: init.method, body: JSON.parse(init.body) });
+  return { ok: true, status: 200, json: async () => ({}) };
+};
+
+const fs = require("fs");
+eval(fs.readFileSync(process.argv[2], "utf8"));
+
+// Only ONE stacked field's focusout fires per run -- the other sits in the
+// DOM stub purely as a decoy the handler must not read from or write to.
+const target = FIELD === "h1" ? fieldH1 : fieldH2;
+const event = { target };
+Promise.all(focusoutHandlers.map((fn) => fn(event))).then(() => {
+  console.log(JSON.stringify({
+    fetchCalls,
+    statusH1: statusNodes['[data-prompt-status="handoff-h1"]'].textContent,
+    statusH2: statusNodes['[data-prompt-status="handoff-h2"]'].textContent,
+  }));
+});
+"""
+
+
+def _run_prompt_save(tmp_path, field_name: str) -> dict:
+    harness = tmp_path / f"prompt_save_{field_name}.js"
+    harness.write_text(PROMPT_SAVE_HARNESS.replace("FIELD", json.dumps(field_name)))
+    proc = subprocess.run(
+        [_node(), str(harness), str(LAUNCH_JS)], capture_output=True, text=True
+    )
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout)
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_prompt_save_on_the_second_stacked_field_never_touches_the_first(tmp_path):
+    got = _run_prompt_save(tmp_path, "h2")
+    assert len(got["fetchCalls"]) == 1
+    call = got["fetchCalls"][0]
+    assert call["url"] == "/api/handoff/h2"
+    assert call["method"] == "PATCH"
+    assert call["body"] == {"next_prompt": "EDITED prompt for h2"}
+    assert "saved" in got["statusH2"]
+    # The other stacked handoff's status span is untouched.
+    assert got["statusH1"] == ""
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_prompt_save_on_the_first_stacked_field_never_touches_the_second(tmp_path):
+    """Firing on the FIRST stacked field must resolve to h1, not fall through
+    to h2 -- proving the id comes from the fired element itself, not from DOM
+    order or a single first-match `querySelector` that would always answer
+    with whichever prompt field is first."""
+    got = _run_prompt_save(tmp_path, "h1")
+    assert len(got["fetchCalls"]) == 1
+    call = got["fetchCalls"][0]
+    assert call["url"] == "/api/handoff/h1"
+    assert call["body"] == {"next_prompt": "EDITED prompt for h1"}
+    assert "saved" in got["statusH1"]
+    assert got["statusH2"] == ""
+
+
 # --- Phase 4 Task 8: live.js behaviour ---------------------------------------
 
 LIVE_JS = Path(__file__).resolve().parent.parent / "src" / "bridge" / "static" / "live.js"
