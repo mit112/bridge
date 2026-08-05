@@ -168,6 +168,10 @@ function makeDocument(root) {
   globalThis.location = {
     href: "http://localhost/",
     origin: "http://localhost",
+    // A getter, not a static string: router.js reads `window.location.pathname`
+    // to tell a same-document hash link (the skip-link's `#main`) apart from a
+    // real navigation, so it must track `href` rather than go stale against it.
+    get pathname() { return new URL(this.href).pathname; },
     assign(href) { globalThis.__calls.locationAssign = href; },
   };
   globalThis.history = { pushState() {} };

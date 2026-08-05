@@ -368,6 +368,43 @@ def test_router_ignores_a_modified_click_on_a_swappable_link(tmp_path):
     assert got["fetches"] == 0
 
 
+def test_router_lets_the_browser_handle_a_same_document_hash_link(tmp_path):
+    """The skip-link (base.html:101, `<a class="skip-link" href="#main">`,
+    present on every page) is an in-page focus jump, not a navigation.
+
+    `new URL("#main", window.location.href).pathname` resolves to the CURRENT
+    path, so `swappable()` alone can't tell "#main" apart from a real
+    same-path navigation -- without a dedicated guard, the click delegate
+    intercepts it, re-fetches the fragment, and swaps the page out from under
+    the user instead of letting the browser move focus. On a fetch failure the
+    catch fallback would then do a FULL PAGE RELOAD for "Skip to content".
+    """
+    got = run_js(
+        """
+        const { El } = require(MINIDOM);
+        const link = new El("a", { href: "#main", class: "skip-link" });
+        document.body.append(link);
+        let prevented = false;
+        const event = {
+          type: "click", target: link, button: 0,
+          metaKey: false, ctrlKey: false, shiftKey: false, altKey: false,
+          defaultPrevented: false,
+          preventDefault() { prevented = true; },
+        };
+        link.dispatchEvent(event);
+        report({ prevented, fetches: globalThis.__calls.fetch.length });
+        """.replace("MINIDOM", json.dumps(str(MINIDOM))),
+        ["shell.js", "router.js"],
+        tmp_path,
+    )
+    assert got["prevented"] is False, (
+        "the skip-link's #main jump was intercepted by the router -- this "
+        "turns \"Skip to content\" into a fragment swap (or, on a fetch "
+        "failure, a full page reload)"
+    )
+    assert got["fetches"] == 0
+
+
 def test_router_falls_back_to_a_real_navigation_on_a_failed_fetch(tmp_path):
     """Mutation-verify guard for Step 7's second mutation (drop the `catch`
     fallback).

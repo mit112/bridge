@@ -104,6 +104,13 @@ if (document.addEventListener) {
     if (!link) return;
     if (link.hasAttribute("download") || link.hasAttribute("target")) return;
     const url = new URL(link.getAttribute("href"), window.location.href);
+    // A same-document hash link (the skip-link's `#main`, chief among them) is
+    // an in-page focus jump, not a navigation -- `url.pathname` resolves to the
+    // CURRENT path for a bare `#main`, so `swappable()` alone can't tell the two
+    // apart. Intercepting it would re-fetch and swap the page under the user's
+    // feet instead of letting the browser move focus, and on a fetch failure
+    // the catch fallback would turn "Skip to content" into a full page reload.
+    if (url.pathname === window.location.pathname && url.hash) return;
     if (!swappable(url)) return;
     event.preventDefault();
     navigate(url.href);
