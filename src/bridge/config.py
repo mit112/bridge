@@ -78,6 +78,28 @@ def config_path() -> Path:
     )
 
 
+def _env_port() -> int | None:
+    """`BRIDGE_PORT` as a validated port, or None when unset or empty.
+
+    The env var is the deliberate per-run override, but a typo in it should fail
+    with the same clear `ConfigError` as a bad `port` in config.toml -- not the
+    uncaught `ValueError` from `int()` that took down every `bridge` command.
+    Range-checked to match the config.toml path exactly.
+    """
+    raw = os.environ.get("BRIDGE_PORT")
+    if not raw:
+        return None
+    try:
+        port = int(raw)
+    except ValueError:
+        port = -1  # force the range check below to report it uniformly
+    if port < 1 or port > 65535:
+        raise ConfigError(
+            f"BRIDGE_PORT must be an integer between 1 and 65535, got {raw!r}"
+        )
+    return port
+
+
 def _absolute(path: str) -> str:
     """Home-relative by default, because that keeps the file portable.
 
@@ -226,7 +248,7 @@ def load(overrides: dict | None = None) -> Config:
         # Env-overridable so the CLI's exit-zero-when-the-panel-is-down property
         # can be tested in a real subprocess against a genuinely closed port,
         # rather than against a mocked transport. BRIDGE_PORT wins over config.toml.
-        port=int(os.environ.get("BRIDGE_PORT") or 8787),
+        port=_env_port() or 8787,
         aliases={},
         archived_paths=(),
     )
@@ -238,9 +260,9 @@ def load(overrides: dict | None = None) -> Config:
     # `--launchd-only` can recover it, whereas the env var is the deliberate
     # per-run override. Re-applied here because the file merge above would
     # otherwise clobber the env value set at construction.
-    env_port = os.environ.get("BRIDGE_PORT")
-    if env_port:
-        cfg = replace(cfg, port=int(env_port))
+    env_port = _env_port()
+    if env_port is not None:
+        cfg = replace(cfg, port=env_port)
     if overrides:
         cfg = replace(cfg, **overrides)
     return cfg

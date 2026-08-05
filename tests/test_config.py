@@ -282,6 +282,29 @@ def test_an_out_of_range_port_is_refused(tmp_path, monkeypatch):
             load()
 
 
+def test_a_non_numeric_bridge_port_env_is_refused(tmp_path, monkeypatch):
+    """A typo in BRIDGE_PORT must fail with a clear ConfigError, not the
+    uncaught ValueError from `int()` that took down every `bridge` command."""
+    monkeypatch.setenv("BRIDGE_PORT", "not-a-port")
+    with pytest.raises(ConfigError):
+        load()
+
+
+def test_an_out_of_range_bridge_port_env_is_refused(tmp_path, monkeypatch):
+    for value in ("0", "70000"):
+        monkeypatch.setenv("BRIDGE_PORT", value)
+        with pytest.raises(ConfigError):
+            load()
+
+
+def test_an_empty_bridge_port_env_falls_back_to_the_configured_port(
+    tmp_path, monkeypatch
+):
+    write_config(tmp_path, monkeypatch, "port = 8795\n")
+    monkeypatch.setenv("BRIDGE_PORT", "")
+    assert load().port == 8795
+
+
 def test_bridge_port_env_wins_over_the_configured_port(tmp_path, monkeypatch):
     """The `port` field's own docstring promises this ordering: the file value
     is only the fallback the installer records, the env var is the deliberate
