@@ -6,3 +6,8 @@ __pycache__/
 *.db
 *.db-wal
 *.db-shm
+.DS_Store
+dist/
+# Local, non-Bridge tooling that happens to live in this working tree.
+.agents/
+reasonix.toml

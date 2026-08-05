@@ -26,7 +26,7 @@
   {
     "name": "skip dev-repo discovery, so a transcript-less repo never gets a card",
     "file": "src/bridge/indexer.py",
-    "old": "    for repo in backfill.dev_git_repos(cfg):\n        store.upsert_project(str(repo), repo.name)",
+    "old": "    for repo in backfill.discovery_repos(cfg):\n        store.upsert_project(str(repo), repo.name)",
     "new": "    pass",
     "tests": ["tests/test_indexer.py::test_reindex_cards_a_dev_repo_that_has_no_transcripts"],
     "expect_count": 1
@@ -34,9 +34,9 @@
   {
     "name": "treat every dev child as a repo, carding plain directories that are not git repos",
     "file": "src/bridge/backfill.py",
-    "old": "        p for p in cfg.dev_dir.iterdir() if p.is_dir() and (p / \".git\").exists()",
-    "new": "        p for p in cfg.dev_dir.iterdir() if p.is_dir()",
-    "tests": ["tests/test_backfill.py::test_dev_git_repos_lists_only_git_repos_under_dev_dir"],
+    "old": "p for p in dp.iterdir() if p.is_dir() and (p / \".git\").exists()",
+    "new": "p for p in dp.iterdir() if p.is_dir()",
+    "tests": ["tests/test_backfill.py::test_discovery_repos_lists_only_git_repos_under_discovery_paths"],
     "expect_count": 1
   }
 ]

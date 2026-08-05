@@ -131,6 +131,22 @@ def _read_config_file(path: Path) -> dict:
         if not isinstance(hours, int) or hours < 1:
             raise ConfigError(f"{path}: stale.hours must be a positive whole number")
         values["stale_hours"] = hours
+    discovery = data.get("discovery", {})
+    if not isinstance(discovery, dict):
+        raise ConfigError(f"{path}: [discovery] must be a table")
+    disc_paths = discovery.get("paths", [])
+    if not isinstance(disc_paths, list):
+        raise ConfigError(f"{path}: discovery.paths must be a list of paths")
+    if disc_paths:
+        values["discovery_paths"] = tuple(
+            Path(_absolute(p)) for p in disc_paths
+        )
+    # Port from config file (env var BRIDGE_PORT takes precedence in load()).
+    if "port" in data:
+        port = data["port"]
+        if not isinstance(port, int) or port < 1 or port > 65535:
+            raise ConfigError(f"{path}: port must be an integer between 1 and 65535")
+        values["port"] = port
     return values
 
 
@@ -179,7 +195,9 @@ class Config:
     # the command line entirely, so this directory is the only place it exists
     # between `launch()` and the new shell's `cat`.
     launches_dir: Path
-    dev_dir: Path
+    # Directories to scan one level deep for git repos not yet indexed.
+    # Defaults to (~/dev,).  Configured via [discovery] paths in config.toml.
+    discovery_paths: tuple[Path, ...]
     stale_hours: int
     models: list[ModelChoice]
     efforts: list[str]
@@ -200,21 +218,29 @@ def load(overrides: dict | None = None) -> Config:
         db_path=home / ".bridge" / "bridge.db",
         spool_dir=home / ".bridge" / "spool",
         launches_dir=home / ".bridge" / "launches",
-        dev_dir=home / "dev",
+        discovery_paths=(home / "dev",),
         stale_hours=12,
         models=list(DEFAULT_MODELS),
         efforts=list(DEFAULT_EFFORTS),
         permission_modes=list(DEFAULT_PERMISSION_MODES),
         # Env-overridable so the CLI's exit-zero-when-the-panel-is-down property
         # can be tested in a real subprocess against a genuinely closed port,
-        # rather than against a mocked transport.
+        # rather than against a mocked transport. BRIDGE_PORT wins over config.toml.
         port=int(os.environ.get("BRIDGE_PORT") or 8787),
         aliases={},
         archived_paths=(),
     )
-    # defaults < config.toml < overrides. The file can only reach the fields it
-    # actually names, and a test's explicit override always wins.
+    # defaults < config.toml < BRIDGE_PORT < overrides. The file can only reach
+    # the fields it actually names, and a test's explicit override always wins.
     cfg = replace(cfg, **_read_config_file(config_path()))
+    # BRIDGE_PORT wins over config.toml's `port` (see the `port` field's note):
+    # the file value is only the fallback the installer records so
+    # `--launchd-only` can recover it, whereas the env var is the deliberate
+    # per-run override. Re-applied here because the file merge above would
+    # otherwise clobber the env value set at construction.
+    env_port = os.environ.get("BRIDGE_PORT")
+    if env_port:
+        cfg = replace(cfg, port=int(env_port))
     if overrides:
         cfg = replace(cfg, **overrides)
     return cfg
