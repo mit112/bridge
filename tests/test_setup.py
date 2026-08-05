@@ -89,6 +89,107 @@ def _answers(monkeypatch, *values):
     monkeypatch.setattr(setup, "_ask_yn", lambda *a, **k: next(it))
 
 
+# ── port selection idempotency ───────────────────────────────────────────────
+
+
+class _FakeResp:
+    """Stand-in for `urllib.request.urlopen`'s context-manager response."""
+
+    def __init__(self, status, payload):
+        self.status = status
+        self._payload = payload
+
+    def read(self):  # json.load reads through this
+        return self._payload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+def test_configured_port_reads_the_recorded_port(home, monkeypatch):
+    setup.CONFIG_PATH.write_text("port = 8790\n")
+    monkeypatch.setenv("BRIDGE_CONFIG", str(setup.CONFIG_PATH))
+    assert setup._configured_port() == 8790
+
+
+def test_configured_port_is_none_without_a_config(home, monkeypatch):
+    monkeypatch.setenv("BRIDGE_CONFIG", str(setup.CONFIG_PATH))  # file absent
+    assert setup._configured_port() is None
+
+
+def test_configured_port_is_none_when_config_omits_port(home, monkeypatch):
+    setup.CONFIG_PATH.write_text("[discovery]\npaths = []\n")
+    monkeypatch.setenv("BRIDGE_CONFIG", str(setup.CONFIG_PATH))
+    assert setup._configured_port() is None
+
+
+def test_configured_port_is_none_when_config_is_malformed(home, monkeypatch):
+    setup.CONFIG_PATH.write_text("port = = = broken")
+    monkeypatch.setenv("BRIDGE_CONFIG", str(setup.CONFIG_PATH))
+    assert setup._configured_port() is None
+
+
+def test_bridge_is_serving_true_for_a_bridge_diagnostics_response(monkeypatch):
+    import urllib.request
+
+    payload = b'{"live": "ok", "live_source": "registry", "spool_depth": 0}'
+    monkeypatch.setattr(urllib.request, "urlopen",
+                        lambda *a, **k: _FakeResp(200, payload))
+    assert setup._bridge_is_serving(8787) is True
+
+
+def test_bridge_is_serving_false_for_a_non_bridge_json_response(monkeypatch):
+    import urllib.request
+
+    monkeypatch.setattr(urllib.request, "urlopen",
+                        lambda *a, **k: _FakeResp(200, b'{"hello": "world"}'))
+    assert setup._bridge_is_serving(8787) is False
+
+
+def test_bridge_is_serving_false_when_nothing_answers(monkeypatch):
+    import urllib.error
+    import urllib.request
+
+    def boom(*a, **k):
+        raise urllib.error.URLError("connection refused")
+
+    monkeypatch.setattr(urllib.request, "urlopen", boom)
+    assert setup._bridge_is_serving(8787) is False
+
+
+def test_step_port_keeps_free_default_on_fresh_install(monkeypatch):
+    monkeypatch.setattr(setup, "_port_is_free", lambda p: True)
+    assert setup._step_port(None) == setup.DEFAULT_PORT
+
+
+def test_step_port_keeps_the_configured_port_when_free(monkeypatch):
+    monkeypatch.setattr(setup, "_port_is_free", lambda p: True)
+    assert setup._step_port(8790) == 8790
+
+
+def test_step_port_keeps_the_port_when_our_own_panel_holds_it(monkeypatch):
+    # The idempotency fix: the configured port reads "in use", but it is our own
+    # already-running panel — keep it, and never prompt to migrate.
+    monkeypatch.setattr(setup, "_port_is_free", lambda p: False)
+    monkeypatch.setattr(setup, "_bridge_is_serving", lambda p, **k: True)
+    asked = []
+    monkeypatch.setattr(setup, "_ask",
+                        lambda *a, **k: asked.append(1) or "8788")
+    assert setup._step_port(8787) == 8787
+    assert asked == []  # no migration prompt
+
+
+def test_step_port_offers_migration_when_a_foreign_process_holds_it(monkeypatch):
+    # A non-Bridge process on the configured port still triggers the offer.
+    monkeypatch.setattr(setup, "_port_is_free", lambda p: p != 8787)
+    monkeypatch.setattr(setup, "_bridge_is_serving", lambda p, **k: False)
+    monkeypatch.setattr(setup, "_ask", lambda *a, **k: "8788")
+    assert setup._step_port(8787) == 8788
+
+
 # ── plist generation ─────────────────────────────────────────────────────────
 
 
@@ -173,6 +274,17 @@ def test_launchd_only_regenerates_the_plist_with_the_configured_port(
     xml = setup.LAUNCHD_PLIST_PATH.read_text()
     assert "<string>8795</string>" in xml  # port recovered from config.toml
     assert launchctl.calls == []  # declined → launchctl never touched
+
+
+def test_launchd_only_rejects_an_invalid_bridge_port(home, launchctl, monkeypatch):
+    """A typo in BRIDGE_PORT fails with a clear ConfigError before any write,
+    matching `config.load` rather than the raw ValueError `int()` used to raise."""
+    from bridge.config import ConfigError
+
+    monkeypatch.setenv("BRIDGE_PORT", "not-a-port")
+    with pytest.raises(ConfigError):
+        setup.run_launchd_only()
+    assert not setup.LAUNCHD_PLIST_PATH.exists()  # bailed before writing
 
 
 def test_launchd_only_reinstall_bootstraps_the_bridge_label(

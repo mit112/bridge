@@ -524,6 +524,30 @@ def create_app(
     templates.env.filters["ago_epoch"] = _ago_epoch
     templates.env.filters["kilo"] = _kilo
     templates.env.filters["spark_points"] = spark_points
+
+    # The sidebar's connection/freshness readout is shell chrome -- every page
+    # renders it, but only Overview builds the full dashboard model that carries
+    # `freshness`. This computes the SAME `{server, index_at, index_age_seconds}`
+    # projection the dashboard envelope does (bridge.dashboard._envelope), cheaply
+    # and lazily at render time, so base.html's default `shell_status` block can
+    # show it on Projects/Schedule/Settings/Diagnostics without each route
+    # threading the value through its own context.
+    def _shell_freshness() -> dict:
+        now = int(time.time())
+        status = refresh_coordinator.status_snapshot()
+        index_at = status.index_at
+        if index_at is None:
+            latest = store.latest_index_run()
+            if latest is not None:
+                index_at = int(latest["ran_at"])
+        age = max(0, now - index_at) if index_at is not None else None
+        return {
+            "server": "unavailable" if status.server == "unavailable" else "available",
+            "index_at": index_at,
+            "index_age_seconds": age,
+        }
+
+    templates.env.globals["shell_freshness"] = _shell_freshness
     app.mount("/static", CachedStaticFiles(directory=str(HERE / "static")), name="static")
 
     # One debouncer for the whole app, because the busy -> idle hold is state

@@ -215,7 +215,7 @@
   {
     "name": "drop the shell_status block from _fragment.html",
     "file": "src/bridge/templates/_fragment.html",
-    "old": "<div class=\"shell-status\">\n  {% block shell_status %}\n    <span class=\"shell-status__label\">Local control plane</span>\n    <span class=\"shell-status__detail\">Repository access \u00b7 read only</span>\n  {% endblock %}\n</div>",
+    "old": "<div class=\"shell-status\">\n  {% block shell_status %}\n    {% set f = shell_freshness() %}\n    {% if f.server != \"unavailable\" and f.index_at is not none %}\n      <span class=\"shell-status__label\"><span class=\"shell-status__signal\" aria-hidden=\"true\"></span>Connected</span>\n      <span class=\"shell-status__detail\">Indexed {{ f.index_at | ago_epoch }} ago</span>\n    {% elif f.server == \"unavailable\" %}\n      <span class=\"shell-status__label\">Unavailable</span>\n      <span class=\"shell-status__detail\">Refresh to reconnect</span>\n    {% else %}\n      <span class=\"shell-status__label\">Connected</span>\n      <span class=\"shell-status__detail\">Not indexed yet</span>\n    {% endif %}\n  {% endblock %}\n</div>",
     "new": "<div class=\"not-shell-status\"></div>",
     "tests": [
       "tests/test_fragment_routes.py::test_fragment_carries_every_swap_target"

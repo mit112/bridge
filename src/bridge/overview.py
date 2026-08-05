@@ -64,6 +64,11 @@ class ProjectSummary:
     tokens_today: int
     tokens_5h: int
     pinned: bool
+    # Upstream divergence, None when the branch has no upstream. Surfaced as a
+    # "Remote" column on the Projects index, mirroring the detail page's
+    # workspace fact; behind takes precedence over ahead, else "Synced".
+    ahead: int | None = None
+    behind: int | None = None
 
 
 @dataclass(frozen=True)
@@ -351,6 +356,8 @@ def project_summary(card: Card, now: int) -> ProjectSummary:
         tokens_today=card.tokens_today,
         tokens_5h=card.tokens_5h,
         pinned=card.pinned,
+        ahead=card.git.ahead,
+        behind=card.git.behind,
     )
 
 

@@ -69,6 +69,7 @@
   <span class="projects-index-head__row">
     <span class="projects-index-head__label">Project</span>
     <span class="projects-index-head__label">Status &amp; activity</span>
+    <span class="projects-index-head__label projects-index-head__label--num">Remote</span>
   </span>
 </div>
 {# `projects-index` is this page's CSS scope, and it is load-bearing: the
@@ -83,7 +84,7 @@
     <li class="projects-list__item" data-project-card="{{ row.project_id }}"
         data-project-row-item data-project-state="{{ state }}"
         data-project-name="{{ row.name }}" data-project-path="{{ row.path }}">
-      {{ project_summary_row(row) }}
+      {{ project_summary_row(row, show_remote=True) }}
       <details class="projects-list__actions">
         {# Visible text is the constant `Actions` so the disclosure column stops
            resizing per project (the name made it swing 89-211px wide, dragging

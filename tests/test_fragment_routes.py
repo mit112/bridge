@@ -91,16 +91,18 @@ def test_the_fragment_body_matches_the_full_documents_body(c, path, active):
         == frag[frag.index(marker):].split("</div>")[0][:400]
 
 
-# Only overview.html and project.html override `{% block shell_status %}` --
-# the other four routes render the default spelled out independently in both
-# base.html and _fragment.html (Jinja blocks do not survive an `{% include
-# %}`, the same reason the sibling `.shell__body` markup above is duplicated
-# rather than shared). project.html has no fragment mode at all, so it is out
-# of scope here; overview.html's override renders a live "Xm ago" freshness
-# label that is not guaranteed byte-identical across two separate requests,
-# so it is excluded to keep this test non-flaky. That leaves the four routes
-# where nothing else compares the two copies -- a one-sided edit to either
-# would go undetected until a user hit one of them.
+# The `shell_status` default now renders the global connection/freshness
+# readout (`shell_freshness()`), spelled out independently in both base.html and
+# _fragment.html (Jinja blocks do not survive an `{% include %}`, the same reason
+# the sibling `.shell__body` markup above is duplicated rather than shared). Only
+# project.html still overrides it, and it has no fragment mode at all, so it is
+# out of scope here. Overview no longer overrides -- it renders the same default
+# -- but that default's "Indexed Xm ago" label is not guaranteed byte-identical
+# across two separate requests (a minute boundary can fall between them), so
+# overview is excluded to keep this test non-flaky. That leaves the four routes
+# whose fixtures never record an index run (so their footer is the static "Not
+# indexed yet" branch) and where nothing else compares the two copies -- a
+# one-sided edit to either would go undetected until a user hit one of them.
 SHELL_STATUS_DEFAULT_ROUTES = [(p, a) for p, a in ROUTES if a != "overview"]
 
 

@@ -135,8 +135,17 @@
       {{ app_nav(active) }}
       <div class="shell-status">
         {% block shell_status %}
-          <span class="shell-status__label">Local control plane</span>
-          <span class="shell-status__detail">Repository access · read only</span>
+          {% set f = shell_freshness() %}
+          {% if f.server != "unavailable" and f.index_at is not none %}
+            <span class="shell-status__label"><span class="shell-status__signal" aria-hidden="true"></span>Connected</span>
+            <span class="shell-status__detail">Indexed {{ f.index_at | ago_epoch }} ago</span>
+          {% elif f.server == "unavailable" %}
+            <span class="shell-status__label">Unavailable</span>
+            <span class="shell-status__detail">Refresh to reconnect</span>
+          {% else %}
+            <span class="shell-status__label">Connected</span>
+            <span class="shell-status__detail">Not indexed yet</span>
+          {% endif %}
         {% endblock %}
       </div>
     </aside>

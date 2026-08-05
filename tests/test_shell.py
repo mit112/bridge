@@ -68,6 +68,32 @@ def test_overview_shell_footer_uses_real_connection_and_index_freshness(tmp_path
     store.close()
 
 
+def test_connection_freshness_status_is_global_across_every_shell_page(tmp_path):
+    """#7: the sidebar connection/freshness readout is shell chrome, so it has
+    to appear on every page -- not only Overview and the project detail. A page
+    still showing the static "Local control plane" placeholder would be a page
+    the global status forgot. Same index run, so every page reads the same
+    Connected/Indexed footer Overview already renders.
+    """
+    cfg = load({"db_path": tmp_path / "global.db", "spool_dir": tmp_path / "spool-global"})
+    store = Store(cfg.db_path)
+    store.record_index_run(
+        {"files_seen": 1, "files_scanned": 1, "lines_parsed": 1,
+         "sessions_upserted": 1, "parse_errors": 0},
+        ran_at=1,
+        duration_ms=1,
+    )
+    client = TestClient(create_app(store, cfg))
+    for path in ("/projects", "/schedule", "/settings", "/diagnostics"):
+        html = client.get(path).text
+        footer = html[html.index('class="shell-status"'):]
+        footer = footer[:footer.index("</div>")]
+        assert "Connected" in footer, path
+        assert "Indexed" in footer, path
+        assert "Local control plane" not in footer, path
+    store.close()
+
+
 def test_active_nav_marks_aria_current(tmp_path):
     html = _client(tmp_path).get("/").text
     assert re.search(r'href="/"[^>]*aria-current="page"', html) or \
