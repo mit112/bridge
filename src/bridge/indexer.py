@@ -58,13 +58,13 @@ def reindex(
         except OSError:
             continue  # file vanished or unreadable mid-run; never fatal
 
-    # Discover `~/dev/*` git repos with no transcripts yet, so a repo you have
-    # not opened in Claude still gets a card (spec:240-241). Opt-out: hide it if
-    # you don't want it. `upsert_project` is ON CONFLICT DO NOTHING, so this
+    # Discover git repos under every discovery path that have no transcripts
+    # yet, so a repo you have not opened in Claude still gets a card
+    # (spec:240-241). Opt-out: hide it if you don't want it. `upsert_project` is ON CONFLICT DO NOTHING, so this
     # never disturbs the status of a repo a prior run already rowed. Placed
     # before the archived-seed apply so a dev repo that is also a config
     # `[archived]` seed is created here and archived by that loop in the same run.
-    for repo in backfill.dev_git_repos(cfg):
+    for repo in backfill.discovery_repos(cfg):
         store.upsert_project(str(repo), repo.name)
 
     # After indexing, because a path only worth archiving may not have had a

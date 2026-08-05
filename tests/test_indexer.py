@@ -73,7 +73,7 @@ def env(tmp_path):
     (projects / "-Users-mitsheth-dev-demo").mkdir(parents=True)
     # `spool_dir` and `launches_dir` are overridden even though indexing writes
     # to neither: conftest's guard only fires on a call, so an un-overridden
-    # Config here is a trap for the next test added to this module. `dev_dir`
+    # Config here is a trap for the next test added to this module. `discovery_paths`
     # is overridden too, and to a directory that does not exist: left at its
     # default (the real `~/dev`), Task 2's discovery pass would card every git
     # repo actually checked out there (this repo included) into every test in
@@ -83,7 +83,7 @@ def env(tmp_path):
         "db_path": tmp_path / "b.db",
         "spool_dir": tmp_path / "spool",
         "launches_dir": tmp_path / "launches",
-        "dev_dir": tmp_path / "dev",
+        "discovery_paths": (tmp_path / "dev",),
     })
     store = Store(cfg.db_path)
     yield cfg, store, projects
@@ -132,7 +132,7 @@ def test_reindex_cards_a_dev_repo_that_has_no_transcripts(env, tmp_path):
     dev = tmp_path / "dev"
     (dev / "lonely-repo" / ".git").mkdir(parents=True)
     (dev / "not-a-repo").mkdir()
-    reindex(store, dataclasses.replace(cfg, dev_dir=dev))
+    reindex(store, dataclasses.replace(cfg, discovery_paths=(dev,)))
     paths = {r["path"] for r in store.projects()}
     assert str(dev / "lonely-repo") in paths, "a transcript-less git repo gets an active card"
     assert str(dev / "not-a-repo") not in paths, "a plain dir is not a project"
@@ -142,7 +142,7 @@ def test_reindex_discovery_does_not_unarchive_a_hidden_dev_repo(env, tmp_path):
     cfg, store, _ = env
     dev = tmp_path / "dev"
     (dev / "muted-repo" / ".git").mkdir(parents=True)
-    cfg2 = dataclasses.replace(cfg, dev_dir=dev)
+    cfg2 = dataclasses.replace(cfg, discovery_paths=(dev,))
     reindex(store, cfg2)                                   # creates the row
     pid = store.project_by_path(str(dev / "muted-repo"))["id"]
     store.set_project_status(pid, "hidden")               # user mutes it
@@ -267,7 +267,7 @@ def aliased_env(tmp_path):
         "archived_paths": (GONE,),
         # See `env`'s fixture comment: without this, discovery would card the
         # real `~/dev` into every test that uses this fixture.
-        "dev_dir": tmp_path / "dev",
+        "discovery_paths": (tmp_path / "dev",),
     })
     store = Store(cfg.db_path)
     yield cfg, store, projects
@@ -583,7 +583,7 @@ def test_against_the_real_corpus_no_launch_joins_a_session_it_did_not_launch(
         "db_path": tmp_path / "real.db",
         "spool_dir": tmp_path / "spool",
         "launches_dir": tmp_path / "launches",
-        "dev_dir": tmp_path / "dev",
+        "discovery_paths": (tmp_path / "dev",),
     })
     store = Store(cfg.db_path)
     try:

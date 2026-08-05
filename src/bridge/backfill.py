@@ -87,31 +87,34 @@ def extract_prompt(text: str) -> tuple[str, bool]:
 
 
 def project_roots(store, cfg) -> list[Path]:
-    """Indexed projects, plus the direct children of `~/dev`.
+    """Indexed projects, plus the direct children of every discovery path.
 
-    `cfg.dev_dir` was previously unused; a stray handoff file is exactly the case
-    where a repo that has no transcripts yet still has something to say.
+    A repo that has no transcripts yet can still have a stray handoff file;
+    scanning discovery paths catches those before anything is indexed.
     """
     roots = {Path(row["path"]) for row in store.projects()}
-    if cfg.dev_dir.is_dir():
-        roots.update(p for p in cfg.dev_dir.iterdir() if p.is_dir())
+    for dp in cfg.discovery_paths:
+        if dp.is_dir():
+            roots.update(p for p in dp.iterdir() if p.is_dir())
     return sorted(roots)
 
 
-def dev_git_repos(cfg) -> list[Path]:
-    """Direct children of `~/dev` that are git repos, transcripts or not.
+def discovery_repos(cfg) -> list[Path]:
+    """Direct children of every discovery path that are git repos.
 
     A repo you have not opened in Claude still deserves a card (spec:240-241);
     discovery is opt-out, so the user hides the ones they don't want. The
     `registry` noise list is deliberately NOT applied here: it targets
     transcript-encoded container dirs (`-private-tmp-*`), which never appear
-    under `~/dev`.
+    under project directories.
     """
-    if not cfg.dev_dir.is_dir():
-        return []
-    return sorted(
-        p for p in cfg.dev_dir.iterdir() if p.is_dir() and (p / ".git").exists()
-    )
+    repos: list[Path] = []
+    for dp in cfg.discovery_paths:
+        if dp.is_dir():
+            repos.extend(
+                p for p in dp.iterdir() if p.is_dir() and (p / ".git").exists()
+            )
+    return sorted(repos)
 
 
 def discover(store, cfg) -> list[Candidate]:

@@ -35,7 +35,7 @@ def env(tmp_path):
     cfg = load({
         "db_path": tmp_path / "bf.db",
         "spool_dir": tmp_path / "spool",
-        "dev_dir": projects,
+        "discovery_paths": (projects,),
     })
     store = Store(cfg.db_path)
     yield store, cfg, projects
@@ -128,15 +128,15 @@ def test_editing_the_file_produces_a_new_handoff_that_supersedes(env):
     assert len(store.handoffs(pid)) == 2
 
 
-def test_dev_git_repos_lists_only_git_repos_under_dev_dir(env, tmp_path):
+def test_discovery_repos_lists_only_git_repos_under_discovery_paths(env, tmp_path):
     store, cfg, projects = env
     dev = tmp_path / "dev"
     (dev / "has-git" / ".git").mkdir(parents=True)
     (dev / "plain-dir").mkdir()
     (dev / "a-file.txt").parent.mkdir(exist_ok=True)
     (dev / "a-file.txt").write_text("x")
-    cfg = dataclasses.replace(cfg, dev_dir=dev)
-    assert backfill.dev_git_repos(cfg) == [dev / "has-git"]
+    cfg = dataclasses.replace(cfg, discovery_paths=(dev,))
+    assert backfill.discovery_repos(cfg) == [dev / "has-git"]
 
 
 def test_against_the_real_files_on_this_machine(tmp_path):

@@ -241,3 +241,57 @@ def test_session_meta_dir_defaults_under_claude_usage_data():
 def test_session_meta_dir_is_overridable(tmp_path):
     cfg = load({"session_meta_dir": tmp_path / "meta"})
     assert cfg.session_meta_dir == tmp_path / "meta"
+
+
+# --- Distribution: [discovery] paths and the port key ------------------------
+
+
+def test_discovery_paths_default_to_dev(monkeypatch):
+    monkeypatch.delenv("BRIDGE_PORT", raising=False)
+    assert load().discovery_paths == (Path.home() / "dev",)
+
+
+def test_discovery_paths_are_read_from_the_config_file(tmp_path, monkeypatch):
+    """A user with repos outside ~/dev names their roots here rather than in
+    source, so `bridge setup` can configure discovery per machine."""
+    write_config(tmp_path, monkeypatch, """
+        [discovery]
+        paths = ["dev", "/srv/work"]
+    """)
+    cfg = load()
+    assert cfg.discovery_paths == (Path.home() / "dev", Path("/srv/work"))
+
+
+def test_discovery_paths_must_be_a_list(tmp_path, monkeypatch):
+    write_config(tmp_path, monkeypatch, '[discovery]\npaths = "dev"\n')
+    with pytest.raises(ConfigError):
+        load()
+
+
+def test_port_is_read_from_the_config_file(tmp_path, monkeypatch):
+    monkeypatch.delenv("BRIDGE_PORT", raising=False)
+    write_config(tmp_path, monkeypatch, "port = 8795\n")
+    assert load().port == 8795
+
+
+def test_an_out_of_range_port_is_refused(tmp_path, monkeypatch):
+    monkeypatch.delenv("BRIDGE_PORT", raising=False)
+    for value in ("0", "70000", '"8787"'):
+        write_config(tmp_path, monkeypatch, f"port = {value}\n")
+        with pytest.raises(ConfigError):
+            load()
+
+
+def test_bridge_port_env_wins_over_the_configured_port(tmp_path, monkeypatch):
+    """The `port` field's own docstring promises this ordering: the file value
+    is only the fallback the installer records, the env var is the deliberate
+    per-run override. Regression — the file merge used to clobber it."""
+    write_config(tmp_path, monkeypatch, "port = 9999\n")
+    monkeypatch.setenv("BRIDGE_PORT", "5555")
+    assert load().port == 5555
+
+
+def test_an_override_still_beats_bridge_port(tmp_path, monkeypatch):
+    write_config(tmp_path, monkeypatch, "port = 9999\n")
+    monkeypatch.setenv("BRIDGE_PORT", "5555")
+    assert load({"port": 7000}).port == 7000
