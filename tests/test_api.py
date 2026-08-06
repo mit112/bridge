@@ -764,7 +764,7 @@ def test_the_project_page_lists_past_handoffs_with_their_status(handoff_app):
 
     html = c.get(f"/project/{pid}?tab=handoffs").text
 
-    assert "Handoffs, most recent first" in html
+    assert "<caption>Handoffs</caption>" in html
     assert "superseded" in html
     assert "queued" in html
 
@@ -1304,7 +1304,7 @@ def test_the_project_page_lists_launch_history_with_its_linked_session(launch_ap
 
     html = c.get(f"/project/{pid}?tab=launches").text
 
-    assert "Launches, most recent first" in html
+    assert "<caption>Launches</caption>" in html
     assert "terminal" in html
     assert "background" in html
     assert "opus/xhigh" in html

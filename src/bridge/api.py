@@ -961,13 +961,24 @@ def create_app(
     def detail(
         request: Request, project_id: int, tab: str = "current",
         page: int = Query(0, ge=0),
+        sort: str | None = None,
+        direction: str | None = Query(None, alias="dir"),
+        filter_value: str | None = Query(None, alias="filter"),
     ):
         # One live probe for the whole page view, shared between the workspace
         # model and the cross-project token total below -- the same "probe
         # once per view" rule the dashboard route already follows.
+        #
+        # `sort`/`dir`/`filter` drive the history tables' P2 controls;
+        # `build_workspace` normalizes each against the selected tab's whitelist
+        # and facet set (an unknown value falls back to the default), the same
+        # "unknown -> default" contract `tab`/`page` already follow, so a
+        # hand-typed or hostile value never 400s or reaches the SQL raw.
         now = now_epoch()
         probe = dashboard_builder._live_state(now)
         model = build_workspace(store, cfg, project_id, tab, page=page,
+                                sort=sort, direction=direction,
+                                filter_value=filter_value,
                                 live_state=probe, git_cache=git_cache)
         if model is None:
             raise HTTPException(status_code=404, detail="unknown project")
