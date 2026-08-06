@@ -64,7 +64,10 @@ def test_overview_renders_stable_freshness_and_total_hooks(client):
     assert 'data-freshness-strip' in html
     assert 'data-dashboard-refresh>Refresh</button>' in html
     assert 'data-project-membership-status' in html
-    assert html.count('data-dashboard-total=') == 8
+    # 8 in the metrics list inside the collapsed <details>, plus the 6 visible
+    # command-strip cells -- which used to carry no hook at all and so froze
+    # at their page-load values while the hidden twins updated.
+    assert html.count('data-dashboard-total=') == 14
     assert 'data-index-at=' in html
     assert 'data-server=' in html
 
@@ -3224,3 +3227,115 @@ def test_detail_page_hides_zero_activity_meta(tmp_path):
 
     assert "files" not in html.split("<table")[-1] or "0 files" not in html
     store.close()
+
+
+# --- a missing page is a page, a missing API resource is JSON ----------------
+
+
+def test_an_unknown_page_url_answers_with_a_page(client):
+    """A person who mistypes a URL, or follows a bookmark to a project that has
+    since been hidden, used to land on `{"detail":"Not Found"}` rendered as
+    raw text with no shell, no nav, and no way back except the Back button."""
+    c, _, _ = client
+
+    r = c.get("/no-such-page")
+
+    assert r.status_code == 404
+    assert r.headers["content-type"].startswith("text/html")
+    assert "<title>Not found — Bridge" in r.text
+    # The shell came with it, so the nav out is right there.
+    assert 'href="/projects"' in r.text
+    assert '<nav aria-label="Primary"' in r.text
+
+
+def test_an_unknown_project_page_answers_with_a_page_too(client):
+    c, _, _ = client
+
+    r = c.get("/project/99999")
+
+    assert r.status_code == 404
+    assert r.headers["content-type"].startswith("text/html")
+    assert "Not found" in r.text
+
+
+def test_the_api_keeps_its_json_detail_contract(client):
+    """The split is on the path, not on `Accept`: everything under `/api/` has
+    clients (the CLI, the panel's own fetches) that parse `detail`, and
+    dressing those 404s up as HTML would break them silently."""
+    c, _, _ = client
+
+    for path, body in (("/api/handoff/nope", {"status": "consumed"}),
+                       ("/api/schedule/nope", {"prompt": "y"})):
+        r = c.patch(path, json=body)
+        assert r.status_code == 404, path
+        assert r.headers["content-type"].startswith("application/json"), path
+        assert r.json()["detail"], path
+
+
+# --- cross-origin writes ------------------------------------------------------
+
+
+def test_a_cross_origin_post_is_refused(client):
+    """127.0.0.1 keeps other machines out; it does not keep out a page already
+    open in this machine's browser. `/api/refresh` takes no body and needs no
+    readable response to have done its work, which is precisely the shape a
+    cross-origin `<form method=post>` can reach."""
+    c, _, _ = client
+
+    r = c.post("/api/refresh", headers={"Origin": "https://evil.example"})
+
+    assert r.status_code == 403
+    assert r.json()["detail"] == "cross-origin write refused"
+
+
+@pytest.mark.parametrize("path", [
+    "/api/refresh", "/api/schedule/nope/run-now", "/api/schedule/nope/retry",
+])
+def test_every_body_less_post_refuses_a_cross_origin_caller(client, path):
+    """The three POSTs that need no body at all. `run-now`/`retry` answer 404
+    for the made-up id when the check passes, so a 403 here is the check
+    firing and not the route simply rejecting the id."""
+    c, _, _ = client
+
+    assert c.post(path).status_code != 403
+    assert c.post(path, headers={"Origin": "http://attacker.test"}).status_code == 403
+
+
+def test_the_panels_own_origin_is_allowed(client):
+    """The panel's own fetches send `Origin` on every POST, so a check that
+    only compared against a hardcoded host would break the Refresh button."""
+    c, _, _ = client
+
+    r = c.post("/api/refresh", headers={"Origin": "http://testserver"})
+
+    assert r.status_code == 200
+
+
+def test_an_absent_origin_is_still_allowed(client):
+    """The CLI and Claude Code's hook dispatcher are server-side HTTP clients
+    and send no `Origin` at all. Refusing those would take the hooks offline,
+    and hooks are the ONLY route to a `needs_input` state."""
+    c, _, _ = client
+
+    assert c.post("/api/refresh").status_code == 200
+    assert c.post("/api/hooks", json={
+        "hook_event_name": "Notification", "cwd": DEMO, "session_id": "s1",
+    }).status_code == 200
+
+
+def test_a_cross_origin_read_is_still_served(client):
+    """GET is excluded deliberately: every one of Bridge's is a read, and a
+    browser will not hand the response to the other origin anyway."""
+    c, _, _ = client
+
+    assert c.get("/", headers={"Origin": "https://evil.example"}).status_code == 200
+
+
+def test_responses_forbid_content_type_sniffing(client):
+    """Bridge renders user-controlled text (launch prompts, transcript
+    excerpts, project paths) and answers errors as JSON; a body a browser
+    re-decides is HTML is the ordinary way either becomes script."""
+    c, _, _ = client
+
+    for path in ("/", "/api/projects", "/static/app.css"):
+        assert c.get(path).headers["x-content-type-options"] == "nosniff", path

@@ -1,5 +1,6 @@
 {% extends layout|default("base.html") %}
 {% from "_components.html" import schedule_row, empty_state %}
+{% block title %}Schedule — Bridge{% endblock %}
 {% block page_title %}Schedule{% endblock %}
 {% block page_summary %}
 {# Full page loads, not client routing -- same `?tab=` pattern `project.html`'s

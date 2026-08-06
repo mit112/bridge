@@ -1,0 +1,14 @@
+{# Only reached from `api.py`'s 404 handler, and only for a page URL -- every
+   `/api/` path keeps the `{"detail": ...}` JSON its clients parse. Extends
+   `base.html` unconditionally: a 404 is never a fragment swap (router.js only
+   swaps on a 200), so there is no `layout` to honour here. #}
+{% extends "base.html" %}
+{% block title %}Not found — Bridge{% endblock %}
+{% block page_title %}Not found{% endblock %}
+{% block page_summary %}
+<p class="page-lede">Nothing here. The project may have been hidden, or the address mistyped.</p>
+{% endblock %}
+{% block content %}
+<p class="card__path"><code>{{ path }}</code></p>
+<p><a class="btn btn--primary" href="/">Back to the Overview</a> <a class="btn" href="/projects">All projects</a></p>
+{% endblock %}

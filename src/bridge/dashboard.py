@@ -135,6 +135,12 @@ class DashboardBuilder:
         unavailable = status.server == "unavailable"
         running = sum(1 for s in live_state.sessions if not agents.is_terminal(s.status))
         card_data = {str(card.project_id): _card_update(card) for card in cards}
+        # Imported here, not at module scope: `bridge.overview` imports THIS
+        # module for `DashboardBuilder`, so a top-level import would be a cycle.
+        # The ladder is Overview's definition of "needs a human" and re-deriving
+        # a second version of it here is exactly the drift worth avoiding.
+        from bridge.overview import attention_count
+        scheduled_rows = self.store.scheduled_runs()
         refresh_payload = {
             "attempted": refresh is not None,
             "completed": refresh.completed if refresh is not None else True,
@@ -157,10 +163,11 @@ class DashboardBuilder:
                 "running": running,
                 "queued": self.store.queued_handoff_count(),
                 "scheduled": sum(
-                    1 for row in self.store.scheduled_runs()
+                    1 for row in scheduled_rows
                     if row["status"] in ("pending", "launching")
                 ),
                 "dirty": sum(1 for card in cards if card.git.dirty_count),
+                "attention": attention_count(self.store, cards, scheduled_rows),
                 "today": sum(card.tokens_today for card in cards),
                 "last_5h": sum(card.tokens_5h for card in cards),
                 "burn_rate": sum(card.tokens_5h for card in cards) // (FIVE_HOURS // 3600),

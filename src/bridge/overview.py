@@ -302,6 +302,34 @@ def _attention_from_cards(cards: list[Card]) -> list[AttentionItem]:
     return items
 
 
+def failed_schedule_rows(rows) -> list:
+    """The scheduled runs that count as a broken promise, given every run row.
+
+    Split out of `_schedule_failures` so the live-update envelope can count
+    them without also resolving each one's project name and action — and, more
+    importantly, so the count the command strip patches in is produced by this
+    exact predicate rather than a second one that could drift from it.
+    """
+    retried = {r["retry_of"] for r in rows if r["retry_of"]}
+    return [
+        r for r in rows
+        if r["status"] in SCHEDULE_FAILURE_STATUSES and r["id"] not in retried
+    ]
+
+
+def attention_count(store: Store, cards: list[Card], scheduled_rows=None) -> int:
+    """`OverviewModel.attention_total`, for a caller that needs only the number.
+
+    `dashboard.DashboardBuilder` puts this on the wire so live.js can patch the
+    "Needs attention" cell; without it the headline number is the one thing on
+    the Overview that can only be corrected by a reload. `scheduled_rows` lets
+    that caller hand over the `store.scheduled_runs()` result it already has,
+    so wiring the cell costs no extra query.
+    """
+    rows = store.scheduled_runs() if scheduled_rows is None else scheduled_rows
+    return len(_attention_from_cards(cards)) + len(failed_schedule_rows(rows))
+
+
 def _schedule_failures(store: Store, by_path: dict[str, Card]) -> list[AttentionItem]:
     """Terminal, non-cancelled scheduled runs: a promise Bridge did not keep.
 
@@ -319,12 +347,7 @@ def _schedule_failures(store: Store, by_path: dict[str, Card]) -> list[Attention
     composed Overview list is sliced to `ATTENTION_LIMIT`, so the visible count
     stays honest even when Projects/Schedule carry the omitted rows.
     """
-    rows = store.scheduled_runs()
-    retried = {r["retry_of"] for r in rows if r["retry_of"]}
-    failures = [
-        r for r in rows
-        if r["status"] in SCHEDULE_FAILURE_STATUSES and r["id"] not in retried
-    ]
+    failures = failed_schedule_rows(store.scheduled_runs())
     failures.sort(key=lambda r: (r["completed_at"] or 0), reverse=True)
 
     out: list[AttentionItem] = []

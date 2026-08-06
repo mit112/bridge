@@ -31,11 +31,34 @@ function formatKilo(value) {
   return `${(number / 1000000).toFixed(1)}M`;
 }
 
-function totalNode(name) {
-  const node = query(`[data-dashboard-total="${cssValue(name)}"]`);
-  if (!node) return null;
+// Plural on purpose. The Overview renders each total TWICE -- once in the
+// command strip that is actually on screen, once in the metrics list inside a
+// collapsed <details> -- and a single-node lookup patched whichever came first
+// in the document, so the visible number froze at its page-load value while
+// its hidden twin ticked along correctly.
+function totalNodes(name) {
+  const selector = `[data-dashboard-total="${cssValue(name)}"]`;
+  const nodes = document.querySelectorAll ? [...document.querySelectorAll(selector)] : [];
   // The scheduled total retains its older hook on the <dd> for schedule.js.
-  return node.querySelector ? (node.querySelector("[data-topbar-scheduled]") || node) : node;
+  return nodes.map((node) => (node.querySelector
+    ? node.querySelector("[data-topbar-scheduled]") || node
+    : node));
+}
+
+// A command cell colours its number from that number's own value, and names
+// the class it uses in `data-cell-flag`. Writing the text without the class
+// leaves a cell lit for a count that has since patched down to zero -- the
+// same "colour disagrees with the word" failure the attention pill had. The
+// attribute keeps the class name in the template that chose it.
+function setTotal(name, value) {
+  for (const node of totalNodes(name)) {
+    setText(node, value);
+    const cell = node.closest ? node.closest("[data-cell-flag]") : null;
+    const flag = cell ? cell.getAttribute("data-cell-flag") : null;
+    if (flag && cell.classList && cell.classList.toggle) {
+      cell.classList.toggle(flag, Number(value) > 0);
+    }
+  }
 }
 
 function bandFor(path) {
@@ -180,6 +203,14 @@ function connectionState(server, nowSeconds) {
   return "connected";
 }
 
+// Sentence case, matching `_shell.html`'s `{{ state | capitalize }}`. The state
+// itself stays lowercase everywhere it is machine-read (the attribute below,
+// CONNECTION_STATES, CSS); this is the visible word only.
+function stateLabel(state) {
+  const text = String(state || "");
+  return text ? text.charAt(0).toUpperCase() + text.slice(1) : "";
+}
+
 function announceConnectionState(state) {
   if (state === lastConnectionState) return;
   lastConnectionState = state;
@@ -189,7 +220,7 @@ function announceConnectionState(state) {
     strip.setAttribute("data-freshness-state", state);
     strip.setAttribute("data-server", state === "unavailable" ? "unavailable" : "available");
   }
-  setText(label, state);
+  setText(label, stateLabel(state));
 }
 
 function patchFreshness(update) {
@@ -224,12 +255,15 @@ function patchFreshness(update) {
 function applyDashboardUpdate(update) {
   if (!update || update.schema !== 1 || (update.kind !== "snapshot" && update.kind !== "patch")) return false;
   const topbar = update.topbar || {};
-  for (const name of ["projects", "running", "queued", "scheduled"]) {
-    if (topbar[name] != null) setText(totalNode(name), topbar[name]);
+  // `dirty` and `attention` are command-strip-only; they have no twin in the
+  // metrics list, and before the strip carried hooks they were on the wire
+  // with nothing reading them.
+  for (const name of ["projects", "running", "queued", "scheduled", "dirty", "attention"]) {
+    if (topbar[name] != null) setTotal(name, topbar[name]);
   }
-  if (topbar.today != null) setText(totalNode("today"), formatKilo(topbar.today));
-  if (topbar.last_5h != null) setText(totalNode("last_5h"), formatKilo(topbar.last_5h));
-  if (topbar.burn_rate != null) setText(totalNode("burn_rate"), `${formatKilo(topbar.burn_rate)}/h`);
+  if (topbar.today != null) setTotal("today", formatKilo(topbar.today));
+  if (topbar.last_5h != null) setTotal("last_5h", formatKilo(topbar.last_5h));
+  if (topbar.burn_rate != null) setTotal("burn_rate", `${formatKilo(topbar.burn_rate)}/h`);
   // `last_index` is deliberately NOT patched here: the server renders it as a
   // human "Xm ago" (Jinja `ago_epoch`), but `topbar.last_index` on the wire is
   // a raw epoch, so writing it would replace "3m ago" with "1785754250" on the

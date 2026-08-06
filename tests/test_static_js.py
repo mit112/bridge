@@ -1062,7 +1062,13 @@ globalThis.document = {
     const cardMatch = /^\[data-project-card="(.*)"\]$/.exec(sel);
     return cardMatch ? cardMap[cardMatch[1]] : null;
   },
-  querySelectorAll(sel) { return sel === "[data-project-card]" ? cards : []; },
+  // live.js reads totals with querySelectorAll (the Overview renders each one
+  // twice), so this has to answer for the same selectors querySelector does or
+  // the totals assertions below would pass vacuously against an empty list.
+  querySelectorAll(sel) {
+    if (sel === "[data-project-card]") return cards;
+    return selectors[sel] ? [selectors[sel]] : [];
+  },
 };
 globalThis.EventSource = class {
   constructor() { this.listeners = listeners; }
@@ -1118,6 +1124,7 @@ setImmediate(() => console.log(JSON.stringify({
   textareaValues: textareaIdentity.map((item) => item.value),
   refresh: refreshStatus.textContent, totals: totals.today.textContent,
   lastIndex: totals.last_index.textContent,
+  stripState: strip.getAttribute("data-freshness-state"),
   beforeRefresh,
 })));
 '''
@@ -1140,10 +1147,14 @@ def test_dashboard_updates_keep_index_freshness_separate_from_liveness(tmp_path)
             "topbar": {}, "diagnostics": {"alert": False}, "card_order": [], "cards": {},
             "refresh": {"attempted": False, "completed": True, "error": None}, "unattributed": []}
     got = _run_freshness(tmp_path, body)
-    assert got["stale"] == "stale"
-    assert got["fresh"] == "connected"
-    assert got["unavailableState"] == "unavailable"
+    assert got["stale"] == "Stale"
+    assert got["fresh"] == "Connected"
+    assert got["unavailableState"] == "Unavailable"
     assert got["totals"] == "1k"
+    # The visible word is sentence case; the attribute CSS and JS select on
+    # stays lowercase. Both are asserted here so a future "tidy" of either one
+    # cannot quietly re-split them.
+    assert got["stripState"] == "connected"
 
 
 @pytest.mark.skipif(_node() is None, reason="node is not installed")
@@ -1174,26 +1185,26 @@ def test_dashboard_refresh_reorders_existing_nodes_and_preserves_user_text(tmp_p
 @pytest.mark.skipif(_node() is None, reason="node is not installed")
 def test_liveness_patch_does_not_reset_index_freshness(tmp_path):
     got = _run_freshness(tmp_path, {})
-    assert got["stale"] == "stale"
+    assert got["stale"] == "Stale"
 
 
 @pytest.mark.skipif(_node() is None, reason="node is not installed")
 def test_generated_at_is_not_index_freshness_clock(tmp_path):
     got = _run_freshness(tmp_path, {})
-    assert got["stale"] == "stale"
+    assert got["stale"] == "Stale"
 
 
 @pytest.mark.skipif(_node() is None, reason="node is not installed")
 def test_stale_threshold_is_45_seconds(tmp_path):
     got = _run_freshness(tmp_path, {})
-    assert got["stale"] == "stale"
+    assert got["stale"] == "Stale"
 
 
 @pytest.mark.skipif(_node() is None, reason="node is not installed")
 def test_connection_states_do_not_announce_heartbeats(tmp_path):
     got = _run_freshness(tmp_path, {})
     assert got["announcements"] == [
-        "connected", "stale", "connected", "unavailable", "connected",
+        "Connected", "Stale", "Connected", "Unavailable", "Connected",
     ]
 
 
@@ -1201,15 +1212,15 @@ def test_connection_states_do_not_announce_heartbeats(tmp_path):
 def test_membership_drift_is_non_alarm_and_identity_safe(tmp_path):
     got = _run_freshness(tmp_path, {})
     assert got["membershipText"].startswith("Project list changed")
-    assert got["unavailableState"] == "unavailable"
+    assert got["unavailableState"] == "Unavailable"
     assert got["textareaSame"] is True
 
 
 @pytest.mark.skipif(_node() is None, reason="node is not installed")
 def test_unavailable_snapshot_is_distinct_from_stale_project(tmp_path):
     got = _run_freshness(tmp_path, {})
-    assert got["unavailableState"] == "unavailable"
-    assert got["stale"] == "stale"
+    assert got["unavailableState"] == "Unavailable"
+    assert got["stale"] == "Stale"
 
 
 @pytest.mark.skipif(_node() is None, reason="node is not installed")
@@ -1306,7 +1317,7 @@ for (const [name, value] of Object.entries(totals)) selectors[`[data-dashboard-t
 globalThis.document = {
   addEventListener() {},
   querySelector(sel) { return selectors[sel] ?? null; },
-  querySelectorAll() { return []; },
+  querySelectorAll(sel) { return selectors[sel] ? [selectors[sel]] : []; },
 };
 globalThis.EventSource = class { addEventListener() {} close() {} };
 globalThis.setTimeout = (fn) => { fn(); return 0; };
@@ -1382,7 +1393,7 @@ def test_apply_dashboard_update_tolerates_the_leaf_light_overview_dom(tmp_path):
     assert got["threw"] is None, got["threw"]
     assert got["errors"] == []
     assert got["totalsToday"] == "1k"
-    assert got["freshnessLabel"] == "connected"
+    assert got["freshnessLabel"] == "Connected"
     assert got["liveWordText"] == "busy"
 
 
@@ -1398,7 +1409,7 @@ def test_boot_with_no_data_generation_accepts_the_first_patch_frame(tmp_path):
     Treating the missing attribute as unknown (not 0) accepts that frame."""
     got = _run_overview_dom(tmp_path, "patch", 0)
     assert got["threw"] is None, got["threw"]
-    assert got["freshnessLabel"] == "connected", (
+    assert got["freshnessLabel"] == "Connected", (
         "a missing data-generation on the freshness strip rejected the first "
         "patch frame as stale instead of accepting it as the baseline"
     )
@@ -3319,3 +3330,232 @@ def test_launch_js_prefills_the_band_from_stored_defaults_but_never_the_permissi
     # on the no-flag default.
     assert got["permValue"] == ""
     assert got["permissionModeSent"] == ""
+
+
+# --- the command strip's numbers are the ones on screen ----------------------
+#
+# The Overview renders every shared total TWICE: once in the six-cell command
+# strip that is actually visible, once in the metrics list inside a collapsed
+# `<details>`. live.js used to resolve each hook with `querySelector`, so it
+# patched whichever came first in the document -- the hidden one -- and the
+# visible number sat at its page-load value for as long as the tab stayed open.
+#
+# The `attention` and `dirty` cells have no twin at all; they were on the wire
+# with nothing reading them.
+
+COMMAND_STRIP_HARNESS = r'''
+globalThis.window = globalThis;
+globalThis.CSS = { escape: (s) => s };
+Date.now = () => 100000;
+
+function classes() {
+  const values = new Set();
+  return {
+    add: (...names) => names.forEach((name) => values.add(name)),
+    remove: (...names) => names.forEach((name) => values.delete(name)),
+    toggle(name, force) { if (force) values.add(name); else values.delete(name); },
+    has: (name) => values.has(name),
+    values: () => [...values],
+  };
+}
+function node(attrs = {}) {
+  return {
+    attrs: { ...attrs }, hidden: false, textContent: "", classList: classes(),
+    getAttribute(name) { return this.attrs[name] ?? null; },
+    setAttribute(name, value) { this.attrs[name] = String(value); },
+    removeAttribute(name) { delete this.attrs[name]; },
+    querySelector() { return null; },
+    closest() { return null; },
+  };
+}
+
+// A strip cell: the number, wrapped in a cell that names its own flag class.
+function cell(flag, lit) {
+  const wrapper = node(flag ? { "data-cell-flag": flag } : {});
+  if (lit) wrapper.classList.add(flag);
+  const num = node();
+  num.closest = (sel) => (sel === "[data-cell-flag]" && flag ? wrapper : null);
+  return { wrapper, num };
+}
+
+const running = cell("is-live", false);
+const attention = cell("is-hot", true);   // server rendered it lit, at 3
+attention.num.textContent = "3";
+const dirty = cell(null, false);
+// The hidden twins inside the collapsed <details>.
+const runningDd = node();
+const projectsDd = node();
+
+const bySelector = {
+  '[data-dashboard-total="running"]': [running.num, runningDd],
+  '[data-dashboard-total="attention"]': [attention.num],
+  '[data-dashboard-total="dirty"]': [dirty.num],
+  '[data-dashboard-total="projects"]': [projectsDd],
+};
+
+globalThis.document = {
+  addEventListener() {},
+  querySelector(sel) { return (bySelector[sel] || [])[0] || null; },
+  querySelectorAll(sel) { return bySelector[sel] || []; },
+};
+globalThis.EventSource = class { addEventListener() {} close() {} };
+globalThis.setTimeout = (fn) => { fn(); return 0; };
+window.setTimeout = globalThis.setTimeout;
+globalThis.setInterval = () => 0;
+globalThis.fetch = async () => ({ ok: true, json: async () => ({}) });
+
+const fs = require("fs");
+eval(fs.readFileSync(process.argv[2], "utf8"));
+
+window.bridgeApplyDashboardUpdate({
+  schema: 1, kind: "snapshot", generated_at: 1, generation: 1,
+  freshness: { server: "available", index_at: 100, index_age_seconds: 0 },
+  topbar: { running: 2, attention: 0, dirty: 5, projects: 9 },
+  diagnostics: { alert: false }, card_order: [], cards: {},
+  refresh: { attempted: false, completed: true, error: null }, unattributed: [],
+});
+
+console.log(JSON.stringify({
+  stripRunning: running.num.textContent,
+  hiddenRunning: runningDd.textContent,
+  stripAttention: attention.num.textContent,
+  stripDirty: dirty.num.textContent,
+  hiddenProjects: projectsDd.textContent,
+  runningLit: running.wrapper.classList.has("is-live"),
+  attentionLit: attention.wrapper.classList.has("is-hot"),
+}));
+'''
+
+
+def _run_command_strip(tmp_path):
+    harness = tmp_path / "command_strip_harness.js"
+    harness.write_text(COMMAND_STRIP_HARNESS)
+    proc = subprocess.run(
+        [_node(), str(harness), str(LIVE_JS)], capture_output=True, text=True
+    )
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout)
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_a_total_rendered_twice_is_patched_in_both_places(tmp_path):
+    got = _run_command_strip(tmp_path)
+    assert got["stripRunning"] == "2", (
+        "the visible command-strip number was left at its page-load value"
+    )
+    assert got["hiddenRunning"] == "2"
+    assert got["hiddenProjects"] == "9"
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_the_strip_only_totals_are_patched_at_all(tmp_path):
+    """`attention` and `dirty` render only in the strip. Both were already in
+    the `topbar` payload before the strip carried hooks, read by nothing."""
+    got = _run_command_strip(tmp_path)
+    assert got["stripAttention"] == "0"
+    assert got["stripDirty"] == "5"
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_a_cells_colour_follows_the_number_it_was_given(tmp_path):
+    """A cell colours itself from its own count. Patching the text without the
+    class leaves "Needs attention" lit over a 0 -- a warning for nothing, and
+    the same colour-contradicts-the-word failure the attention pill had."""
+    got = _run_command_strip(tmp_path)
+    assert got["attentionLit"] is False, "the cell stayed lit over a count of 0"
+    assert got["runningLit"] is True, "a cell that went from 0 to 2 stayed cold"
+
+
+# --- shell.js: widening the window must not strand the nav -------------------
+
+SHELL_RESIZE_HARNESS = r'''
+globalThis.window = globalThis;
+const nav = {
+  attrs: {},
+  hasAttribute(name) { return Object.prototype.hasOwnProperty.call(this.attrs, name); },
+  setAttribute(name, value) { this.attrs[name] = value; },
+  removeAttribute(name) { delete this.attrs[name]; },
+};
+const menu = {
+  attrs: { "aria-expanded": "true", "aria-controls": "primary-nav" },
+  getAttribute(name) { return this.attrs[name] ?? null; },
+  setAttribute(name, value) { this.attrs[name] = value; },
+  closest(sel) { return sel === ".menu-toggle" ? this : null; },
+};
+const documentElement = {
+  attrs: {},
+  getAttribute(name) { return this.attrs[name] ?? null; },
+  setAttribute(name, value) { this.attrs[name] = value; },
+  removeAttribute(name) { delete this.attrs[name]; },
+};
+globalThis.localStorage = { getItem: () => null, setItem() {}, removeItem() {} };
+
+// Start narrow: the rail query does not match, so `.menu-toggle` is the
+// visible disclosure and `.sidebar-toggle` is display:none.
+let railMatches = false;
+const railListeners = [];
+globalThis.window.matchMedia = (query) => ({
+  get matches() { return railMatches; },
+  media: query,
+  addEventListener(type, fn) { if (type === "change") railListeners.push(fn); },
+});
+
+let clickHandler = null;
+globalThis.document = {
+  documentElement,
+  addEventListener(type, fn) { if (type === "click") clickHandler = fn; },
+  getElementById: (id) => (id === "primary-nav" ? nav : null),
+  querySelector: (sel) => (sel === ".menu-toggle" ? menu : null),
+  querySelectorAll: () => [],
+};
+
+const fs = require("fs");
+eval(fs.readFileSync(process.argv[2], "utf8"));
+
+// Collapse the nav at narrow width, the only width where the button exists.
+clickHandler({ target: menu });
+const narrowHidden = nav.hasAttribute("hidden");
+const narrowExpanded = menu.attrs["aria-expanded"];
+
+// Widen past the rail breakpoint. CSS now hides `.menu-toggle` outright, so
+// nothing on screen can undo the collapse.
+railMatches = true;
+railListeners.forEach((fn) => fn({ matches: true }));
+
+console.log(JSON.stringify({
+  narrowHidden, narrowExpanded,
+  listeners: railListeners.length,
+  wideHidden: nav.hasAttribute("hidden"),
+  wideExpanded: menu.attrs["aria-expanded"],
+}));
+'''
+
+
+def _run_shell_resize(tmp_path):
+    harness = tmp_path / "shell_resize_harness.js"
+    harness.write_text(SHELL_RESIZE_HARNESS)
+    proc = subprocess.run(
+        [_node(), str(harness), str(SHELL_JS)], capture_output=True, text=True
+    )
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout)
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_widening_past_the_rail_breakpoint_restores_the_nav(tmp_path):
+    """`.menu-toggle` hides the nav with the `hidden` attribute, and CSS drops
+    the button itself at 1024px. Collapse the nav on a narrow window, widen it,
+    and the nav stayed `hidden` with nothing left on screen able to bring it
+    back -- while `.sidebar-toggle`, now the visible control, claimed
+    `aria-expanded="true"` over a nav that was not there.
+    """
+    got = _run_shell_resize(tmp_path)
+
+    assert got["listeners"] == 1, "no breakpoint listener was registered"
+    assert got["narrowHidden"] is True
+    assert got["narrowExpanded"] == "false"
+
+    assert got["wideHidden"] is False, "the nav stayed hidden with no way back"
+    assert got["wideExpanded"] == "true", (
+        "the Menu button still claims the nav is collapsed"
+    )

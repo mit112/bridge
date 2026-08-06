@@ -552,25 +552,32 @@ def test_overview_route_renders_command_strip_with_hot_and_cold_branches(tmp_pat
         html,
     )
 
-    assert "is-hot" in html
-    assert "is-live" not in html
+    # The CLASS, not the bare word: both cells now always carry
+    # `data-cell-flag` (live.js reads the class name off it), so matching on
+    # "is-hot" alone would pass whatever the conditional decided.
+    assert 'class="command-cell is-hot"' in html
+    assert 'class="command-cell is-live"' not in html
 
     assert re.search(
-        r'class="command-cell is-hot">\s*<span class="command-cell__num">1</span>',
+        r'class="command-cell is-hot" data-cell-flag="is-hot">\s*'
+        r'<span class="command-cell__num" data-dashboard-total="attention">1</span>',
         html,
     )
     store.close()
 
 
 # Mutually distinct and none of them 0/1, so no cell can borrow another cell's
-# number and still look right. Order is the strip's own source order.
+# number and still look right. Order is the strip's own source order. The third
+# element is the `data-dashboard-total` hook live.js patches through: a cell
+# whose hook names a different total than its label would update, on the first
+# SSE tick, into a number that contradicts the word beside it.
 COMMAND_STRIP_CELLS = (
-    (7, "Running"),
-    (11, "Needs attention"),
-    (13, "Queued"),
-    (17, "Dirty trees"),
-    (19, "Scheduled"),
-    (23, "Projects"),
+    (7, "Running", "running"),
+    (11, "Needs attention", "attention"),
+    (13, "Queued", "queued"),
+    (17, "Dirty trees", "dirty"),
+    (19, "Scheduled", "scheduled"),
+    (23, "Projects", "projects"),
 )
 
 
@@ -599,7 +606,7 @@ def test_command_strip_binds_every_label_to_its_own_total(tmp_path, monkeypatch)
 
     def with_distinct_totals(*args, **kwargs):
         model = real_build_overview(*args, **kwargs)
-        attention_total, = [v for v, label in COMMAND_STRIP_CELLS
+        attention_total, = [v for v, label, _ in COMMAND_STRIP_CELLS
                             if label == "Needs attention"]
         return dataclasses.replace(
             model,
@@ -612,12 +619,13 @@ def test_command_strip_binds_every_label_to_its_own_total(tmp_path, monkeypatch)
 
     html = c.get("/").text
 
-    for value, label in COMMAND_STRIP_CELLS:
+    for value, label, hook in COMMAND_STRIP_CELLS:
         assert re.search(
-            rf'<span class="command-cell__num">{value}</span>\s*'
+            rf'<span class="command-cell__num" data-dashboard-total="{hook}">'
+            rf'{value}</span>\s*'
             rf'<span class="command-cell__label">{label}</span>',
             html,
-        ), f'the "{label}" cell did not render {value}'
+        ), f'the "{label}" cell did not render {value} under data-dashboard-total="{hook}"'
     store.close()
 
 
@@ -881,8 +889,12 @@ def test_overview_route_keeps_freshness_strip_and_total_hooks_for_live_js(tmp_pa
     html = c.get("/").text
 
     assert "data-freshness-strip" in html
-    assert html.count("data-dashboard-total=") == 8
+    assert html.count("data-dashboard-total=") == 14
     assert len(re.findall(r"<dd[^>]+data-dashboard-total=", html)) == 8
+    # Every visible command-strip number carries the hook too, or live.js
+    # patches only the copy nobody can see.
+    assert len(re.findall(
+        r'<span class="command-cell__num" data-dashboard-total=', html)) == 6
     assert "data-project-membership-status" in html
     assert "data-diagnostics-alert" in html
     store.close()

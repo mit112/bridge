@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 
 from bridge.api import create_app
 from bridge.config import load
+from bridge.refresh import RefreshCoordinator, RefreshStatus
 from bridge.store import Store
 
 
@@ -325,3 +326,86 @@ def test_reduced_motion_disables_btn_transitions():
     assert any(".shell { transition: none; }" in b for b in blocks), (
         "no prefers-reduced-motion block snaps the sidebar collapse"
     )
+
+
+# --- distinct document titles ------------------------------------------------
+
+
+def test_every_page_has_its_own_document_title(tmp_path):
+    """Six routes, six titles. `base.html` defaults `{% block title %}` to the
+    bare word "Bridge", and only the project and settings templates overrode
+    it -- so four of the six tabs a person keeps open all read "Bridge" and
+    were told apart only by favicon. The title is also what the browser writes
+    into history and bookmarks, so it is not a tab-strip nicety.
+    """
+    cfg = load({"db_path": tmp_path / "titles.db", "spool_dir": tmp_path / "spool-titles"})
+    store = Store(cfg.db_path)
+    pid = store.upsert_project("/p/titled", "titled-project")
+    client = TestClient(create_app(store, cfg))
+
+    expected = {
+        "/": "Overview — Bridge",
+        "/projects": "Projects — Bridge",
+        "/schedule": "Schedule — Bridge",
+        "/diagnostics": "Diagnostics — Bridge",
+        "/settings": "Settings — Bridge",
+        f"/project/{pid}": "titled-project — Bridge",
+    }
+    seen = {}
+    for path, title in expected.items():
+        html = client.get(path).text
+        found = re.search(r"<title>(.*?)</title>", html)
+        assert found is not None, path
+        assert found.group(1) == title, path
+        seen[found.group(1)] = path
+
+    assert len(seen) == len(expected), f"two routes share a title: {seen}"
+    store.close()
+
+
+# --- the shell readout is never a hardcoded "Connected" ----------------------
+
+
+def _unavailable_app(tmp_path):
+    cfg = load({"db_path": tmp_path / "down.db", "spool_dir": tmp_path / "spool-down"})
+    store = Store(cfg.db_path)
+    coordinator = RefreshCoordinator(store, cfg)
+    coordinator._status = RefreshStatus(generation=1, index_at=1, server="unavailable")
+    return store, TestClient(create_app(store, cfg, refresh_coordinator=coordinator))
+
+
+def test_the_project_page_reports_an_unavailable_server_like_every_other_page(tmp_path):
+    """The project detail page overrides `shell_status` to show its own git
+    cache age instead of the global index age -- and in doing so used to
+    hardcode the word "Connected", so it was structurally incapable of showing
+    the Unavailable branch. That is the worst page in the app to lie on: it is
+    where launches are started from, and a launch fired against a dead sensor
+    is exactly what the readout exists to warn about.
+    """
+    store, client = _unavailable_app(tmp_path)
+    pid = store.upsert_project("/p/down", "down-project")
+
+    html = client.get(f"/project/{pid}").text
+    footer = html[html.index('class="shell-status"'):]
+    footer = footer[:footer.index("</div>")]
+
+    assert "Unavailable" in footer
+    assert "Refresh to reconnect" in footer
+    assert "Connected" not in footer
+    store.close()
+
+
+def test_every_other_page_still_reports_unavailable_too(tmp_path):
+    """The guard above is only meaningful if the pages it was compared against
+    actually behave that way; this pins the base template's own branch so a
+    regression there cannot make the project page look correct by matching a
+    broken sibling."""
+    store, client = _unavailable_app(tmp_path)
+
+    for path in ("/", "/projects", "/schedule", "/settings", "/diagnostics"):
+        html = client.get(path).text
+        footer = html[html.index('class="shell-status"'):]
+        footer = footer[:footer.index("</div>")]
+        assert "Unavailable" in footer, path
+        assert "Connected" not in footer, path
+    store.close()
