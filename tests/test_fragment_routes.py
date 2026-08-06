@@ -128,11 +128,28 @@ def test_the_shell_status_matches_the_full_documents_body(c, path, active):
     assert normalize(full) == normalize(frag)
 
 
-def test_the_project_detail_route_has_no_fragment_mode(c):
-    """Out of scope by design: the router never intercepts a link to it."""
+def test_the_project_detail_route_serves_a_fragment(c):
+    """The workspace is a swap target now: with the fragment header it returns
+    the swap payload -- no doctype, no sidebar -- so navigating into a project
+    (and between its tabs) swaps the content region instead of tearing down the
+    persistent shell. The tab/sort/filter links all share the /project/{id}
+    path, so a fragment for the base route is a fragment for all of them."""
     client, pid = c
-    body = client.get(f"/project/{pid}", headers=FRAGMENT).text
+    for path in (f"/project/{pid}", f"/project/{pid}?tab=sessions"):
+        body = client.get(path, headers=FRAGMENT).text
+        assert "<!doctype html>" not in body.lower()
+        assert '<aside class="sidebar"' not in body
+        assert 'class="shell__body"' in body
+        assert 'content="projects"' in body  # the active nav key for the swap
+
+
+def test_the_project_detail_full_document_is_unchanged(c):
+    """A request WITHOUT the header is still the whole document it always was."""
+    client, pid = c
+    body = client.get(f"/project/{pid}").text
     assert "<!doctype html>" in body.lower()
+    assert '<aside class="sidebar"' in body
+    assert "app.css" in body
 
 
 @pytest.mark.parametrize("path,active", ROUTES)

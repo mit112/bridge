@@ -132,12 +132,12 @@
     "expect_count": 1
   },
   {
-    "name": "widen SWAPPABLE to include the project detail route",
+    "name": "stop treating the project workspace as swappable, so navigating into a project (and between its tabs) stays a full-load shell-teardown flash",
     "file": "src/bridge/static/router.js",
-    "old": "const SWAPPABLE = new Set([\"/\", \"/projects\", \"/schedule\", \"/diagnostics\", \"/settings\"]);",
-    "new": "const SWAPPABLE = new Set([\"/\", \"/projects\", \"/schedule\", \"/diagnostics\", \"/settings\", \"/project/\"]);",
+    "old": "  return SWAPPABLE.has(url.pathname) || WORKSPACE_PATH.test(url.pathname);",
+    "new": "  return SWAPPABLE.has(url.pathname);",
     "tests": [
-      "tests/test_shell_contract.py::test_router_only_intercepts_the_sidebar_destinations"
+      "tests/test_swap_lifecycle.py::test_router_swaps_a_navigation_into_the_project_workspace"
     ],
     "expect_count": 1
   },
@@ -229,6 +229,26 @@
     "new": "<header class=\"page-head-mutated\">",
     "tests": [
       "tests/test_fragment_routes.py::test_the_fragment_body_matches_the_full_documents_body"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "let focus() scroll on arrival, so a swap into a tall page pins #main's top and hides the page header",
+    "file": "src/bridge/static/router.js",
+    "old": "  if (main && main.focus) main.focus({ preventScroll: true });",
+    "new": "  if (main && main.focus) main.focus();",
+    "tests": [
+      "tests/test_shell_contract.py::test_router_lands_a_swap_at_the_top_without_a_focus_scroll"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "stop resetting the .shell__body scroll container on arrival, leaving a swap wherever the last page was scrolled",
+    "file": "src/bridge/static/router.js",
+    "old": "  const body = document.querySelector(\".shell__body\");\n  if (body) body.scrollTop = 0;",
+    "new": "",
+    "tests": [
+      "tests/test_shell_contract.py::test_router_lands_a_swap_at_the_top_without_a_focus_scroll"
     ],
     "expect_count": 1
   }

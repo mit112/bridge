@@ -1601,6 +1601,30 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
 .chip:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .chip--active { color: var(--fg); font-weight: 600; border-color: var(--accent); }
 
+/* Sortable column headers: the header label is a link that reloads with a new
+   ?sort/&dir (server-side sort -- see the `sort_header` macro). The whole cell
+   is the target (the link fills the <th>'s padding box), so the hit area clears
+   WCAG 2.5.8. A persistent indicator sits on every sortable head so the
+   affordance is never hover-only; the active column is marked by heavier weight
+   AND a filled directional arrow, never colour alone (WCAG 1.4.1). The arrow
+   glyph carries direction; `aria-sort` on the <th> carries the same to a screen
+   reader. Inherits the header's uppercase/xs/muted treatment. */
+.sortable {
+  display: inline-flex;
+  align-items: center;
+  gap: .3rem;
+  color: inherit;
+  text-decoration: none;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+}
+.sortable:hover { color: var(--fg); }
+.sortable:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.sortable--active { color: var(--fg); font-weight: 700; }
+.sortable__ind { font-size: .9em; opacity: .45; }
+.sortable--active .sortable__ind { opacity: 1; }
+
 /* Session-meta enrichment (Phase 7): color is decorative only -- the `+`/`-`
    prefixes and the badge text carry the meaning, so nothing here relies on
    color alone (WCAG 2.2). */

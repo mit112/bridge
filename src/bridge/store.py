@@ -18,6 +18,46 @@ from bridge.models import GitState, Handoff, Launch, ScheduledRun, SessionRecord
 
 logger = logging.getLogger(__name__)
 
+# Whitelisted sort vocabularies for the paged history tables. Keys are the
+# public `?sort=` values (safe to echo into a URL and template); values are
+# trusted, hardcoded SQL column expressions -- NEVER a caller-supplied name --
+# so the ORDER BY can be parameterized without opening an injection. The first
+# entry in each map is that table's default sort; an unknown key falls back to
+# it, so a hand-typed or hostile `?sort=` can only ever pick a whitelisted
+# expression. Sorting has to happen here (server-side): the tables are paged,
+# and a client reorder of the visible slice would misorder every row past the
+# cap.
+SESSION_SORTS = {
+    "ended": "ended_epoch",
+    "title": "title",
+    "model": "model",
+    "turns": "user_msgs + assistant_msgs",
+    "tokens": "tokens_in + tokens_out",
+}
+HANDOFF_SORTS = {"created": "created_at", "status": "status"}
+LAUNCH_SORTS = {
+    "launched": "launched_at",
+    "mode": "mode",
+    "model": "model",
+    "outcome": "outcome",
+}
+
+
+def _order_by(whitelist: dict[str, str], sort: str | None, direction: str | None) -> str:
+    """Build a trusted `ORDER BY` clause from a per-table whitelist.
+
+    `sort` is looked up in the whitelist; an unknown/absent key falls back to
+    the whitelist's first (default) column, so nothing a caller supplies is
+    ever interpolated raw. `direction` normalizes to DESC unless it is exactly
+    "asc". `NULLS LAST` keeps blank cells at the bottom in either direction --
+    the same treatment the pre-sort `ended_epoch DESC NULLS LAST` default gave.
+    """
+    default_col = next(iter(whitelist.values()))
+    col = whitelist.get(sort or "", default_col)
+    dir_sql = "ASC" if direction == "asc" else "DESC"
+    return f"ORDER BY {col} {dir_sql} NULLS LAST"
+
+
 SCHEMA = [
     """
     CREATE TABLE IF NOT EXISTS projects (
@@ -384,23 +424,53 @@ class Store:
             ).fetchone()
 
     def sessions(
-        self, project_id: int, limit: int = 50, offset: int = 0
+        self, project_id: int, limit: int = 50, offset: int = 0,
+        *, sort: str | None = None, direction: str | None = None,
+        model: str | None = None,
     ) -> list[sqlite3.Row]:
+        order = _order_by(SESSION_SORTS, sort, direction)
+        where = "WHERE project_id=?"
+        params: list = [project_id]
+        if model is not None:
+            where += " AND model=?"
+            params.append(model)
+        params += [limit, offset]
         with self._lock:
             return list(
                 self.conn.execute(
-                    "SELECT * FROM sessions WHERE project_id=? "
-                    "ORDER BY ended_epoch DESC NULLS LAST LIMIT ? OFFSET ?",
-                    (project_id, limit, offset),
+                    f"SELECT * FROM sessions {where} {order} LIMIT ? OFFSET ?",
+                    params,
                 )
             )
 
-    def count_sessions(self, project_id: int) -> int:
-        """The total behind a paged `sessions()` call, for the capped history."""
+    def count_sessions(self, project_id: int, *, model: str | None = None) -> int:
+        """The total behind a paged `sessions()` call, for the capped history.
+
+        `model`, when given, counts only the filtered slice so the pager states
+        the true total for the active filter, exactly as `sessions()` returns it.
+        """
+        where = "WHERE project_id=?"
+        params: list = [project_id]
+        if model is not None:
+            where += " AND model=?"
+            params.append(model)
         with self._lock:
             return self.conn.execute(
-                "SELECT COUNT(*) AS n FROM sessions WHERE project_id=?", (project_id,)
+                f"SELECT COUNT(*) AS n FROM sessions {where}", params
             ).fetchone()["n"]
+
+    def session_model_facets(self, project_id: int) -> list[tuple[str, int]]:
+        """(model, count) over the UNFILTERED session set, so the filter menu
+        and its counts never shift as the user narrows down. A null model is not
+        an offerable facet -- only the "All" choice ever includes those rows."""
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT model, COUNT(*) AS n FROM sessions "
+                "WHERE project_id=? AND model IS NOT NULL "
+                "GROUP BY model ORDER BY model",
+                (project_id,),
+            )
+            return [(r["model"], r["n"]) for r in rows]
 
     # --- handoffs: authored data, not derived from any transcript, so a
     # --- dropped database loses them. See spool.py for the journal.
@@ -461,25 +531,49 @@ class Store:
         return rows[0] if rows else None
 
     def handoffs(
-        self, project_id: int, limit: int = 50, offset: int = 0
+        self, project_id: int, limit: int = 50, offset: int = 0,
+        *, sort: str | None = None, direction: str | None = None,
+        status: str | None = None,
     ) -> list[sqlite3.Row]:
+        order = _order_by(HANDOFF_SORTS, sort, direction)
+        where = "WHERE project_id=?"
+        params: list = [project_id]
+        if status is not None:
+            where += " AND status=?"
+            params.append(status)
+        params += [limit, offset]
         with self._lock:
             return list(
                 self.conn.execute(
-                    "SELECT * FROM handoffs WHERE project_id=? "
-                    "ORDER BY created_at DESC LIMIT ? OFFSET ?",
-                    (project_id, limit, offset),
+                    f"SELECT * FROM handoffs {where} {order} LIMIT ? OFFSET ?",
+                    params,
                 )
             )
 
-    def count_handoffs(self, project_id: int) -> int:
+    def count_handoffs(self, project_id: int, *, status: str | None = None) -> int:
         """The total behind a paged `handoffs()` call. Distinct from
         `handoff_count`, which counts every handoff in the store, not one
-        project's history."""
+        project's history. `status` narrows the count to the active filter."""
+        where = "WHERE project_id=?"
+        params: list = [project_id]
+        if status is not None:
+            where += " AND status=?"
+            params.append(status)
         with self._lock:
             return self.conn.execute(
-                "SELECT COUNT(*) AS n FROM handoffs WHERE project_id=?", (project_id,)
+                f"SELECT COUNT(*) AS n FROM handoffs {where}", params
             ).fetchone()["n"]
+
+    def handoff_status_facets(self, project_id: int) -> list[tuple[str, int]]:
+        """(status, count) over the UNFILTERED handoff set -- the filter menu
+        and its counts stay stable no matter which status is active."""
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT status, COUNT(*) AS n FROM handoffs "
+                "WHERE project_id=? GROUP BY status ORDER BY status",
+                (project_id,),
+            )
+            return [(r["status"], r["n"]) for r in rows]
 
     def get_handoff(self, handoff_id: str) -> sqlite3.Row | None:
         with self._lock:
@@ -561,23 +655,48 @@ class Store:
             )
 
     def launches(
-        self, project_id: int, limit: int = 50, offset: int = 0
+        self, project_id: int, limit: int = 50, offset: int = 0,
+        *, sort: str | None = None, direction: str | None = None,
+        outcome: str | None = None,
     ) -> list[sqlite3.Row]:
+        order = _order_by(LAUNCH_SORTS, sort, direction)
+        where = "WHERE project_id=?"
+        params: list = [project_id]
+        if outcome is not None:
+            where += " AND outcome=?"
+            params.append(outcome)
+        params += [limit, offset]
         with self._lock:
             return list(
                 self.conn.execute(
-                    "SELECT * FROM launches WHERE project_id=? "
-                    "ORDER BY launched_at DESC LIMIT ? OFFSET ?",
-                    (project_id, limit, offset),
+                    f"SELECT * FROM launches {where} {order} LIMIT ? OFFSET ?",
+                    params,
                 )
             )
 
-    def count_launches(self, project_id: int) -> int:
-        """The total behind a paged `launches()` call, for the capped history."""
+    def count_launches(self, project_id: int, *, outcome: str | None = None) -> int:
+        """The total behind a paged `launches()` call, for the capped history.
+        `outcome` narrows the count to the active filter."""
+        where = "WHERE project_id=?"
+        params: list = [project_id]
+        if outcome is not None:
+            where += " AND outcome=?"
+            params.append(outcome)
         with self._lock:
             return self.conn.execute(
-                "SELECT COUNT(*) AS n FROM launches WHERE project_id=?", (project_id,)
+                f"SELECT COUNT(*) AS n FROM launches {where}", params
             ).fetchone()["n"]
+
+    def launch_outcome_facets(self, project_id: int) -> list[tuple[str, int]]:
+        """(outcome, count) over the UNFILTERED launch set, so the filter menu
+        and its counts stay stable no matter which outcome is active."""
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT outcome, COUNT(*) AS n FROM launches "
+                "WHERE project_id=? GROUP BY outcome ORDER BY outcome",
+                (project_id,),
+            )
+            return [(r["outcome"], r["n"]) for r in rows]
 
     def get_scan_state(self, path: str) -> sqlite3.Row | None:
         with self._lock:

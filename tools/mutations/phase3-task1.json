@@ -40,12 +40,13 @@
     "expect_count": 1
   },
   {
-    "name": "list launches oldest-first",
+    "name": "flip the default history sort direction, so launches (and every history table) list oldest-first",
     "file": "src/bridge/store.py",
-    "old": "                    \"ORDER BY launched_at DESC LIMIT ? OFFSET ?\",",
-    "new": "                    \"ORDER BY launched_at ASC LIMIT ? OFFSET ?\",",
+    "old": "    dir_sql = \"ASC\" if direction == \"asc\" else \"DESC\"",
+    "new": "    dir_sql = \"DESC\" if direction == \"asc\" else \"ASC\"",
     "tests": [
-      "tests/test_store.py::test_a_launch_round_trips_and_is_found_by_its_session_id"
+      "tests/test_store.py::test_a_launch_round_trips_and_is_found_by_its_session_id",
+      "tests/test_store.py::test_launches_page_by_offset_and_expose_a_total"
     ],
     "expect_count": 1
   },

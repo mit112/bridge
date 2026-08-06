@@ -20,7 +20,7 @@ from bridge import sessionmeta
 from bridge.cards import build_cards
 from bridge.config import Config
 from bridge.models import AgentsState, Card, GitState
-from bridge.store import Store
+from bridge.store import HANDOFF_SORTS, LAUNCH_SORTS, SESSION_SORTS, Store
 
 # Exactly the tab vocabulary the workspace route accepts. Anything else
 # (missing, unknown, typo'd) normalizes to "current" -- there is no blank tab.
@@ -59,6 +59,17 @@ class WorkspaceModel:
     history_total: int = 0
     page: int = 0
     page_size: int = 50
+    # The selected history tab's sort + table-local filter (the P2 detail-table
+    # controls). `sort` is the active column key from the tab's whitelist (or ""
+    # on the Current tab, which has no table); `sort_dir` is "asc"/"desc".
+    # `filter_value` is the active facet value, or None for "all"; `filter_facets`
+    # is (value, count) over the UNFILTERED set, computed before the filter so
+    # the menu and its counts never shift as the user narrows down -- exactly the
+    # discipline `schedule_view.build_schedule` follows for its status filter.
+    sort: str = ""
+    sort_dir: str = "desc"
+    filter_value: str | None = None
+    filter_facets: list[tuple[str, int]] = dataclasses.field(default_factory=list)
     # The launches tab needs a linked launch's session TITLE, but `sessions`
     # above stays empty unless `tab == "sessions"` -- fetching all 50 of a
     # project's sessions just to resolve a handful of launch->session joins
@@ -81,6 +92,9 @@ def build_workspace(
     *,
     page: int = 0,
     page_size: int = 50,
+    sort: str | None = None,
+    direction: str | None = None,
+    filter_value: str | None = None,
     live_state: AgentsState | None = None,
     probe_fn=None,
     agents_fn=None,
@@ -145,15 +159,42 @@ def build_workspace(
     # the other two are never fetched, same as their row lists.
     history_total = 0
     offset = page * page_size
+    # Sort + filter state for the selected tab. `sort_key` normalizes to the
+    # tab's default column (an unknown/hostile `?sort=` never reaches the SQL);
+    # `sort_dir` is "asc" only when explicitly asked, else "desc". `active_filter`
+    # is the requested facet value only when it actually names a facet -- an
+    # unknown value falls back to "all" -- mirroring `build_schedule`'s contract.
+    sort_key = ""
+    sort_dir = "asc" if direction == "asc" else "desc"
+    active_filter: str | None = None
+    filter_facets: list[tuple[str, int]] = []
     if tab == "sessions":
-        sessions = store.sessions(project_id, limit=page_size, offset=offset)
-        history_total = store.count_sessions(project_id)
+        sort_key = sort if sort in SESSION_SORTS else next(iter(SESSION_SORTS))
+        filter_facets = store.session_model_facets(project_id)
+        active_filter = filter_value if filter_value in {v for v, _ in filter_facets} else None
+        sessions = store.sessions(
+            project_id, limit=page_size, offset=offset,
+            sort=sort_key, direction=sort_dir, model=active_filter,
+        )
+        history_total = store.count_sessions(project_id, model=active_filter)
     elif tab == "handoffs":
-        handoffs = store.handoffs(project_id, limit=page_size, offset=offset)
-        history_total = store.count_handoffs(project_id)
+        sort_key = sort if sort in HANDOFF_SORTS else next(iter(HANDOFF_SORTS))
+        filter_facets = store.handoff_status_facets(project_id)
+        active_filter = filter_value if filter_value in {v for v, _ in filter_facets} else None
+        handoffs = store.handoffs(
+            project_id, limit=page_size, offset=offset,
+            sort=sort_key, direction=sort_dir, status=active_filter,
+        )
+        history_total = store.count_handoffs(project_id, status=active_filter)
     elif tab == "launches":
-        launches = store.launches(project_id, limit=page_size, offset=offset)
-        history_total = store.count_launches(project_id)
+        sort_key = sort if sort in LAUNCH_SORTS else next(iter(LAUNCH_SORTS))
+        filter_facets = store.launch_outcome_facets(project_id)
+        active_filter = filter_value if filter_value in {v for v, _ in filter_facets} else None
+        launches = store.launches(
+            project_id, limit=page_size, offset=offset,
+            sort=sort_key, direction=sort_dir, outcome=active_filter,
+        )
+        history_total = store.count_launches(project_id, outcome=active_filter)
         for launch_row in launches:
             session_id = launch_row["session_id"]
             if session_id and session_id not in launch_sessions:
@@ -179,4 +220,8 @@ def build_workspace(
         history_total=history_total,
         page=page,
         page_size=page_size,
+        sort=sort_key,
+        sort_dir=sort_dir,
+        filter_value=active_filter,
+        filter_facets=filter_facets,
     )

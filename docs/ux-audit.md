@@ -255,3 +255,43 @@ pager's Previous/Next carry the active `&status=` so paging never silently drops
 JSON API (`GET /api/schedule`, which the CLI parses and `test_api.py` pins to its `{"detail": ...}`
 error shape) is untouched. Chips reuse the pager buttons' surface tokens and are emphasized on
 `aria-current` the same way the view tabs are — no new status hues.
+
+## Status update — 2026-08-06 (P2: detail-table sort/filter — the last audit item)
+
+The final open item (row P2, "Detail tables have no sort/filter controls") is **done**, on branch
+`feat/detail-table-sort-filter` (pushed, not merged). Its line ref `project.html:22-108` was stale —
+the tables live in `_workspace_history.html`.
+
+**Sorting is server-side, by necessity.** The histories are paged (limit/offset), so a client-side
+reorder of the visible 50 rows would misorder every row past the cap. Each sortable header is a link
+that threads `?sort=<col>&dir=<asc|desc>`; `store.py` reorders the SQL against a per-table WHITELIST
+(`SESSION_SORTS`/`HANDOFF_SORTS`/`LAUNCH_SORTS`) — an unknown key falls back to the default column, so
+no caller-supplied column name is ever interpolated. Newest-first stays the default; sorting is
+opt-in. `build_workspace` carries `sort`/`sort_dir`; the detail route reads `?sort=`/`?dir=` (alias
+`dir`) on the same `?tab=` string. Headers carry `aria-sort` + a persistent glyph (`↕` idle, `↑`/`↓`
+active — direction by shape, not colour alone; WCAG 1.4.1), per the KB's `ux-table-sort-filter` card.
+
+**Table-local filters** mirror the schedule status-filter exactly: sessions→model, handoffs→status,
+launches→outcome. Facet counts are over the UNFILTERED set (the menu never shifts); an unknown
+`?filter=` normalizes to "all"; a null model is not an offerable facet. Sort + filter ride each
+other's links and the pager's Prev/Next, so neither silently resets on paging. New store methods
+(`session_model_facets`/`handoff_status_facets`/`launch_outcome_facets` + `*_sorts`/filtered counts),
+`facet_filter`/`sort_header` macros in `_components.html`. Captions dropped "most recent first" (a lie
+under an active sort). 7 mutations in `project-history-sort.json` (7/7); re-anchored the launches
+default-direction mutation onto the shared `_order_by` helper.
+
+**Two swap fixes fell out of showing it live** (Mit iterates visually; the tab/sort/filter links are
+all `/project/{id}` navigations):
+- The workspace never swapped through the persistent shell — `router.js`'s `SWAPPABLE` set excluded
+  `/project/{id}`, `project.html` hard-extended `base.html` (not `layout`), and the detail route never
+  passed `layout`. Every tab/sort/filter click was a full-document teardown flash. Fixed all three
+  (`182b112`); verified structurally (a `window` marker + the sidebar node both survive the swap).
+- On a swap into a tall page, the content jumped so the tab bar pinned to the top and the page header
+  scrolled away. At ≥1024px the shell is a fixed `100vh` cage and **`.shell__body`, not the window, is
+  the scroll container** — so `announceArrival`'s `window.scrollTo(0,0)` was a no-op there while
+  `main.focus()` scrolled `.shell__body` to pin the tall `#main`'s top. Fixed with
+  `focus({preventScroll:true})` + resetting `.shell__body.scrollTop` (`010d6fd`); reproduced then
+  verified in-situ (filter/tab click while scrolled down now lands at `scrollTop:0`, header visible).
+
+Full suite 1238 passing / 2 skipped; every touched mutation spec falsified (7/7 sort-filter, 25/25
+persistent-shell). The audit's structural lane and its P2 tail are now fully closed.

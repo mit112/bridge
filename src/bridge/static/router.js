@@ -12,8 +12,16 @@
 
 const SWAPPABLE = new Set(["/", "/projects", "/schedule", "/diagnostics", "/settings"]);
 
+// The project workspace and everything inside it -- its tabs, and the history
+// tables' sort/filter/pager, which only vary the query string -- share the
+// `/project/{id}` path. It has a fragment mode too, so it swaps like the
+// sidebar destinations instead of tearing the shell down on every tab click.
+// Scoped to a numeric id so it can never widen to some other /project/... path.
+const WORKSPACE_PATH = /^\/project\/\d+$/;
+
 function swappable(url) {
-  return url.origin === window.location.origin && SWAPPABLE.has(url.pathname);
+  if (url.origin !== window.location.origin) return false;
+  return SWAPPABLE.has(url.pathname) || WORKSPACE_PATH.test(url.pathname);
 }
 
 function parseFragment(html) {
@@ -61,8 +69,19 @@ function applyFragment(parsed) {
 // are required, not polish.
 function announceArrival() {
   const main = document.getElementById("main");
-  if (main && main.focus) main.focus();
+  // Focus the new content for the screen reader, but NOT with the browser's
+  // scroll-into-view. At >=1024px the shell is a fixed 100vh cage and
+  // `.shell__body` -- not the window -- is the scroll container, so focusing a
+  // `#main` taller than the viewport would scroll that container to pin #main's
+  // top and push the whole page header (breadcrumb, title, actions) out of
+  // view. `preventScroll` keeps focus a pure a11y move.
+  if (main && main.focus) main.focus({ preventScroll: true });
+  // Land at the top like a real navigation. `window.scrollTo` handles the
+  // document scroll below 1024px; resetting `.shell__body` handles the scroll
+  // container at and above it, where `window.scrollTo` is a no-op.
   window.scrollTo(0, 0);
+  const body = document.querySelector(".shell__body");
+  if (body) body.scrollTop = 0;
 }
 
 async function navigate(href, { push = true } = {}) {

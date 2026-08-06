@@ -110,20 +110,59 @@
    `page_start`/`page_end` clamp to the total exactly as schedule.html's pager
    does, so a hand-typed out-of-range `?page=99` renders "0 of N" with a working
    Previous rather than a nonsensical window. `shown` is the length of the page's
-   own row list; `total` is the count BEFORE the slice. Sortable headers are a
-   separate (P2) concern and deliberately not added here. #}
-{% macro history_pager(project_id, tab, total, page, page_size, shown) %}
+   own row list; `total` is the count BEFORE the slice. `sort`/`dir`/`filter_value`
+   ride the Prev/Next links so paging preserves the active sort and filter (the
+   `sort_header`/`facet_filter` macros below own those controls). #}
+{% macro history_pager(project_id, tab, total, page, page_size, shown, sort="", dir="desc", filter_value=none) %}
 {% set page_start = [page * page_size, total] | min %}
 {% set page_end = [page_start + shown, total] | min %}
 <nav class="history-pager" aria-label="History pages">
+  {# Prev/Next carry the active sort AND filter so paging never silently resets
+     either -- `&sort=`/`&dir=`/`&filter=` are literal `&` template text (bare,
+     un-escaped), never an interpolated pre-joined string. #}
   {% if page > 0 %}
-  <a class="btn" href="/project/{{ project_id }}?tab={{ tab }}&page={{ page - 1 }}">Previous</a>
+  <a class="btn" href="/project/{{ project_id }}?tab={{ tab }}&page={{ page - 1 }}&sort={{ sort }}&dir={{ dir }}{% if filter_value %}&filter={{ filter_value }}{% endif %}">Previous</a>
   {% endif %}
   <span class="history__scope" data-history-pager-status>{% if not total %}0 of 0{% elif not shown %}0 of {{ total }}{% else %}Showing {{ page_start + 1 }}–{{ page_end }} of {{ total }}{% endif %}</span>
   {% if page_end < total %}
-  <a class="btn" href="/project/{{ project_id }}?tab={{ tab }}&page={{ page + 1 }}">Next</a>
+  <a class="btn" href="/project/{{ project_id }}?tab={{ tab }}&page={{ page + 1 }}&sort={{ sort }}&dir={{ dir }}{% if filter_value %}&filter={{ filter_value }}{% endif %}">Next</a>
   {% endif %}
 </nav>
+{% endmacro %}
+
+{# A sortable column header (the P2 detail-table control). The whole label is a
+   link that reloads the page with a new ?sort/&dir -- sorting is server-side by
+   necessity, since the tables are paged and a client reorder of the visible
+   slice would misorder every row past the 50-row cap. A persistent indicator
+   marks every sortable column (a plain up/down caret when inactive, a single
+   arrow when active) so the affordance is never hover-only, and `aria-sort`
+   carries the same state to a screen reader. Direction is read from the arrow's
+   shape, not colour alone (WCAG 1.4.1). A click drops `?page=`, so a re-sort
+   restarts at page 1, and preserves any active filter. `&sort=`/`&dir=`/
+   `&filter=` are literal `&` template text -- an interpolated pre-joined string
+   would be escaped to `&amp;` and break the href. #}
+{% macro sort_header(project_id, tab, key, label, active_sort, active_dir, filter_value=none) %}
+{% set is_active = active_sort == key %}
+{% set next_dir = "asc" if (is_active and active_dir == "desc") else "desc" %}
+<th scope="col" aria-sort="{% if is_active %}{{ 'ascending' if active_dir == 'asc' else 'descending' }}{% else %}none{% endif %}"><a class="sortable{% if is_active %} sortable--active{% endif %}" href="/project/{{ project_id }}?tab={{ tab }}&sort={{ key }}&dir={{ next_dir }}{% if filter_value %}&filter={{ filter_value }}{% endif %}">{{ label }} <span class="sortable__ind" aria-hidden="true">{% if is_active %}{{ '↑' if active_dir == 'asc' else '↓' }}{% else %}↕{% endif %}</span></a></th>
+{% endmacro %}
+
+{# The table-local facet filter (the other half of the P2 control). Neutral
+   chips over the UNFILTERED set (`model.filter_facets`), each carrying its own
+   value on the same `?tab=` query string with the active sort preserved, so
+   filtering never resets the sort. The menu is absent when there is nothing to
+   filter. Reuses the schedule history filter's `.schedule-filter`/`.chip`
+   treatment so the two filters read as one family. Same literal-`&` rule as
+   above. #}
+{% macro facet_filter(project_id, tab, label, facets, active, sort, dir) %}
+{% if facets %}
+<nav class="schedule-filter" aria-label="{{ label }}">
+  <a class="chip{% if not active %} chip--active{% endif %}" href="/project/{{ project_id }}?tab={{ tab }}&sort={{ sort }}&dir={{ dir }}"{% if not active %} aria-current="true"{% endif %}>All</a>
+  {% for value, count in facets %}
+  <a class="chip{% if active == value %} chip--active{% endif %}" href="/project/{{ project_id }}?tab={{ tab }}&sort={{ sort }}&dir={{ dir }}&filter={{ value }}"{% if active == value %} aria-current="true"{% endif %}>{{ value }} ({{ count }})</a>
+  {% endfor %}
+</nav>
+{% endif %}
 {% endmacro %}
 
 {# The shared schedule row: Overview's "Up next" preview calls this with

@@ -921,12 +921,13 @@ def test_history_pager_offers_next_and_previous_across_a_full_window(tmp_path):
 
     first = c.get(f"/project/{pid}?tab=sessions").text
     assert "Showing 1–50 of 51" in first
-    assert f'href="/project/{pid}?tab=sessions&page=1">Next</a>' in first
+    # The pager carries the active (here default) sort so paging never resets it.
+    assert f'href="/project/{pid}?tab=sessions&page=1&sort=ended&dir=desc">Next</a>' in first
     assert ">Previous</a>" not in first
 
     second = c.get(f"/project/{pid}?tab=sessions&page=1").text
     assert "Showing 51–51 of 51" in second
-    assert f'href="/project/{pid}?tab=sessions&page=0">Previous</a>' in second
+    assert f'href="/project/{pid}?tab=sessions&page=0&sort=ended&dir=desc">Previous</a>' in second
     assert ">Next</a>" not in second
     store.close()
 
@@ -937,17 +938,143 @@ def test_history_pager_survives_an_out_of_range_page(tmp_path):
     c, store, pid = _client_with_history(tmp_path)  # one session
     html = c.get(f"/project/{pid}?tab=sessions&page=9").text
     assert "0 of 1" in html
-    assert f'href="/project/{pid}?tab=sessions&page=8">Previous</a>' in html
+    assert f'href="/project/{pid}?tab=sessions&page=8&sort=ended&dir=desc">Previous</a>' in html
     assert ">Next</a>" not in html
     store.close()
 
 
-def test_history_tabs_offer_no_sortable_affordance(tmp_path):
+def test_history_tabs_expose_a_sortable_accessible_affordance(tmp_path):
+    """The P2 detail-table controls: every history tab now marks its sortable
+    columns with `aria-sort` and a visible (non-hover) `.sortable` affordance."""
     c, store, pid = _client_with_history(tmp_path)
     for tab in ("sessions", "handoffs", "launches"):
         html = c.get(f"/project/{pid}?tab={tab}").text
-        assert "aria-sort" not in html
-        assert "sortable" not in html
+        assert "aria-sort" in html
+        assert "sortable" in html
+    store.close()
+
+
+def test_default_history_marks_the_sort_column_and_leaves_others_neutral(tmp_path):
+    """The default sessions view marks its Ended column `aria-sort="descending"`
+    and every other sortable column `aria-sort="none"` -- the discoverable,
+    persistent sort state the affordance is for."""
+    c, store, pid = _client_with_history(tmp_path)
+    html = c.get(f"/project/{pid}?tab=sessions").text
+    assert 'aria-sort="descending"' in html
+    assert 'aria-sort="none"' in html
+    store.close()
+
+
+def test_sorting_reorders_rows_and_marks_the_active_header_end_to_end(tmp_path):
+    """Through the route (exercising the `?dir=` alias): a model-asc sort marks
+    the Model header ascending and reorders the rows opposite the ended default."""
+    cfg = _cfg(tmp_path)
+    store = Store(cfg.db_path)
+    pid = store.upsert_project("/p/sort", "sort")
+    # `zzz` ended more recently (default-first) but has the later model name;
+    # `aaa` ended earlier but sorts first by model ascending -- so a correct
+    # model-asc sort must invert the default order.
+    store.upsert_session(SessionRecord(
+        session_id="zzz", transcript_path="/t/zzz", title="zzz-session",
+        ended_at=_ended(2), model="claude-sonnet-5",
+    ), pid)
+    store.upsert_session(SessionRecord(
+        session_id="aaa", transcript_path="/t/aaa", title="aaa-session",
+        ended_at=_ended(9), model="claude-opus-5",
+    ), pid)
+    c = TestClient(create_app(store, cfg))
+
+    html = c.get(f"/project/{pid}?tab=sessions&sort=model&dir=asc").text
+    assert 'aria-sort="ascending"' in html
+    assert html.index("aaa-session") < html.index("zzz-session")
+    store.close()
+
+
+def test_filtering_narrows_rows_and_marks_the_active_chip_end_to_end(tmp_path):
+    """Through the route (exercising the `?filter=` alias): filtering launches by
+    outcome narrows the rows and marks the chosen chip active."""
+    cfg = _cfg(tmp_path)
+    store = Store(cfg.db_path)
+    pid = store.upsert_project("/p/flt", "flt")
+    store.create_launch(Launch(
+        id="lstart", project_id=pid, mode="terminal", prompt="a",
+        launched_at=100, outcome="started",
+    ))
+    store.create_launch(Launch(
+        id="lerr", project_id=pid, mode="terminal", prompt="b",
+        launched_at=200, outcome="error",
+    ))
+    c = TestClient(create_app(store, cfg))
+
+    html = c.get(f"/project/{pid}?tab=launches&filter=error").text
+    # The error chip is active; the started row is filtered out of the total.
+    assert 'chip chip--active" href="/project/' in html
+    assert "error (1)" in html
+    assert "Showing 1–1 of 1" in html
+    store.close()
+
+
+def test_sessions_tab_threads_sort_direction_and_model_filter(tmp_path):
+    cfg = _cfg(tmp_path)
+    store = Store(cfg.db_path)
+    pid = store.upsert_project("/p/sf", "sort-filter")
+    store.upsert_session(SessionRecord(
+        session_id="a", transcript_path="/t/a", ended_at=_ended(5),
+        model="claude-opus-5",
+    ), pid)
+    store.upsert_session(SessionRecord(
+        session_id="b", transcript_path="/t/b", ended_at=_ended(10),
+        model="claude-sonnet-5",
+    ), pid)
+
+    m = build_workspace(
+        store, cfg, pid, "sessions", sort="model", direction="asc",
+        filter_value="claude-opus-5",
+        agents_fn=lambda: AgentsState(status="ok", sessions=[]),
+    )
+    assert m.sort == "model"
+    assert m.sort_dir == "asc"
+    assert m.filter_value == "claude-opus-5"
+    assert [s["id"] for s in m.sessions] == ["a"]  # sonnet row filtered out
+    assert m.history_total == 1  # the total reflects the active filter
+    # Facets are over the whole set, never the filtered slice.
+    assert ("claude-opus-5", 1) in m.filter_facets
+    assert ("claude-sonnet-5", 1) in m.filter_facets
+    store.close()
+
+
+def test_unknown_sort_and_filter_normalize_to_the_defaults(tmp_path):
+    cfg = _cfg(tmp_path)
+    store = Store(cfg.db_path)
+    pid = store.upsert_project("/p/norm", "norm")
+    store.upsert_session(SessionRecord(
+        session_id="a", transcript_path="/t/a", ended_at=_ended(5),
+        model="claude-opus-5",
+    ), pid)
+
+    m = build_workspace(
+        store, cfg, pid, "sessions", sort="bogus", direction="sideways",
+        filter_value="no-such-model",
+        agents_fn=lambda: AgentsState(status="ok", sessions=[]),
+    )
+    assert m.sort == "ended"  # unknown key -> the table's default column
+    assert m.sort_dir == "desc"  # anything but "asc" -> desc
+    assert m.filter_value is None  # a filter naming no facet -> all
+    assert m.history_total == 1  # so nothing is filtered out
+    store.close()
+
+
+def test_current_tab_exposes_no_sort_or_filter_state(tmp_path):
+    cfg = _cfg(tmp_path)
+    store = Store(cfg.db_path)
+    pid = store.upsert_project("/p/cur", "cur")
+    m = build_workspace(
+        store, cfg, pid, "current",
+        agents_fn=lambda: AgentsState(status="ok", sessions=[]),
+    )
+    assert m.sort == ""
+    assert m.filter_value is None
+    assert m.filter_facets == []
     store.close()
 
 

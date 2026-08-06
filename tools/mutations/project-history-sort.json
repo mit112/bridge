@@ -1,0 +1,73 @@
+[
+  {
+    "name": "ignore the requested sort column and always order by the default, so ?sort= does nothing",
+    "file": "src/bridge/store.py",
+    "old": "    col = whitelist.get(sort or \"\", default_col)",
+    "new": "    col = default_col",
+    "tests": [
+      "tests/test_store.py::test_sessions_sort_by_a_whitelisted_column_in_either_direction"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "drop the sessions model filter from the row query, so the rows ignore ?filter= while the count still narrows",
+    "file": "src/bridge/store.py",
+    "old": "        if model is not None:\n            where += \" AND model=?\"\n            params.append(model)\n        params += [limit, offset]",
+    "new": "        params += [limit, offset]",
+    "tests": [
+      "tests/test_store.py::test_sessions_filter_by_model_narrows_rows_and_total_with_stable_facets"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "count a model facet for null-model sessions, so the filter menu shifts and offers an unfilterable choice",
+    "file": "src/bridge/store.py",
+    "old": "\"WHERE project_id=? AND model IS NOT NULL \"",
+    "new": "\"WHERE project_id=? \"",
+    "tests": [
+      "tests/test_store.py::test_sessions_filter_by_model_narrows_rows_and_total_with_stable_facets"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "trust the raw ?filter= even when it names no facet, so a bogus value filters history to empty across every tab",
+    "file": "src/bridge/workspace.py",
+    "old": "        active_filter = filter_value if filter_value in {v for v, _ in filter_facets} else None",
+    "new": "        active_filter = filter_value",
+    "tests": [
+      "tests/test_workspace.py::test_unknown_sort_and_filter_normalize_to_the_defaults"
+    ],
+    "expect_count": 3
+  },
+  {
+    "name": "pass an unknown ?sort= through unnormalized, so the wrong header is marked active",
+    "file": "src/bridge/workspace.py",
+    "old": "        sort_key = sort if sort in SESSION_SORTS else next(iter(SESSION_SORTS))",
+    "new": "        sort_key = sort",
+    "tests": [
+      "tests/test_workspace.py::test_unknown_sort_and_filter_normalize_to_the_defaults"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "strip aria-sort from the sortable header, so the sort state is invisible to a screen reader",
+    "file": "src/bridge/templates/_components.html",
+    "old": "<th scope=\"col\" aria-sort=\"{% if is_active %}{{ 'ascending' if active_dir == 'asc' else 'descending' }}{% else %}none{% endif %}\">",
+    "new": "<th scope=\"col\">",
+    "tests": [
+      "tests/test_workspace.py::test_history_tabs_expose_a_sortable_accessible_affordance",
+      "tests/test_workspace.py::test_default_history_marks_the_sort_column_and_leaves_others_neutral"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "drop the sort from the pager's Next link, so paging silently resets the active sort",
+    "file": "src/bridge/templates/_components.html",
+    "old": "&page={{ page + 1 }}&sort={{ sort }}&dir={{ dir }}",
+    "new": "&page={{ page + 1 }}",
+    "tests": [
+      "tests/test_workspace.py::test_history_pager_offers_next_and_previous_across_a_full_window"
+    ],
+    "expect_count": 1
+  }
+]

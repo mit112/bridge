@@ -749,6 +749,103 @@ def test_launches_page_by_offset_and_expose_a_total(store):
     assert store.count_launches(pid) == 5
 
 
+# --- server-side sort + table-local filter (P2 detail-table controls) --------
+# Sorting is server-side by necessity: the history tables are paged, so a
+# client reorder of the visible slice would misorder every row past the cap.
+# `?sort=` values come from a per-table WHITELIST -- an unknown key falls back
+# to the default column and can never reach the SQL, so no raw column name is
+# ever interpolated.
+
+
+def test_sessions_sort_by_a_whitelisted_column_in_either_direction(store):
+    pid = store.upsert_project("/d", "d")
+    # `lo` ended most recently but carries the fewest tokens; `hi` is the
+    # reverse -- so the token sort has to disagree with the default ended sort
+    # for the assertions to mean anything.
+    store.upsert_session(
+        rec(sid="lo", tokens_in=1, tokens_out=1, ended_at="2026-07-30T12:00:00.000Z"),
+        pid,
+    )
+    store.upsert_session(
+        rec(sid="hi", tokens_in=90, tokens_out=9, ended_at="2026-07-30T10:00:00.000Z"),
+        pid,
+    )
+    assert [r["id"] for r in store.sessions(pid)] == ["lo", "hi"]  # default: ended desc
+    assert [r["id"] for r in store.sessions(pid, sort="tokens", direction="desc")] == [
+        "hi", "lo",
+    ]
+    assert [r["id"] for r in store.sessions(pid, sort="tokens", direction="asc")] == [
+        "lo", "hi",
+    ]
+
+
+def test_an_unknown_sort_key_falls_back_to_the_default_column(store):
+    pid = store.upsert_project("/d", "d")
+    store.upsert_session(rec(sid="a", ended_at="2026-07-30T12:00:00.000Z"), pid)
+    store.upsert_session(rec(sid="b", ended_at="2026-07-30T10:00:00.000Z"), pid)
+    # A hand-typed or hostile key is neither honoured nor interpolated: it
+    # simply renders the default ended-desc order.
+    assert [r["id"] for r in store.sessions(pid, sort="tokens); DROP TABLE sessions--")] == [
+        "a", "b",
+    ]
+
+
+def test_sessions_filter_by_model_narrows_rows_and_total_with_stable_facets(store):
+    pid = store.upsert_project("/d", "d")
+    store.upsert_session(rec(sid="a", model="claude-opus-5"), pid)
+    store.upsert_session(rec(sid="b", model="claude-sonnet-5"), pid)
+    store.upsert_session(rec(sid="c", model="claude-opus-5"), pid)
+    store.upsert_session(rec(sid="d", model=None), pid)
+
+    assert store.count_sessions(pid) == 4
+    assert store.count_sessions(pid, model="claude-opus-5") == 2
+    assert {r["id"] for r in store.sessions(pid, model="claude-opus-5")} == {"a", "c"}
+    # Facets are over the whole set (never the current slice), a null model is
+    # not an offerable facet, and the order is stable (by name).
+    assert store.session_model_facets(pid) == [
+        ("claude-opus-5", 2),
+        ("claude-sonnet-5", 1),
+    ]
+
+
+def test_handoffs_filter_by_status_with_facets_over_the_unfiltered_set(store):
+    pid = store.upsert_project("/d", "d")
+    for i in range(4):
+        store.create_handoff(
+            handoff(hid=f"h{i}", source_session_id=f"s{i}", created_at=1000 + i), pid
+        )
+    store.set_handoff_status("h0", "consumed")
+    store.set_handoff_status("h1", "consumed")
+
+    assert store.count_handoffs(pid) == 4
+    assert store.count_handoffs(pid, status="consumed") == 2
+    assert {r["id"] for r in store.handoffs(pid, status="queued")} == {"h2", "h3"}
+    assert store.handoff_status_facets(pid) == [("consumed", 2), ("queued", 2)]
+
+
+def test_launches_filter_by_outcome_with_facets_and_a_column_sort(store):
+    pid = store.upsert_project("/d", "d")
+    store.create_launch(launch(
+        pid, "l1", handoff_id=None, session_id=None,
+        outcome="started", mode="terminal", launched_at=2001,
+    ))
+    store.create_launch(launch(
+        pid, "l2", handoff_id=None, session_id=None,
+        outcome="error", mode="background", launched_at=2002,
+    ))
+    store.create_launch(launch(
+        pid, "l3", handoff_id=None, session_id=None,
+        outcome="started", mode="terminal", launched_at=2003,
+    ))
+
+    assert store.count_launches(pid) == 3
+    assert store.count_launches(pid, outcome="started") == 2
+    assert {r["id"] for r in store.launches(pid, outcome="started")} == {"l1", "l3"}
+    assert store.launch_outcome_facets(pid) == [("error", 1), ("started", 2)]
+    # mode asc puts the one `background` row ahead of the two `terminal` rows.
+    assert store.launches(pid, sort="mode", direction="asc")[0]["id"] == "l2"
+
+
 def test_a_launch_needs_no_handoff_behind_it(store):
     """An ad-hoc prompt typed into the panel has no queued handoff to consume."""
     pid = store.upsert_project("/d", "d")
