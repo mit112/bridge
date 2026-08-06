@@ -147,6 +147,30 @@ def test_router_intercepts_the_sidebar_destinations_and_the_project_workspace():
     assert r"\/project\/" in text
 
 
+def test_router_lands_a_swap_at_the_top_without_a_focus_scroll():
+    """A swap must land at the top of the page like a real navigation.
+
+    At >=1024px `.shell__body` -- not the window -- is the scroll container (the
+    shell is a fixed 100vh cage), so `window.scrollTo(0,0)` alone is a no-op
+    there; and focusing a `#main` taller than the viewport scrolls that
+    container to pin #main's top, pushing the page header out of view. The
+    router must therefore focus with `preventScroll` and reset the
+    `.shell__body` scroll position itself. `source` strips comments, so these
+    tokens are asserted against real code. Reproduced in situ: without the fix a
+    filter/tab swap while scrolled down lands `.shell__body` at ~139px (the
+    page-head height) instead of 0.
+    """
+    text = source("router.js")
+    assert "preventScroll" in text, (
+        "focus() without preventScroll scrolls the tall #main's top to the top "
+        "of the .shell__body container, hiding the page header after a swap"
+    )
+    assert ".scrollTop = 0" in text, (
+        "the router must reset the .shell__body scroll container to the top; "
+        "window.scrollTo(0,0) is a no-op against it at >=1024px"
+    )
+
+
 def test_router_falls_back_to_a_normal_navigation():
     text = source("router.js")
     assert "location.assign" in text, (
