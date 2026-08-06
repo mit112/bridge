@@ -1561,6 +1561,16 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
   margin-top: var(--space-4);
 }
 
+/* Same control as the schedule pager, but it sits ABOVE the history table
+   (right under the tab's <h2>), so the margin is below it, not above. Its
+   status span reuses `.history__scope`, so no new type treatment is needed. */
+.history-pager {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: var(--space-2) 0 var(--space-4);
+}
+
 /* Session-meta enrichment (Phase 7): color is decorative only -- the `+`/`-`
    prefixes and the badge text carry the meaning, so nothing here relies on
    color alone (WCAG 2.2). */

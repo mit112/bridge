@@ -42,8 +42,8 @@
   {
     "name": "list launches oldest-first",
     "file": "src/bridge/store.py",
-    "old": "                    \"ORDER BY launched_at DESC LIMIT ?\",",
-    "new": "                    \"ORDER BY launched_at ASC LIMIT ?\",",
+    "old": "                    \"ORDER BY launched_at DESC LIMIT ? OFFSET ?\",",
+    "new": "                    \"ORDER BY launched_at ASC LIMIT ? OFFSET ?\",",
     "tests": [
       "tests/test_store.py::test_a_launch_round_trips_and_is_found_by_its_session_id"
     ],

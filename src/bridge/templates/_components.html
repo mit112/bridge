@@ -102,6 +102,30 @@
 </div>
 {% endmacro %}
 
+{# The capped-history disclosure with the true total and prev/next paging --
+   the structural half of the fix the flat "Showing up to 50" line only
+   half-disclosed. The status states "X-Y of N", so a capped page can never
+   read as complete, and the pager carries the page on the SAME `?tab=` query
+   string the detail route already reads (`/project/{id}?tab=sessions&page=1`).
+   `page_start`/`page_end` clamp to the total exactly as schedule.html's pager
+   does, so a hand-typed out-of-range `?page=99` renders "0 of N" with a working
+   Previous rather than a nonsensical window. `shown` is the length of the page's
+   own row list; `total` is the count BEFORE the slice. Sortable headers are a
+   separate (P2) concern and deliberately not added here. #}
+{% macro history_pager(project_id, tab, total, page, page_size, shown) %}
+{% set page_start = [page * page_size, total] | min %}
+{% set page_end = [page_start + shown, total] | min %}
+<nav class="history-pager" aria-label="History pages">
+  {% if page > 0 %}
+  <a class="btn" href="/project/{{ project_id }}?tab={{ tab }}&page={{ page - 1 }}">Previous</a>
+  {% endif %}
+  <span class="history__scope" data-history-pager-status>{% if not total %}0 of 0{% elif not shown %}0 of {{ total }}{% else %}Showing {{ page_start + 1 }}–{{ page_end }} of {{ total }}{% endif %}</span>
+  {% if page_end < total %}
+  <a class="btn" href="/project/{{ project_id }}?tab={{ tab }}&page={{ page + 1 }}">Next</a>
+  {% endif %}
+</nav>
+{% endmacro %}
+
 {# The shared schedule row: Overview's "Up next" preview calls this with
    `interactive=False` (the default); the `/schedule` route (Task 4.2) passes
    `interactive=True` to light up the action controls below. `data-scheduled-for`

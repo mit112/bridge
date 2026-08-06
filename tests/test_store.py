@@ -704,6 +704,51 @@ def test_a_launch_round_trips_and_is_found_by_its_session_id(store):
     assert [r["id"] for r in store.launches(pid)] == ["l2", "l1"]
 
 
+def test_sessions_page_by_offset_and_expose_a_project_scoped_total(store):
+    pid = store.upsert_project("/d", "d")
+    other = store.upsert_project("/e", "e")
+    store.upsert_session(rec(sid="stray", ended_at="2026-07-30T09:00:00.000Z"), other)
+    for i in range(5):
+        store.upsert_session(rec(sid=f"s{i}", ended_at=f"2026-07-30T1{i}:00:00.000Z"), pid)
+
+    newest_first = [f"s{i}" for i in range(4, -1, -1)]
+    assert [r["id"] for r in store.sessions(pid, limit=2)] == newest_first[:2]
+    assert [r["id"] for r in store.sessions(pid, limit=2, offset=2)] == newest_first[2:4]
+    assert [r["id"] for r in store.sessions(pid, limit=2, offset=4)] == newest_first[4:]
+    # A page past the end is empty, never an error, and the total is unaffected.
+    assert store.sessions(pid, limit=2, offset=10) == []
+    assert store.count_sessions(pid) == 5  # the stray in `other` is not counted
+
+
+def test_handoffs_page_by_offset_and_expose_a_total(store):
+    pid = store.upsert_project("/d", "d")
+    for i in range(5):
+        store.create_handoff(
+            handoff(hid=f"h{i}", source_session_id=f"sess-{i}", created_at=1000 + i), pid
+        )
+
+    newest_first = [f"h{i}" for i in range(4, -1, -1)]
+    assert [r["id"] for r in store.handoffs(pid, limit=2)] == newest_first[:2]
+    assert [r["id"] for r in store.handoffs(pid, limit=2, offset=2)] == newest_first[2:4]
+    assert store.handoffs(pid, limit=2, offset=10) == []
+    assert store.count_handoffs(pid) == 5
+
+
+def test_launches_page_by_offset_and_expose_a_total(store):
+    pid = store.upsert_project("/d", "d")
+    store.create_handoff(handoff("h1"), pid)
+    for i in range(5):
+        store.create_launch(
+            launch(pid, lid=f"l{i}", session_id=None, launched_at=2000 + i)
+        )
+
+    newest_first = [f"l{i}" for i in range(4, -1, -1)]
+    assert [r["id"] for r in store.launches(pid, limit=2)] == newest_first[:2]
+    assert [r["id"] for r in store.launches(pid, limit=2, offset=2)] == newest_first[2:4]
+    assert store.launches(pid, limit=2, offset=10) == []
+    assert store.count_launches(pid) == 5
+
+
 def test_a_launch_needs_no_handoff_behind_it(store):
     """An ad-hoc prompt typed into the panel has no queued handoff to consume."""
     pid = store.upsert_project("/d", "d")

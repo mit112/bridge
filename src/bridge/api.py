@@ -958,14 +958,17 @@ def create_app(
         )
 
     @app.get("/project/{project_id}", response_class=HTMLResponse)
-    def detail(request: Request, project_id: int, tab: str = "current"):
+    def detail(
+        request: Request, project_id: int, tab: str = "current",
+        page: int = Query(0, ge=0),
+    ):
         # One live probe for the whole page view, shared between the workspace
         # model and the cross-project token total below -- the same "probe
         # once per view" rule the dashboard route already follows.
         now = now_epoch()
         probe = dashboard_builder._live_state(now)
-        model = build_workspace(store, cfg, project_id, tab, live_state=probe,
-                                git_cache=git_cache)
+        model = build_workspace(store, cfg, project_id, tab, page=page,
+                                live_state=probe, git_cache=git_cache)
         if model is None:
             raise HTTPException(status_code=404, detail="unknown project")
         return templates.TemplateResponse(

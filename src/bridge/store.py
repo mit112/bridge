@@ -383,15 +383,24 @@ class Store:
                 (project_id,),
             ).fetchone()
 
-    def sessions(self, project_id: int, limit: int = 50) -> list[sqlite3.Row]:
+    def sessions(
+        self, project_id: int, limit: int = 50, offset: int = 0
+    ) -> list[sqlite3.Row]:
         with self._lock:
             return list(
                 self.conn.execute(
                     "SELECT * FROM sessions WHERE project_id=? "
-                    "ORDER BY ended_epoch DESC NULLS LAST LIMIT ?",
-                    (project_id, limit),
+                    "ORDER BY ended_epoch DESC NULLS LAST LIMIT ? OFFSET ?",
+                    (project_id, limit, offset),
                 )
             )
+
+    def count_sessions(self, project_id: int) -> int:
+        """The total behind a paged `sessions()` call, for the capped history."""
+        with self._lock:
+            return self.conn.execute(
+                "SELECT COUNT(*) AS n FROM sessions WHERE project_id=?", (project_id,)
+            ).fetchone()["n"]
 
     # --- handoffs: authored data, not derived from any transcript, so a
     # --- dropped database loses them. See spool.py for the journal.
@@ -451,15 +460,26 @@ class Store:
         rows = self.queued_handoffs(project_id)
         return rows[0] if rows else None
 
-    def handoffs(self, project_id: int, limit: int = 50) -> list[sqlite3.Row]:
+    def handoffs(
+        self, project_id: int, limit: int = 50, offset: int = 0
+    ) -> list[sqlite3.Row]:
         with self._lock:
             return list(
                 self.conn.execute(
                     "SELECT * FROM handoffs WHERE project_id=? "
-                    "ORDER BY created_at DESC LIMIT ?",
-                    (project_id, limit),
+                    "ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                    (project_id, limit, offset),
                 )
             )
+
+    def count_handoffs(self, project_id: int) -> int:
+        """The total behind a paged `handoffs()` call. Distinct from
+        `handoff_count`, which counts every handoff in the store, not one
+        project's history."""
+        with self._lock:
+            return self.conn.execute(
+                "SELECT COUNT(*) AS n FROM handoffs WHERE project_id=?", (project_id,)
+            ).fetchone()["n"]
 
     def get_handoff(self, handoff_id: str) -> sqlite3.Row | None:
         with self._lock:
@@ -540,15 +560,24 @@ class Store:
                 (session_id, short_id, launch_id),
             )
 
-    def launches(self, project_id: int, limit: int = 50) -> list[sqlite3.Row]:
+    def launches(
+        self, project_id: int, limit: int = 50, offset: int = 0
+    ) -> list[sqlite3.Row]:
         with self._lock:
             return list(
                 self.conn.execute(
                     "SELECT * FROM launches WHERE project_id=? "
-                    "ORDER BY launched_at DESC LIMIT ?",
-                    (project_id, limit),
+                    "ORDER BY launched_at DESC LIMIT ? OFFSET ?",
+                    (project_id, limit, offset),
                 )
             )
+
+    def count_launches(self, project_id: int) -> int:
+        """The total behind a paged `launches()` call, for the capped history."""
+        with self._lock:
+            return self.conn.execute(
+                "SELECT COUNT(*) AS n FROM launches WHERE project_id=?", (project_id,)
+            ).fetchone()["n"]
 
     def get_scan_state(self, path: str) -> sqlite3.Row | None:
         with self._lock:

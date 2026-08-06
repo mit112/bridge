@@ -30,13 +30,13 @@
     "expect_count": 1
   },
   {
-    "name": "present capped project history as if it were complete",
-    "file": "src/bridge/templates/_workspace_history.html",
-    "old": "<p class=\"history__scope\">Showing up to 50 most recent records.</p>",
-    "new": "<p class=\"history__scope\">Most recent records.</p>",
+    "name": "present capped project history as if it were complete, hiding the total",
+    "file": "src/bridge/templates/_components.html",
+    "old": "Showing {{ page_start + 1 }}–{{ page_end }} of {{ total }}",
+    "new": "Showing {{ page_start + 1 }}–{{ page_end }}",
     "tests": [
       "tests/test_api.py::test_project_detail_explains_empty_history_and_the_current_window"
     ],
-    "expect_count": 3
+    "expect_count": 1
   }
 ]
