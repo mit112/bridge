@@ -64,8 +64,8 @@
   {
     "name": "revert projects.js's view/filter reconciliation to run once at load, not per view",
     "file": "src/bridge/static/projects.js",
-    "old": "if (window.bridgePage) {\n  window.bridgePage.onEnter(() => {\n    applyProjectsFilter();\n    applyProjectsView(currentProjectsView());\n  });\n} else {\n  applyProjectsFilter();\n  applyProjectsView(currentProjectsView());\n}",
-    "new": "applyProjectsFilter();\napplyProjectsView(currentProjectsView());",
+    "old": "if (window.bridgePage) {\n  window.bridgePage.onEnter(() => {\n    restoreGroupState();\n    applyProjectsFilter();\n    applyProjectsView(currentProjectsView());\n  });\n} else {\n  restoreGroupState();\n  applyProjectsFilter();\n  applyProjectsView(currentProjectsView());\n}",
+    "new": "restoreGroupState();\napplyProjectsFilter();\napplyProjectsView(currentProjectsView());",
     "tests": [
       "tests/test_swap_lifecycle.py::test_view_toggle_reannounces_after_a_swap"
     ],

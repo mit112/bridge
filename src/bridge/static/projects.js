@@ -275,7 +275,7 @@ function applyProjectsFilter() {
     // for could sit behind a summary that started collapsed. When neither is
     // active, the server-rendered `open` state (and any the user set by hand)
     // is left alone.
-    const narrowing = Boolean(query) || filter !== "all";
+    const narrowing = projectsNarrowing();
     document.querySelectorAll("[data-project-group]").forEach((group) => {
       const hasVisible = Array.from(
         group.querySelectorAll("[data-project-row-item]"),
@@ -313,6 +313,63 @@ function applyProjectsFilter() {
   if (clear) clear.hidden = !(query || filter !== "all");
 }
 
+// Is a search or a non-"all" filter currently narrowing the list? Kept as one
+// predicate so `applyProjectsFilter` (which force-opens matching groups) and the
+// collapse-memory listener below (which must NOT remember those transient opens)
+// can never disagree about what counts as narrowing.
+function projectsNarrowing() {
+  const pressed = document.querySelector('[data-projects-filter][aria-pressed="true"]');
+  const filter = pressed ? pressed.getAttribute("data-projects-filter") : "all";
+  const search = document.querySelector("[data-projects-search]");
+  return Boolean(normalizeProjectsQuery(search ? search.value : "")) || filter !== "all";
+}
+
+// --- Group collapse memory --------------------------------------------------
+//
+// Each status group is a <details> whose default open state the server renders
+// (active groups open, Recent/Idle collapsed). Once the user opens or closes one
+// by hand that choice should survive the next full-page nav, the same way the
+// list/grid layout does -- otherwise the passive tail re-collapses on every
+// load. Stored as one map so a growing set of groups stays one key.
+
+const GROUP_STORE = "bridge.projectGroups";
+
+function readGroupState() {
+  try {
+    return JSON.parse(localStorage.getItem(GROUP_STORE) || "{}");
+  } catch (error) {
+    return {};
+  }
+}
+
+function restoreGroupState() {
+  const state = readGroupState();
+  document.querySelectorAll("[data-project-group]").forEach((group) => {
+    const key = group.getAttribute("data-project-group");
+    if (key in state) group.open = state[key];
+  });
+}
+
+// `toggle` does not bubble, so the listener is delegated in the capture phase.
+// Only a group's OWN toggle is remembered: a row's Actions <details> also fires
+// toggle but does not match, and while a filter is narrowing the list the open
+// state is driven by which groups still have matches (see applyProjectsFilter) --
+// that is transient, not a choice, so it is not written back.
+document.addEventListener("toggle", (event) => {
+  const group = event.target;
+  if (!group.matches || !group.matches("[data-project-group]")) return;
+  if (projectsNarrowing()) return;
+  try {
+    const state = readGroupState();
+    state[group.getAttribute("data-project-group")] = group.open;
+    localStorage.setItem(GROUP_STORE, JSON.stringify(state));
+  } catch (error) {
+    // A blocked or full store just means the collapse choice will not outlive
+    // the page -- the group still toggled.
+    console.error("bridge: remembering the group state failed", error);
+  }
+}, true);
+
 document.addEventListener("input", (event) => {
   if (event.target.closest("[data-projects-search]")) applyProjectsFilter();
 });
@@ -324,10 +381,12 @@ document.addEventListener("input", (event) => {
 // text and announces the wrong button.
 if (window.bridgePage) {
   window.bridgePage.onEnter(() => {
+    restoreGroupState();
     applyProjectsFilter();
     applyProjectsView(currentProjectsView());
   });
 } else {
+  restoreGroupState();
   applyProjectsFilter();
   applyProjectsView(currentProjectsView());
 }
