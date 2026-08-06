@@ -343,7 +343,7 @@ def test_stale_project_shows_warning_glyph_and_text(tmp_path):
         # `47 dirty` was `_card.html`'s wording; the Overview attention ladder
         # (`bridge.overview._attention_from_cards`) uses its own summary text
         # for the same fact -- still a word, never colour alone.
-        assert "47 uncommitted change(s)" in text
+        assert "47 uncommitted changes" in text
         assert "Needs review" in text
         assert "uncommitted" in text.lower()
     finally:

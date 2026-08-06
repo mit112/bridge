@@ -78,6 +78,8 @@
     {% set status_map = {
       "handoff": ("st-attention", "Ready to continue", "queued", "Your input to continue"),
       "running": ("st-run", "Working now", "running", ""),
+      "session_input": ("st-attention", "Needs input", "needs input", "Your answer in the session"),
+      "session_failed": ("st-risk", "Failed", "session failed", "A look at what stopped"),
       "stale": ("st-review", "Needs review", "stale", "A commit or cleanup"),
       "schedule_failure": ("st-risk", "Failed", "failed", "Review of the failed run"),
     } %}
@@ -155,7 +157,7 @@
           <h3>{{ item.meta.project_name or item.title }}</h3>
           <p>{{ item.summary }}</p>
           <div class="attention-secondary__foot">
-            <span>{% if item.meta.created_at %}{{ item.meta.created_at | ago_epoch }} ago{% elif item.meta.dirty_count %}{{ item.meta.dirty_count }} files changed{% endif %}</span>
+            <span>{% if item.meta.created_at %}{{ item.meta.created_at | ago_epoch }} ago{% elif item.meta.dirty_count %}{{ item.meta.dirty_count }} file{{ "" if item.meta.dirty_count == 1 else "s" }} changed{% endif %}</span>
             <a href="{{ item.primary_action.href }}">{{ item.primary_action.label }}</a>
           </div>
         </article>

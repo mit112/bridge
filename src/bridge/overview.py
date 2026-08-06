@@ -22,6 +22,7 @@ from bridge.config import Config
 from bridge.dashboard import DashboardBuilder
 from bridge.models import AgentsState, Card
 from bridge.refresh import RefreshCoordinator
+from bridge.registry import display_name
 from bridge.store import Store, now_epoch, to_epoch
 
 # Overview shows only the highest-value subset; the full lists live on
@@ -34,6 +35,30 @@ UP_NEXT_LIMIT = 3
 # do and did not, as opposed to `fired` (it happened) or `cancelled` (the user
 # said not to).
 SCHEDULE_FAILURE_STATUSES = ("failed", "indeterminate", "missed")
+
+# How a live session's own status becomes an attention item: `kind` -> the pill
+# `overview.html`'s `status_map` renders, `summary` -> the line under it.
+#
+# Keyed on the status rather than on `card.live is not None`, because a live
+# record is not a claim of live work: the sensor reports a session that is
+# merely sitting there just as readily as one mid-turn. Deriving the pill from
+# existence alone rendered "Working now" directly above "Session idle", and
+# counted that project in the "N items need your attention" headline.
+#
+# A status missing from this map is not an attention item at all -- it falls
+# through to `recent`, where an inactive project belongs. That deliberately
+# includes `unknown` and any value a future sensor invents:
+# `agents.normalize_status` round-trips unrecognised statuses verbatim and
+# `cards.LIVE_PRIORITY_DEFAULT` already ranks them WITH idle, so promoting one
+# to the top of this page would be the wrong guess to make.
+LIVE_ATTENTION = {
+    "needs_input": ("session_input", "Waiting for your input"),
+    "blocked": ("session_input", "Waiting for your input"),
+    "failed": ("session_failed", "Session failed"),
+    "errored": ("session_failed", "Session failed"),
+    "busy": ("running", "Session busy"),
+    "working": ("running", "Session working"),
+}
 
 
 @dataclass(frozen=True)
@@ -239,12 +264,13 @@ def _attention_from_cards(cards: list[Card]) -> list[AttentionItem]:
                         "path": card.path,
                     },
                 ))
-        elif card.live is not None:
+        elif card.live is not None and card.live.status in LIVE_ATTENTION:
+            kind, summary = LIVE_ATTENTION[card.live.status]
             items.append(AttentionItem(
-                kind="running",
+                kind=kind,
                 project_id=card.project_id,
                 title=card.name,
-                summary=f"Session {card.live.status}",
+                summary=summary,
                 primary_action=Action(
                     "Open project", f"/project/{card.project_id}",
                 ),
@@ -261,7 +287,8 @@ def _attention_from_cards(cards: list[Card]) -> list[AttentionItem]:
                 kind="stale",
                 project_id=card.project_id,
                 title=card.name,
-                summary=f"{card.git.dirty_count} uncommitted change(s)",
+                summary=(f"{card.git.dirty_count} uncommitted change"
+                         f"{'' if card.git.dirty_count == 1 else 's'}"),
                 primary_action=Action(
                     "Review project state", f"/project/{card.project_id}",
                 ),
@@ -392,7 +419,12 @@ def _schedule_row(row, by_path: dict[str, Card], store: Store) -> ScheduleRow:
         # the cards already fetched, with no per-row query.
         project = store.project_by_path(row["project_path"])
         project_id = project["id"] if project is not None else None
-        project_name = project["name"] if project is not None else None
+        # The row macro renders `project_name` unguarded, so leaving this None
+        # for a run whose project resolves nowhere printed the literal "None"
+        # as the project name. The path is always known, so its leaf is a real
+        # answer -- and the same one indexing would have derived.
+        project_name = (project["name"] if project is not None
+                        else display_name(row["project_path"]))
     iso, utc = _schedule_time_fields(row["scheduled_for"])
     return ScheduleRow(
         id=row["id"],
