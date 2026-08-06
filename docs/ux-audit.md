@@ -182,5 +182,39 @@ Hygiene and hardening:
 
 ### Still open
 
-Exactly the three rows in the "Still open" table above. Nothing from the external-audit triage
-remains.
+Two rows now: **counts/pagination for the capped histories** and the **HTML scheduled-history
+route**. The third — Pin and Restore telling the user to reload — shipped; see the section below.
+Nothing from the external-audit triage remains.
+
+## Status update — 2026-08-06 (structural lane, item 1: Pin and Restore)
+
+Pin and Restore no longer tell the user to reload. `projects.js` now re-renders the grouped index
+through the router after a successful pin/unpin (on `/projects`) or restore, so the row lands in its
+new sort group from the server's own render — no hard reload, and the SSE stream survives. On a
+project's own detail page the pin stands alone with no list to re-sort, so it only announces
+"✓ Pinned".
+
+**The audit's own proposed fix could not be used, and this is why.** The ranked P0 (and the "Still
+open" table above) prescribed moving nodes with `live.js`'s `applyCardOrder` off the SSE frame's
+`card_order`. That mechanism is dead on every live page: `data-cards-list` — the list
+`applyCardOrder` targets — is rendered by no template. The redesign moved per-project cards off `/`,
+so the Overview has no flat pinnable card list, and Pin/Restore live only on the **grouped**
+`/projects` index (rows partitioned into collapsible status `<details>`, with a dedicated "Pinned"
+group) and, for Pin, the single-project detail page. A flat reorder was never going to fit a grouped
+list, and reshuffling groups client-side would have duplicated `group_projects` + the within-group
+`cards.sort_key` order in JS — the same "rebuild the template in JavaScript" the audit forbade for
+Restore.
+
+The router (`bridgeNavigate`) already re-fetches a page as a server-rendered fragment and swaps
+`.shell__body` **without a hard reload** — the persistent shell keeps the SSE connection up. Re-using
+it makes the server the sole authority for grouping, sort, counts, Pinned-group creation, and
+empty-group removal, with zero JS duplication. The locked "no innerHTML / no reload" constraint is
+honoured in spirit: it exists to protect a half-typed handoff `<textarea>`, and `/projects` carries
+none (the compose/handoff textareas are on the Overview and the detail page). A failed PATCH keeps
+the page put and shows "⚠", so the router is only ever reached on a confirmed change.
+
+`test_static_js.py`'s hand-rolled `projects.js` harness gained a `bridgeNavigate` stub (records the
+call rather than swapping) and card-ancestor detection; the pin/restore tests now assert the router
+re-render and that no copy says "reload". `test_projects_js_never_reloads_over_a_half_typed_prompt`
+still holds — the no-router fallback is `location.assign`, never `location.reload`, and there is no
+`.innerHTML`.
