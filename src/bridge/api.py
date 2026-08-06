@@ -15,13 +15,16 @@ from dataclasses import replace as dataclasses_replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, Query, Request, Response
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.exception_handlers import http_exception_handler
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, field_validator, model_validator
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from bridge import agents, hooks, launcher, schedspool, spool
 from bridge.cards import (
@@ -472,6 +475,10 @@ class CachedStaticFiles(StaticFiles):
 
 FRAGMENT_HEADER = "x-bridge-fragment"
 
+# The methods a cross-origin form post can reach with side effects. GET and
+# HEAD are excluded because every one of Bridge's is a read.
+UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+
 
 def _layout_for(request: Request) -> str:
     """Which layout a page template extends.
@@ -502,6 +509,34 @@ def create_app(
         if FRAGMENT_HEADER in request.headers:
             response.headers["Cache-Control"] = "no-store"
             response.headers["Vary"] = "X-Bridge-Fragment"
+        return response
+
+    # Binding 127.0.0.1 keeps another machine out; it does NOT keep out a page
+    # already in this machine's browser. A cross-origin `<form method=post>`
+    # aimed at http://localhost:8787/api/refresh is a same-machine request, and
+    # the body-less POSTs (`/api/refresh`, schedule `run-now`, schedule
+    # `retry`) need no readable response to have already done their work --
+    # they are exactly the shape a form post can reach.
+    #
+    # An Origin check is the entire fix. A browser sets the header on every
+    # unsafe cross-origin request and a page cannot suppress it, while the CLI
+    # and Claude Code's hook dispatcher are server-side HTTP clients that send
+    # none at all -- so "absent" stays allowed and nothing off-browser changes.
+    @app.middleware("http")
+    async def _same_origin_writes_only(request: Request, call_next):
+        origin = request.headers.get("origin")
+        if (request.method in UNSAFE_METHODS and origin is not None
+                and urlsplit(origin).netloc != request.headers.get("host")):
+            log.warning("refused cross-origin %s %s from %r",
+                        request.method, request.url.path, origin)
+            return JSONResponse({"detail": "cross-origin write refused"},
+                                status_code=403)
+        response = await call_next(request)
+        # Nothing here should ever be sniffed into another type. Bridge renders
+        # user-controlled text (launch prompts, transcript excerpts, project
+        # paths) and answers errors as JSON; a body reinterpreted as HTML is
+        # the ordinary way either of those becomes script.
+        response.headers["X-Content-Type-Options"] = "nosniff"
         return response
 
     if refresh_coordinator is None:
@@ -545,6 +580,26 @@ def create_app(
         }
 
     templates.env.globals["shell_freshness"] = _shell_freshness
+
+    @app.exception_handler(StarletteHTTPException)
+    async def _not_found(request: Request, exc: StarletteHTTPException):
+        """A page URL gets a page; everything under `/api/` keeps its JSON.
+
+        Split on the path, not on `Accept`: `/project/{id}` is an HTML route
+        whichever client asked, and the JSON branch's `{"detail": ...}` shape
+        is a contract the CLI and the panel's own fetches parse. Scoped to 404
+        because that is the only status an HTML route raises -- anything else
+        arriving here is unexpected and should keep the framework's own
+        handling rather than be dressed up as a missing page.
+        """
+        if exc.status_code == 404 and not request.url.path.startswith("/api/"):
+            return templates.TemplateResponse(
+                request, "404.html",
+                {"active": None, "path": request.url.path},
+                status_code=404,
+            )
+        return await http_exception_handler(request, exc)
+
     app.mount("/static", CachedStaticFiles(directory=str(HERE / "static")), name="static")
 
     # One debouncer for the whole app, because the busy -> idle hold is state
@@ -1393,6 +1448,14 @@ def register_template_filters(env) -> None:
     tests that build a bare `Environment` to render one template in isolation
     call it too, so their filter set can never drift from the app's -- add a
     filter here once and every render surface has it.
+
+    `shell_freshness` rides along for the same reason. It is a global rather
+    than a filter, but it is the one thing besides the filters that EVERY page
+    template needs -- `base.html`'s shell readout calls it, and so does the one
+    page that overrides that block -- so an env that can render a template's
+    filters but not its shell is not actually able to render the template.
+    The stub answers "no index run yet"; `create_app` replaces it immediately
+    below its own call with the coordinator-backed one.
     """
     env.filters["ago"] = _ago
     env.filters["ago_epoch"] = _ago_epoch
@@ -1400,3 +1463,6 @@ def register_template_filters(env) -> None:
     env.filters["spark_points"] = spark_points
     env.filters["group_projects"] = group_projects
     env.filters["status_label"] = status_label
+    env.globals["shell_freshness"] = lambda: {
+        "server": "available", "index_at": None, "index_age_seconds": None,
+    }

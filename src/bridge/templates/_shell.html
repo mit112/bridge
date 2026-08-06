@@ -71,7 +71,12 @@
          data-index-at="{{ index_at or '' }}"
          data-server="{{ server }}"
          data-freshness-state="{{ state }}">
-  <span class="freshness-strip__label" data-freshness-label role="status" aria-live="polite">{{ state }}</span>
+  {#- The machine-readable state stays lowercase on the attribute above (CSS
+      and JS both select on it); only the human-readable label is cased. The
+      two have to be capitalised in the same shape here and in live.js's
+      `stateLabel`, because the first SSE tick overwrites this text -- casing
+      only the template would revert within a second. -#}
+  <span class="freshness-strip__label" data-freshness-label role="status" aria-live="polite">{{ state | capitalize }}</span>
   <span class="card__note" data-freshness-age>{{ age }}</span>
   {% if caller %}{{ caller() }}{% endif %}
 </section>

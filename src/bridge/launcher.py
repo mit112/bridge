@@ -474,6 +474,21 @@ def launch(
     # writes no file, inserts no row, and spawns nothing.
     if spec.mode not in MODES:
         raise LaunchError(f"mode {spec.mode!r} is not one of {MODES}")
+    # A path that is not a directory cannot be `cd`'d into, so a terminal
+    # launch opens a real window only to die on its first line, and a
+    # background launch fails inside `subprocess.run`'s own `cwd` handling --
+    # both after `resolve_project` has already created a registry row for a
+    # project that does not exist. Refusing here keeps that row from being
+    # written at all. Deliberately NOT gated on `resolve_project` returning an
+    # already-indexed project: that function CREATES rows by design (see
+    # `test_api.py`'s "capturing a handoff must never 404 because the project
+    # is unindexed"), so gating on it would break the first launch out of any
+    # fresh repo.
+    if not Path(spec.project_path).is_dir():
+        raise LaunchError(
+            f"project path {spec.project_path!r} is not a directory; "
+            "there is nowhere to start a session"
+        )
     validate_prompt(spec.prompt)
     claude = resolve_claude(which)
 

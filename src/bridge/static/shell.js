@@ -101,6 +101,30 @@
 
   syncToggle();
 
+  // `.menu-toggle` hides the nav with the `hidden` attribute, and CSS drops
+  // the button itself at 1024px -- so collapsing the nav on a narrow window
+  // and then widening it left the nav `hidden` with nothing on screen able to
+  // bring it back, while `.sidebar-toggle` (now the visible one) claimed
+  // `aria-expanded="true"` over a nav that was not there. The attribute is a
+  // narrow-width affordance only; crossing back into rail territory clears it.
+  //
+  // Guarded because `matchMedia` and its listener API are absent in the JS
+  // test harness and in older engines, and neither is worth a hard failure:
+  // without this the nav behaves exactly as it did before.
+  if (window.matchMedia) {
+    const rail = window.matchMedia("(min-width: 1024px)");
+    const clearNarrowCollapse = () => {
+      if (!rail.matches) return;
+      const nav = document.getElementById("primary-nav");
+      if (nav) nav.removeAttribute("hidden");
+      const menu = document.querySelector(".menu-toggle");
+      if (menu) menu.setAttribute("aria-expanded", "true");
+    };
+    if (rail.addEventListener) rail.addEventListener("change", clearNarrowCollapse);
+    else if (rail.addListener) rail.addListener(clearNarrowCollapse);
+    clearNarrowCollapse();
+  }
+
   document.addEventListener("click", (event) => {
     if (!event.target || !event.target.closest) return;
 

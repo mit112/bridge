@@ -1,6 +1,7 @@
 {% extends layout|default("base.html") %}
 {% from "_shell.html" import freshness_status %}
 {% from "_components.html" import project_summary_row, schedule_row, empty_state %}
+{% block title %}Overview — Bridge{% endblock %}
 {% block page_title %}Overview{% endblock %}
 {% block page_eyebrow %}<p class="page-eyebrow">Local control plane</p>{% endblock %}
 {% block page_summary %}
@@ -28,29 +29,38 @@
    way on every page. Overview keeps only its own page-level, live-updating
    freshness strip above (the one with the Refresh button). #}
 {% block content %}
+{#- Every cell carries `data-dashboard-total`, the same hook the metrics list
+    inside the collapsed <details> below uses. These six are the numbers
+    actually on screen, and without the hook they were the only ones that
+    froze at page-load values while their hidden twins updated live.
+
+    `data-cell-flag` names the class the cell colours itself with, so live.js
+    can keep the colour honest when it writes the number without knowing which
+    class this template chose -- a cell left `is-hot` while its count patched
+    down to 0 is a lit warning for nothing. -#}
 <div class="overview-command-strip" role="group" aria-label="System at a glance">
-  <div class="command-cell{% if model.totals.running %} is-live{% endif %}">
-    <span class="command-cell__num">{{ model.totals.running }}</span>
+  <div class="command-cell{% if model.totals.running %} is-live{% endif %}" data-cell-flag="is-live">
+    <span class="command-cell__num" data-dashboard-total="running">{{ model.totals.running }}</span>
     <span class="command-cell__label">Running</span>
   </div>
-  <div class="command-cell{% if model.attention_total %} is-hot{% endif %}">
-    <span class="command-cell__num">{{ model.attention_total }}</span>
+  <div class="command-cell{% if model.attention_total %} is-hot{% endif %}" data-cell-flag="is-hot">
+    <span class="command-cell__num" data-dashboard-total="attention">{{ model.attention_total }}</span>
     <span class="command-cell__label">Needs attention</span>
   </div>
   <div class="command-cell">
-    <span class="command-cell__num">{{ model.totals.queued }}</span>
+    <span class="command-cell__num" data-dashboard-total="queued">{{ model.totals.queued }}</span>
     <span class="command-cell__label">Queued</span>
   </div>
   <div class="command-cell">
-    <span class="command-cell__num">{{ model.totals.dirty }}</span>
+    <span class="command-cell__num" data-dashboard-total="dirty">{{ model.totals.dirty }}</span>
     <span class="command-cell__label">Dirty trees</span>
   </div>
   <div class="command-cell">
-    <span class="command-cell__num">{{ model.totals.scheduled }}</span>
+    <span class="command-cell__num" data-dashboard-total="scheduled">{{ model.totals.scheduled }}</span>
     <span class="command-cell__label">Scheduled</span>
   </div>
   <div class="command-cell">
-    <span class="command-cell__num">{{ model.totals.projects }}</span>
+    <span class="command-cell__num" data-dashboard-total="projects">{{ model.totals.projects }}</span>
     <span class="command-cell__label">Projects</span>
   </div>
 </div>

@@ -4,7 +4,8 @@ from bridge.agents import AgentsState
 from bridge.cards import RANK_HANDOFF
 from bridge.config import load
 from bridge.dashboard import DashboardBuilder
-from bridge.models import GitState, Handoff, LiveSession, SessionRecord
+from bridge.models import GitState, Handoff, LiveSession, ScheduledRun, SessionRecord
+from bridge.overview import build_overview
 from bridge.refresh import RefreshCoordinator, RefreshStatus
 from bridge.store import Store
 
@@ -65,4 +66,65 @@ def test_live_patch_does_not_include_store_leaf_fields(tmp_path):
     assert "git" not in patch["cards"][str(pid)]
     assert "burn" not in patch["cards"][str(pid)]
     assert "next_prompt" not in str(patch)
+    store.close()
+
+
+def test_the_envelope_carries_the_same_attention_count_the_overview_rendered(tmp_path):
+    """The "Needs attention" cell is the Overview's headline number, and it was
+    the one number on the strip that no live frame could correct -- `topbar`
+    never carried it, so it stayed at its page-load value until a reload.
+
+    Asserted as an equality with `build_overview`, not just as a literal: two
+    independent counts of "needs a human" is exactly the drift worth
+    forbidding, and a literal alone would let both sides move together into
+    the same wrong answer.
+    """
+    cfg = load({"db_path": tmp_path / "attention.db", "spool_dir": tmp_path / "spool-att"})
+    store = Store(cfg.db_path)
+    queued = store.upsert_project("/p/queued", "queued-project")
+    store.upsert_project("/p/quiet", "quiet-project")
+    store.create_handoff(Handoff(
+        id="h1", project_path="/p/queued", next_prompt="keep going", created_at=1,
+    ), queued)
+    store.create_scheduled_run(ScheduledRun(
+        id="sched-dead", project_path="/p/quiet", prompt="p",
+        mode="terminal", scheduled_for=10,
+    ))
+    store.claim_one_due(now=20)
+    store.finish_scheduled_run("sched-dead", status="failed", error="boom")
+    store.record_index_run({"parse_errors": 0}, ran_at=100, duration_ms=1)
+
+    probe = lambda _path: GitState(status="ok", branch="main", dirty_count=0)  # noqa: E731
+    agents_fn = lambda: AgentsState(status="ok", sessions=[])  # noqa: E731
+    builder = DashboardBuilder(
+        store, cfg, RefreshCoordinator(store, cfg),
+        probe_fn=probe, agents_fn=agents_fn, now_fn=lambda: 130,
+    )
+
+    update = builder.full_update()
+    model = build_overview(store, cfg, now=130, probe_fn=probe, agents_fn=agents_fn)
+
+    # One queued handoff, one failed scheduled run.
+    assert update["topbar"]["attention"] == 2
+    assert update["topbar"]["attention"] == model.attention_total
+    store.close()
+
+
+def test_a_quiet_project_is_not_counted_as_needing_attention(tmp_path):
+    """The count has to be able to reach 0, or the cell is decoration. Pairs
+    with the Overview's own "a live-but-idle session is not an attention item"
+    rule: the strip must agree with the ladder about doing nothing."""
+    cfg = load({"db_path": tmp_path / "calm.db", "spool_dir": tmp_path / "spool-calm"})
+    store = Store(cfg.db_path)
+    store.upsert_project("/p/calm", "calm-project")
+    builder = DashboardBuilder(
+        store, cfg, RefreshCoordinator(store, cfg),
+        probe_fn=lambda _p: GitState(status="ok", branch="main", dirty_count=0),
+        agents_fn=lambda: AgentsState(status="ok", sessions=[
+            LiveSession(cwd="/p/calm", status="idle", started_at="1m"),
+        ]),
+        now_fn=lambda: 130,
+    )
+
+    assert builder.full_update()["topbar"]["attention"] == 0
     store.close()

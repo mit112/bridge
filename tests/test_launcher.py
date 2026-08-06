@@ -1194,3 +1194,52 @@ def test_the_emitted_mode_is_a_member_of_a_closed_set_not_caller_text():
             build_shell_command(
                 spec(permission_mode=hostile), PROMPT_FILE, claude=CLAUDE
             )
+
+
+# --- there has to be somewhere to run ----------------------------------------
+
+
+@pytest.mark.parametrize("mode", MODES)
+def test_a_project_path_that_is_not_a_directory_is_refused(
+    store, cfg, tmp_path, fake_claude, mode
+):
+    """`cd` into a non-directory fails, so a terminal launch opens a real
+    window only to die on its first line and a background launch dies inside
+    `subprocess.run`'s own `cwd` handling. Both happen AFTER `resolve_project`
+    has created a registry row for a project that does not exist, so the panel
+    grows a phantom entry out of a typo."""
+    missing = tmp_path / "not-here"
+
+    with pytest.raises(LaunchError) as raised:
+        launcher.launch(store, cfg, spec(project_path=str(missing), mode=mode))
+
+    assert "is not a directory" in str(raised.value)
+
+
+def test_the_refusal_writes_no_row_no_prompt_file_and_spawns_nothing(
+    store, cfg, tmp_path, fake_claude
+):
+    """The refusal belongs in the block that runs before any side effect. A
+    guard placed one line later would still refuse -- and still leave the
+    registry row, which is the actual damage."""
+    missing = tmp_path / "gone"
+    calls = []
+
+    with pytest.raises(LaunchError):
+        launcher.launch(store, cfg, spec(project_path=str(missing)),
+                        run=lambda *a, **k: calls.append(a) or proc(0))
+
+    assert calls == []
+    assert store.projects() == []
+    assert not (Path(cfg.launches_dir).exists()
+                and list(Path(cfg.launches_dir).glob("*.prompt")))
+
+
+def test_a_file_is_not_a_project_directory(store, cfg, tmp_path, fake_claude):
+    """`exists()` would not have caught this one, which is why the guard tests
+    `is_dir()`."""
+    a_file = tmp_path / "README.md"
+    a_file.write_text("not a project")
+
+    with pytest.raises(LaunchError):
+        launcher.launch(store, cfg, spec(project_path=str(a_file)))
