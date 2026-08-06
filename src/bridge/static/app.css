@@ -599,7 +599,11 @@ a { color: var(--accent); text-underline-offset: .16em; }
   color: var(--nav-item-fg-active);
   font-weight: 600;
   background: var(--nav-overlay-active);
-  box-shadow: inset 3px 0 0 var(--nav-accent);
+  /* The "you are here" bar stays, but neutral: a terracotta accent on the
+     active item was the same colour-for-decoration tell as the card top bars.
+     The translucent block plus the bar plus the bolder label carry active
+     state on their own, no hue needed. */
+  box-shadow: inset 3px 0 0 var(--nav-item-fg-active);
 }
 .sidebar__icon { flex: 0 0 auto; }
 
@@ -1207,7 +1211,6 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
   padding: var(--space-8);
   background: var(--surface);
   border: 1px solid var(--rule);
-  border-top: 3px solid var(--work);
   border-radius: var(--radius-12);
 }
 .schedule-empty__eyebrow {
@@ -1377,13 +1380,16 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
   padding: 1.1875rem 1.25rem 1.125rem;
   background: var(--surface);
   border: 1px solid var(--rule);
-  border-top: 4px solid var(--rule);
   border-radius: 11px;
 }
-.attention-primary--st-run { border-top-color: var(--run); }
-.attention-primary--st-attention { border-top-color: var(--work); }
-.attention-primary--st-review { border-top-color: var(--review); }
-.attention-primary--st-risk { border-top-color: var(--risk); }
+/* The state's colour lives on the kicker WORD, not a bar across the card top.
+   A coloured accent bar on a raised panel is the generic-AI-dashboard card;
+   the kicker already names the state in words, so colouring that word keeps the
+   cue (and the colour+label pairing a11y wants) without the bar. */
+.attention-primary--st-run .attention-kicker { color: var(--run); }
+.attention-primary--st-attention .attention-kicker { color: var(--work); }
+.attention-primary--st-review .attention-kicker { color: var(--review); }
+.attention-primary--st-risk .attention-kicker { color: var(--risk); }
 .attention-primary__top { display: flex; justify-content: space-between; align-items: flex-start; gap: var(--space-5); }
 .attention-primary__top > div { min-width: 0; }
 .attention-kicker {
@@ -1470,13 +1476,13 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
   padding: .875rem;
   background: var(--surface);
   border: 1px solid var(--rule);
-  border-top: 4px solid var(--rule);
   border-radius: 10px;
 }
-.attention-secondary--st-run { border-top-color: var(--run); }
-.attention-secondary--st-attention { border-top-color: var(--work); }
-.attention-secondary--st-review { border-top-color: var(--review); }
-.attention-secondary--st-risk { border-top-color: var(--risk); }
+/* Same de-tint as the primary card: colour the kicker word, drop the top bar. */
+.attention-secondary--st-run .attention-kicker { color: var(--run); }
+.attention-secondary--st-attention .attention-kicker { color: var(--work); }
+.attention-secondary--st-review .attention-kicker { color: var(--review); }
+.attention-secondary--st-risk .attention-kicker { color: var(--risk); }
 .attention-secondary h3 { margin: var(--space-2) 0 var(--space-1); font-size: .9375rem; }
 .attention-secondary > p {
   display: -webkit-box;
@@ -2247,13 +2253,11 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
   grid-template-areas: "identity remote" "activity activity" "open actions";
   gap: var(--space-2) var(--space-4);
   padding: var(--space-4);
-  /* The status edge becomes the card's top border, which is the same signal in
-     the shape the Overview's attention cards already use -- so a card reads the
-     same on both pages. `border-bottom` is dropped: a card's own edge is its
-     separator, and keeping the row rule as well would be a third channel. */
+  /* A plain neutral card: no status colour of its own (the group header carries
+     that). `border-bottom` is dropped as a separate channel -- the card's own
+     uniform hairline edge is its separator. */
   border: 1px solid var(--rule);
   border-radius: var(--radius-md);
-  border-bottom: 1px solid var(--rule);
 }
 [data-projects-view="grid"] .projects-index .project-row__identity { grid-area: identity; }
 [data-projects-view="grid"] .projects-index .project-row__activity { grid-area: activity; align-content: start; }
@@ -2275,12 +2279,12 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
   align-self: end;
   padding: 0;
 }
-/* Top border instead of the inset left edge, and no left padding to reserve
-   for it. Order matters: this must follow the base state rules it overrides. */
+/* No per-card status bar and no inset left edge: the sticky group header this
+   card sits under already carries the state (its coloured dot + label), so a
+   coloured edge here would be that signal twice -- and the Overview cards
+   dropped their own top bar in the de-tint pass, so keeping one here would
+   split the treatment across pages. */
 [data-projects-view="grid"] .projects-index .projects-list__item { padding-left: var(--space-4); box-shadow: none; }
-[data-projects-view="grid"] .projects-index .projects-list__item[data-project-state="running"] { border-top: 3px solid var(--run); }
-[data-projects-view="grid"] .projects-index .projects-list__item[data-project-state="stale"] { border-top: 3px solid var(--review); }
-[data-projects-view="grid"] .projects-index .projects-list__item[data-project-state="queued"] { border-top: 3px solid var(--work); }
 /* The column-header band describes tracks that no longer exist. */
 [data-projects-view="grid"] .projects-index-head { display: none; }
 
