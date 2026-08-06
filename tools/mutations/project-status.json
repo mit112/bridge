@@ -215,7 +215,7 @@
     "old": "    await patchProject(id, \"active\");",
     "new": "    await patchProject(id, \"hidden\");",
     "tests": [
-      "tests/test_static_js.py::test_restore_patches_active_and_drops_the_row"
+      "tests/test_static_js.py::test_restore_re_renders_the_index_rather_than_asking_for_a_reload"
     ],
     "expect_count": 1
   },

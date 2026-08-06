@@ -121,9 +121,8 @@ def test_project_detail_explains_empty_history_and_the_current_window(client):
     assert "No launches recorded." in c.get(f"/project/{empty_id}?tab=launches").text
     assert "No indexed sessions." in c.get(f"/project/{empty_id}?tab=sessions").text
 
-    assert "Showing up to 50 most recent records." in c.get(
-        f"/project/{pid}?tab=sessions"
-    ).text
+    # The populated tab states the real total, not a bare "up to 50" cap.
+    assert "Showing 1–1 of 1" in c.get(f"/project/{pid}?tab=sessions").text
 
 
 def test_html_pages_have_one_page_heading_home_navigation_and_metadata(client):

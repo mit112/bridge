@@ -51,6 +51,14 @@ class WorkspaceModel:
     handoffs: list[sqlite3.Row]
     launches: list[sqlite3.Row]
     session_metas: dict[str, sessionmeta.SessionMeta]
+    # Paging for the selected history tab. `history_total` is the true count of
+    # that tab's rows (sessions/handoffs/launches) BEFORE the page slice, so the
+    # template can state "showing X-Y of N" and offer prev/next -- the capped-at-
+    # 50 disclosure was only ever half the fix. On the Current tab, which draws
+    # off `card` and fetches no history, all three stay at their defaults.
+    history_total: int = 0
+    page: int = 0
+    page_size: int = 50
     # The launches tab needs a linked launch's session TITLE, but `sessions`
     # above stays empty unless `tab == "sessions"` -- fetching all 50 of a
     # project's sessions just to resolve a handful of launch->session joins
@@ -71,6 +79,8 @@ def build_workspace(
     project_id: int,
     tab: str,
     *,
+    page: int = 0,
+    page_size: int = 50,
     live_state: AgentsState | None = None,
     probe_fn=None,
     agents_fn=None,
@@ -130,12 +140,20 @@ def build_workspace(
     handoffs: list[sqlite3.Row] = []
     launches: list[sqlite3.Row] = []
     launch_sessions: dict[str, sqlite3.Row] = {}
+    # The true total for the selected tab, so the pager can state "of N" rather
+    # than repeat the old "up to 50" disclosure. Only the viewed tab is counted;
+    # the other two are never fetched, same as their row lists.
+    history_total = 0
+    offset = page * page_size
     if tab == "sessions":
-        sessions = store.sessions(project_id, limit=50)
+        sessions = store.sessions(project_id, limit=page_size, offset=offset)
+        history_total = store.count_sessions(project_id)
     elif tab == "handoffs":
-        handoffs = store.handoffs(project_id, limit=50)
+        handoffs = store.handoffs(project_id, limit=page_size, offset=offset)
+        history_total = store.count_handoffs(project_id)
     elif tab == "launches":
-        launches = store.launches(project_id, limit=50)
+        launches = store.launches(project_id, limit=page_size, offset=offset)
+        history_total = store.count_launches(project_id)
         for launch_row in launches:
             session_id = launch_row["session_id"]
             if session_id and session_id not in launch_sessions:
@@ -158,4 +176,7 @@ def build_workspace(
         launches=launches,
         session_metas=session_metas,
         launch_sessions=launch_sessions,
+        history_total=history_total,
+        page=page,
+        page_size=page_size,
     )

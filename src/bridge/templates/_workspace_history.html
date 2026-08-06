@@ -1,4 +1,4 @@
-{% from "_components.html" import history_table_shell %}
+{% from "_components.html" import history_table_shell, history_pager %}
 {# Sessions / Handoffs / Launches: the three history tabs, each showing only
    ITS OWN capped list -- `model.sessions`/`model.handoffs`/`model.launches`
    are populated for the selected tab alone, so exactly one of the three
@@ -14,8 +14,9 @@
 {% if model.tab == "handoffs" %}
 <section class="history" aria-labelledby="handoffs-title">
 <h2 id="handoffs-title">Handoffs</h2>
+{% if model.history_total %}
+{{ history_pager(model.card.project_id, "handoffs", model.history_total, model.page, model.page_size, model.handoffs | length) }}
 {% if model.handoffs %}
-<p class="history__scope">Showing up to 50 most recent records.</p>
 {% call history_table_shell("Handoffs table") %}
 <table class="handoffs">
   <caption>Handoffs, most recent first</caption>
@@ -34,6 +35,9 @@
 </table>
 {% endcall %}
 {% else %}
+<p class="empty">No handoffs on this page.</p>
+{% endif %}
+{% else %}
 <p class="empty">No handoffs recorded.</p>
 {% endif %}
 </section>
@@ -41,8 +45,9 @@
 {% elif model.tab == "launches" %}
 <section class="history" aria-labelledby="launches-title">
 <h2 id="launches-title">Launches</h2>
+{% if model.history_total %}
+{{ history_pager(model.card.project_id, "launches", model.history_total, model.page, model.page_size, model.launches | length) }}
 {% if model.launches %}
-<p class="history__scope">Showing up to 50 most recent records.</p>
 {% call history_table_shell("Launches table") %}
 <table class="launches">
   <caption>Launches, most recent first</caption>
@@ -74,6 +79,9 @@
 </table>
 {% endcall %}
 {% else %}
+<p class="empty">No launches on this page.</p>
+{% endif %}
+{% else %}
 <p class="empty">No launches recorded.</p>
 {% endif %}
 </section>
@@ -81,7 +89,7 @@
 {% else %}
 <section class="history" aria-labelledby="sessions-title">
 <h2 id="sessions-title">Sessions</h2>
-{% if model.sessions %}<p class="history__scope">Showing up to 50 most recent records.</p>{% endif %}
+{% if model.history_total %}{{ history_pager(model.card.project_id, "sessions", model.history_total, model.page, model.page_size, model.sessions | length) }}{% endif %}
 {% call history_table_shell("Indexed sessions table") %}
 <table class="sessions">
   <caption>Indexed sessions, most recent first</caption>

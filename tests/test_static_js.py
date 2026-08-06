@@ -1443,6 +1443,11 @@ const pinButton = {
   attrs: { "data-project-pin": "7", "aria-pressed": PRESSED },
   getAttribute(n) { return this.attrs[n] ?? null; },
   setAttribute(n, v) { this.attrs[n] = v; },
+  // On /projects the pin sits inside its project's row (`[data-project-card]`),
+  // exactly the ancestor Hide keys off; on the detail page it stands alone in
+  // the header. `PIN_HAS_CARD` picks which page this run models -- and that
+  // ancestor is the whole difference, since only the grouped index re-sorts.
+  closest: (sel) => (sel === "[data-project-card]" && PIN_HAS_CARD ? card : null),
 };
 const details = { attrs: { hidden: "" },
                   setAttribute(n, v) { this.attrs[n] = v; },
@@ -1471,6 +1476,20 @@ const created = [];
 // navigates to /projects instead. `assign` records where it sent the user.
 let assigned = null;
 globalThis.location = { assign(target) { assigned = target; } };
+
+// The router's no-reload re-render. Present on every real page (router.js loads
+// in the persistent shell); stubbed to RECORD the call rather than perform a
+// swap, so pin/restore assertions can prove the index re-renders through the
+// router -- never a hard reload -- after a change that moves a project between
+// sort groups. `HAS_ROUTER=false` models the no-router degradation, where the
+// handlers fall back to `location.assign`.
+let navigated = null;
+if (HAS_ROUTER) {
+  globalThis.bridgeNavigate = (href, opts) => {
+    navigated = { href, opts: opts === undefined ? null : opts };
+    return Promise.resolve();
+  };
+}
 
 globalThis.document = {
   addEventListener(type, fn) { if (type === "click") clickHandler = fn; },
@@ -1519,19 +1538,23 @@ clickHandler({ target: { closest: (sel) => {
     pressed: pinButton.attrs["aria-pressed"],
     created: created.map((e) => ({ tag: e.tag, href: e.href, className: e.className })),
     assigned,
+    navigated,
   }));
 });
 """
 
 
 def _run_projects(
-    tmp_path, target: str, ok: bool, pressed: str = "false", hide_has_card: bool = True
+    tmp_path, target: str, ok: bool, pressed: str = "false",
+    hide_has_card: bool = True, pin_has_card: bool = True, has_router: bool = True,
 ) -> dict:
     harness = tmp_path / "projects_harness.js"
     harness.write_text(
         PROJECTS_HARNESS.replace("TARGET", json.dumps(target))
         .replace("PRESSED", json.dumps(pressed))
         .replace("HIDE_HAS_CARD", "true" if hide_has_card else "false")
+        .replace("PIN_HAS_CARD", "true" if pin_has_card else "false")
+        .replace("HAS_ROUTER", "true" if has_router else "false")
         .replace("OK", "true" if ok else "false")
     )
     proc = subprocess.run(
@@ -1575,13 +1598,24 @@ def test_hidden_row_names_the_project_in_plain_text_never_a_dead_link(tmp_path):
 @pytest.mark.skipif(_node() is None, reason="node is not installed")
 def test_hide_on_the_workspace_navigates_to_projects_rather_than_stranding(tmp_path):
     """On the workspace there is no `[data-project-card]` to fold away and a
-    reload would 404, so a successful hide sends the user to /projects instead
-    of leaving them on a page that no longer resolves."""
+    reload would 404, so a successful hide sends the user to /projects. With the
+    router present (the real page always loads it) that is a swap, not a hard
+    load, so the SSE stream survives."""
     got = _run_projects(tmp_path, "hide", ok=True, hide_has_card=False)
-    assert got["assigned"] == "/projects"
+    assert got["navigated"]["href"] == "/projects"
+    assert got["assigned"] is None, "took a hard load past the router that was present"
     # Nothing on the workspace to fold into a hidden list, so it does not try.
     assert got["cardRemoved"] is False
     assert got["appended"] == 0
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_hide_on_the_workspace_falls_back_to_a_full_load_without_the_router(tmp_path):
+    """The router is progressive enhancement: with it absent, the hide still
+    reaches /projects, just via a real navigation rather than a swap."""
+    got = _run_projects(tmp_path, "hide", ok=True, hide_has_card=False, has_router=False)
+    assert got["assigned"] == "/projects"
+    assert got["navigated"] is None
 
 
 @pytest.mark.skipif(_node() is None, reason="node is not installed")
@@ -1598,20 +1632,24 @@ def test_a_refused_hide_leaves_the_card_on_screen_and_says_so(tmp_path):
 
 
 @pytest.mark.skipif(_node() is None, reason="node is not installed")
-def test_restore_patches_active_and_drops_the_row(tmp_path):
+def test_restore_re_renders_the_index_rather_than_asking_for_a_reload(tmp_path):
     got = _run_projects(tmp_path, "restore", ok=True)
     assert got["sent"]["body"] == {"status": "active"}
-    assert got["rowRemoved"] is True
-    assert got["count"] == "0"
-    # The card cannot be rebuilt client-side without duplicating the template,
-    # so the reload is asked for in words rather than performed.
-    assert "reload" in got["hiddenStatus"]
+    # A restored project comes back as a full card in whatever sort group it now
+    # belongs to -- markup only the server renders (rebuilding
+    # `project_summary_row` in JS is the duplication the audit called out). So
+    # the index re-renders through the router instead of asking for a reload.
+    assert got["navigated"] == {"href": "/projects", "opts": {"push": False}}
+    assert "reload" not in got["hiddenStatus"]
+    assert "✓" in got["hiddenStatus"]
 
 
 @pytest.mark.skipif(_node() is None, reason="node is not installed")
 def test_a_refused_restore_leaves_the_row_in_the_list(tmp_path):
     got = _run_projects(tmp_path, "restore", ok=False)
     assert got["rowRemoved"] is False
+    # A refused restore must not re-render -- the row stays and the ⚠ says why.
+    assert got["navigated"] is None
     assert "⚠" in got["hiddenStatus"]
 
 
@@ -1633,6 +1671,32 @@ def test_a_refused_pin_leaves_the_announced_state_alone(tmp_path):
     got = _run_projects(tmp_path, "pin", ok=False, pressed="false")
     assert got["pressed"] == "false", "the button claimed a pin the server refused"
     assert "\u26a0" in got["cardStatus"]
+    # A refused pin changed nothing, so nothing to re-sort -- it must not
+    # re-render out from under the \u26a0 message.
+    assert got["navigated"] is None
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_pin_on_the_index_re_renders_through_the_router_never_asking_to_reload(tmp_path):
+    """The audit's P0: pinning must reflect the new order, not tell the user to
+    reload. On /projects the pin sits inside a row, so a successful toggle
+    re-renders the grouped index through the router (a swap, not a reload) so
+    the row lands in its new sort group from the server's own render."""
+    got = _run_projects(tmp_path, "pin", ok=True, pressed="false")
+    assert got["navigated"] == {"href": "/projects", "opts": {"push": False}}
+    assert "reload" not in got["cardStatus"]
+    assert "\u2713 Pinned" in got["cardStatus"]
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_pin_on_the_detail_page_announces_without_re_rendering(tmp_path):
+    """On a project's own detail page the pin stands alone -- there is no list
+    to re-sort -- so it announces the new state without navigating away."""
+    got = _run_projects(tmp_path, "pin", ok=True, pressed="false", pin_has_card=False)
+    assert got["pressed"] == "true"
+    assert got["navigated"] is None, "the detail page has no list; it must not navigate away"
+    assert "reload" not in got["cardStatus"]
+    assert "\u2713 Pinned" in got["cardStatus"]
 
 
 # --- Task 2.5: projects.js -- client-side search + filter -------------------

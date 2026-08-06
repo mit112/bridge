@@ -256,6 +256,60 @@ def test_current_tab_leaves_history_lists_empty(tmp_path):
     store.close()
 
 
+def test_history_tab_reports_its_total_and_pages_by_offset(tmp_path):
+    cfg = _cfg(tmp_path)
+    store = Store(cfg.db_path)
+    pid = store.upsert_project("/p/paged", "paged-project")
+    for i in range(5):
+        store.upsert_session(SessionRecord(
+            session_id=f"s{i}", transcript_path=f"/t/s{i}", title=f"s{i}",
+            ended_at=_ended(50 - i),
+        ), pid)
+
+    first = build_workspace(
+        store, cfg, pid, "sessions", page=0, page_size=2,
+        agents_fn=lambda: AgentsState(status="ok", sessions=[]),
+    )
+    assert first.history_total == 5
+    assert first.page == 0
+    assert first.page_size == 2
+    assert len(first.sessions) == 2
+
+    second = build_workspace(
+        store, cfg, pid, "sessions", page=1, page_size=2,
+        agents_fn=lambda: AgentsState(status="ok", sessions=[]),
+    )
+    assert [s["id"] for s in second.sessions] == [
+        s["id"] for s in store.sessions(pid, limit=2, offset=2)
+    ]
+    assert second.history_total == 5
+
+    # A page past the end is empty but still reports the true total, so the
+    # pager can render "0 of 5" with a working Previous rather than a bare table.
+    beyond = build_workspace(
+        store, cfg, pid, "sessions", page=9, page_size=2,
+        agents_fn=lambda: AgentsState(status="ok", sessions=[]),
+    )
+    assert beyond.sessions == []
+    assert beyond.history_total == 5
+    store.close()
+
+
+def test_current_tab_reports_zero_history_total(tmp_path):
+    cfg = _cfg(tmp_path)
+    store = Store(cfg.db_path)
+    pid = store.upsert_project("/p/cur-total", "cur")
+    store.upsert_session(SessionRecord(
+        session_id="s1", transcript_path="/t/s1", ended_at=_ended(5),
+    ), pid)
+    model = build_workspace(
+        store, cfg, pid, "current",
+        agents_fn=lambda: AgentsState(status="ok", sessions=[]),
+    )
+    assert model.history_total == 0
+    store.close()
+
+
 def test_session_metas_reads_only_for_populated_sessions_list(tmp_path):
     cfg = _cfg(tmp_path)
     store = Store(cfg.db_path)
@@ -840,11 +894,51 @@ def test_each_history_tab_wraps_its_table_in_the_shared_scroll_region(tmp_path):
     store.close()
 
 
-def test_history_tabs_state_the_50_record_cap_explicitly(tmp_path):
+def test_history_tabs_state_the_true_total_not_a_bare_cap(tmp_path):
+    """The old flat "up to 50" disclosure is gone: each tab states the real
+    total (the fixture seeds one of each), which is the structural half the
+    cap-disclosure cheap win never covered."""
     c, store, pid = _client_with_history(tmp_path)
     for tab in ("sessions", "handoffs", "launches"):
         html = c.get(f"/project/{pid}?tab={tab}").text
-        assert "Showing up to 50 most recent records." in html
+        assert "Showing 1–1 of 1" in html
+        assert "up to 50" not in html
+    store.close()
+
+
+def test_history_pager_offers_next_and_previous_across_a_full_window(tmp_path):
+    """>page_size rows: page 0 offers Next and no Previous; page 1 shows the
+    51st row with Previous and no Next. The `?page=` rides the same `?tab=`
+    query string the route already reads."""
+    cfg = load({"db_path": tmp_path / "pager.db", "spool_dir": tmp_path / "spool"})
+    store = Store(cfg.db_path)
+    pid = store.upsert_project("/p/pager", "pager-project")
+    for i in range(51):
+        store.upsert_session(SessionRecord(
+            session_id=f"s{i}", transcript_path=f"/t/s{i}", ended_at=_ended(60 - i),
+        ), pid)
+    c = TestClient(create_app(store, cfg))
+
+    first = c.get(f"/project/{pid}?tab=sessions").text
+    assert "Showing 1–50 of 51" in first
+    assert f'href="/project/{pid}?tab=sessions&page=1">Next</a>' in first
+    assert ">Previous</a>" not in first
+
+    second = c.get(f"/project/{pid}?tab=sessions&page=1").text
+    assert "Showing 51–51 of 51" in second
+    assert f'href="/project/{pid}?tab=sessions&page=0">Previous</a>' in second
+    assert ">Next</a>" not in second
+    store.close()
+
+
+def test_history_pager_survives_an_out_of_range_page(tmp_path):
+    """A hand-typed `?page=99` never crashes or lies: the slice is empty, the
+    status reads "0 of N", and Previous still works to walk back."""
+    c, store, pid = _client_with_history(tmp_path)  # one session
+    html = c.get(f"/project/{pid}?tab=sessions&page=9").text
+    assert "0 of 1" in html
+    assert f'href="/project/{pid}?tab=sessions&page=8">Previous</a>' in html
+    assert ">Next</a>" not in html
     store.close()
 
 

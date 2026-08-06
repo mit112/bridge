@@ -2,14 +2,15 @@
 //
 // One delegated click listener, matching copy.js and launch.js.
 //
-// Neither action reloads the page. A reload would discard a half-typed prompt in
-// another card, and the prompt is the one thing on this page Bridge cannot
-// rebuild from transcripts — launch.js saves on `focusout`, so clicking Hide
-// puts a PATCH in flight that a reload would race. So hiding moves the card's
-// row into the hidden list, and restoring moves it back out and asks for a
-// reload in words rather than performing one. Rebuilding a whole card in
-// JavaScript would mean duplicating the template, which is the innerHTML pattern
-// live.js exists to avoid.
+// No action triggers a hard reload. Hiding moves the card's own row into the
+// hidden list in place. Pin and Restore change which sort GROUP a project
+// belongs to — ordering only the server computes (`cards.sort_key` ->
+// `group_projects`) — so rather than reshuffle groups client-side (a different
+// tiebreak than the next load) or rebuild a card from a duplicated template (the
+// innerHTML pattern live.js exists to avoid), they re-render the index through
+// the router. That swaps the list region from the server's own render and keeps
+// the SSE stream up; `/projects` carries no handoff textarea, so a whole-region
+// swap strands no half-typed prompt the way the dashboard would.
 
 // Only the fields actually being changed reach the server: JSON.stringify drops
 // keys whose value is `undefined`, so an omitted argument omits the key. Guarding
@@ -27,6 +28,17 @@ async function patchProject(projectId, status, pinned) {
 function say(selector, message) {
   const node = document.querySelector(selector);
   if (node) node.textContent = message;
+}
+
+// Re-render the grouped index from the server after a change that moves a
+// project between sort groups (pin/unpin/restore). The router swaps the list
+// region without a reload, so the SSE stream and the rest of the app survive;
+// `push:false` because we are already on /projects and do not want a duplicate
+// history entry. A real navigation is the no-router fallback -- always correct,
+// only slower.
+function reindexProjects() {
+  if (window.bridgeNavigate) window.bridgeNavigate("/projects", { push: false });
+  else window.location.assign("/projects");
 }
 
 // The count in the summary is the only thing that says the list is worth
@@ -75,14 +87,20 @@ document.addEventListener("click", async (event) => {
     // `aria-pressed` is the state, so it is what the toggle reads rather than a
     // second copy kept somewhere else that could disagree with it.
     const next = pin.getAttribute("aria-pressed") !== "true";
+    // On /projects the pin sits inside its project's row (`[data-project-card]`),
+    // exactly the ancestor Hide keys off; on the detail page it stands alone in
+    // the header. That ancestor is the whole difference: pinning changes a
+    // project's sort GROUP, which only the grouped index renders, so only that
+    // page has to re-render to show the move.
+    const onIndex = pin.closest("[data-project-card]");
     try {
       await patchProject(id, undefined, next);
       pin.setAttribute("aria-pressed", String(next));
-      // Not reordered here. A pinned card belongs at the top, but placing it
-      // there client-side would use a different tiebreak from the server's and
-      // the order would visibly reshuffle on the next load.
-      say(`[data-project-status="${id}"]`,
-          next ? "✓ Pinned — reload to re-sort" : "✓ Unpinned — reload to re-sort");
+      say(`[data-project-status="${id}"]`, next ? "✓ Pinned" : "✓ Unpinned");
+      // The reorder is the server's to compute, so re-render the index rather
+      // than guessing a position client-side. Nothing to re-sort on the detail
+      // page, so it only announces.
+      if (onIndex) reindexProjects();
     } catch (error) {
       console.error("bridge: pinning the project failed", error);
       say(`[data-project-status="${id}"]`, next ? "⚠ Not pinned" : "⚠ Not unpinned");
@@ -179,10 +197,11 @@ document.addEventListener("click", async (event) => {
   const id = restore.getAttribute("data-project-restore");
   try {
     await patchProject(id, "active");
-    const row = document.querySelector(`[data-hidden-project="${id}"]`);
-    if (row) row.remove();
-    bumpHiddenCount(-1);
-    say("[data-hidden-status]", "✓ Restored — reload to see its card");
+    // A restored project becomes a full card again, in whatever sort group it
+    // now belongs to — markup only the server renders. So re-render the index
+    // rather than announcing a reload the user has to perform by hand.
+    say("[data-hidden-status]", "✓ Restored");
+    reindexProjects();
   } catch (error) {
     console.error("bridge: restoring the project failed", error);
     say("[data-hidden-status]", "⚠ Not restored");
