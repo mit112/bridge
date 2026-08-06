@@ -45,18 +45,24 @@
     <h2 class="compose__title" id="{{ cid }}-title">New session</h2>
     <label class="compose__label" for="{{ cid }}">Prompt for {{ card.name }}</label>
     <textarea class="compose__prompt" id="{{ cid }}" data-compose-prompt="{{ cid }}"></textarea>
-    {{ launch_options(card, cid) }}
+    {# The compose box carries its OWN options + Run-now ONLY when it is the
+       collapsed "Start a different session" surface -- i.e. a handoff is queued,
+       so every launch band on the page is keyed off a handoff id and no
+       project-keyed band exists for the compose box to read. When there is no
+       handoff (`collapsed` is false), the `launch_band(card, none, primary)`
+       rendered just below IS the single launch surface: it owns the one
+       model/effort/permission picker and the primary "Start session" button,
+       which posts this very textarea. Rendering a second picker here in that
+       case was the duplicate selectors the workspace used to show. Keyed on the
+       compose box's own `cid` so its Run-now reads its own selects, never a
+       band's. #}
+    {% if collapsed %}{{ launch_options(card, cid) }}{% endif %}
     <p class="compose__actions">
-      {# Keyed on the compose box's OWN `cid`, not `launch_band`'s `lid`: the
-         compose box starts a brand-new ad hoc session, independent of
-         whatever handoffs are queued, so it owns its own selects (rendered
-         just above via the shared `launch_options` macro) rather than
-         reading a launch band's -- which may not even be on the page (every
-         queued-handoff band is keyed off that handoff's own id, and the
-         no-handoff band renders only when nothing is queued at all). #}
+      {% if collapsed %}
       <button type="button" class="btn" data-compose-run="{{ cid }}"
               data-compose-path="{{ card.path }}"
               data-compose-launch="{{ cid }}">Run now</button>
+      {% endif %}
       <button type="button" class="btn" data-schedule-toggle="{{ panel }}"
               aria-expanded="false" aria-controls="{{ panel }}">Schedule…</button>
       <span class="compose__status" role="status" aria-live="polite"
