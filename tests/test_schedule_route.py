@@ -240,6 +240,61 @@ def test_history_out_of_range_page_returns_empty_without_raising(tmp_path):
     assert model.history_total == 2
 
 
+def test_history_status_filter_narrows_to_one_status_with_full_facet_counts(tmp_path):
+    cfg = _cfg(tmp_path)
+    store = Store(cfg.db_path)
+    store.upsert_project("/p/proj", "proj")
+    for i in range(3):
+        store.restore_scheduled_run(_run(
+            id=f"fired-{i}", scheduled_for=1000 + i, created_at=10,
+            status="fired", completed_at=100 + i, fired_at=100 + i,
+        ))
+    for i in range(2):
+        store.restore_scheduled_run(_run(
+            id=f"failed-{i}", scheduled_for=2000 + i, created_at=10,
+            status="failed", completed_at=200 + i, error="boom",
+        ))
+    store.restore_scheduled_run(_run(
+        id="cancelled-0", scheduled_for=3000, created_at=10,
+        status="cancelled", completed_at=300,
+    ))
+
+    # Unfiltered: every terminal row, and a facet menu carrying each status
+    # with its full count.
+    allv = build_schedule(store, view="history", page=0, page_size=25)
+    assert allv.status_filter is None
+    assert allv.history_total == 6
+    assert dict(allv.status_facets) == {"cancelled": 1, "failed": 2, "fired": 3}
+
+    # Filtered to `failed`: total reflects the filter, but the facet menu still
+    # shows the full unfiltered counts so the user can switch away.
+    failed = build_schedule(
+        store, view="history", page=0, page_size=25, status="failed"
+    )
+    assert failed.status_filter == "failed"
+    assert failed.history_total == 2
+    assert {row.id for row in failed.history} == {"failed-0", "failed-1"}
+    assert dict(failed.status_facets) == {"cancelled": 1, "failed": 2, "fired": 3}
+    store.close()
+
+
+def test_history_unknown_status_filter_falls_back_to_all(tmp_path):
+    cfg = _cfg(tmp_path)
+    store = Store(cfg.db_path)
+    store.upsert_project("/p/proj", "proj")
+    store.restore_scheduled_run(_run(
+        id="fired-0", scheduled_for=1000, created_at=10,
+        status="fired", completed_at=100, fired_at=100,
+    ))
+
+    model = build_schedule(
+        store, view="history", page=0, page_size=25, status="bogus"
+    )
+    assert model.status_filter is None  # unknown status -> no filter, same
+    assert model.history_total == 1     # unknown-tab/view -> default contract
+    store.close()
+
+
 def test_build_schedule_returns_frozen_model(tmp_path):
     cfg = _cfg(tmp_path)
     store = Store(cfg.db_path)
@@ -421,6 +476,51 @@ def test_history_out_of_range_page_renders_sensible_pager_text(tmp_path):
     assert "2476" not in resp.text
     # No Next link off the end, and no crash on the empty slice.
     assert 'href="/schedule?view=history&page=100"' not in resp.text
+
+
+def test_schedule_route_history_status_filter_shows_chips_and_narrows_rows(tmp_path):
+    client, store = _client(tmp_path)
+    for i in range(3):
+        store.restore_scheduled_run(_run(
+            id=f"fired-{i:02d}", scheduled_for=1000 + i, created_at=10,
+            status="fired", completed_at=100 + i, fired_at=100 + i,
+        ))
+    store.restore_scheduled_run(_run(
+        id="failed-00", scheduled_for=2000, created_at=10,
+        status="failed", completed_at=200, error="boom",
+    ))
+
+    allv = client.get("/schedule?view=history").text
+    # The filter menu lists every terminal status with its count.
+    assert "fired (3)" in allv
+    assert "failed (1)" in allv
+    assert 'href="/schedule?view=history&status=fired"' in allv
+    assert 'href="/schedule?view=history&status=failed"' in allv
+
+    filtered = client.get("/schedule?view=history&status=failed").text
+    ids = re.findall(r'data-scheduled-job="([a-z]+-\d\d)"', filtered)
+    assert ids == ["failed-00"]
+    assert "of 1" in filtered
+    store.close()
+
+
+def test_schedule_route_history_pager_preserves_the_active_status_filter(tmp_path):
+    client, store = _client(tmp_path)
+    # 30 failed rows -> two pages under the 25 default. The Next/Previous links
+    # must keep &status=failed so paging never silently drops the filter.
+    for i in range(30):
+        store.restore_scheduled_run(_run(
+            id=f"failed-{i:02d}", scheduled_for=1000 + i, created_at=10,
+            status="failed", completed_at=100 + i, error="boom",
+        ))
+
+    body0 = client.get("/schedule?view=history&status=failed").text
+    assert 'href="/schedule?view=history&page=1&status=failed"' in body0
+    assert "of 30" in body0
+
+    body1 = client.get("/schedule?view=history&page=1&status=failed").text
+    assert 'href="/schedule?view=history&page=0&status=failed"' in body1
+    store.close()
 
 
 def test_shared_macro_contract_status_vocabulary_and_scheduled_for_hook_match():

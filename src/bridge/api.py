@@ -994,12 +994,13 @@ def create_app(
     @app.get("/schedule", response_class=HTMLResponse)
     def schedule_view_route(
         request: Request, view: str = "upcoming", page: int = Query(0, ge=0),
+        status: str | None = None,
     ):
-        # An unrecognized `view` never 400s or blanks the page --
-        # `build_schedule` itself normalizes it to "upcoming", the same
-        # "unknown tab/view -> destination default" contract every other
-        # route in the redesign follows.
-        model = build_schedule(store, view=view, page=page)
+        # An unrecognized `view` (or `status`) never 400s or blanks the page --
+        # `build_schedule` itself normalizes both, the same "unknown
+        # tab/view/filter -> default" contract every other route in the
+        # redesign follows.
+        model = build_schedule(store, view=view, page=page, status=status)
         return templates.TemplateResponse(
             request,
             "schedule.html",

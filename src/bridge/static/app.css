@@ -1571,6 +1571,36 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
   margin: var(--space-2) 0 var(--space-4);
 }
 
+/* History status filter: neutral, interactive chips -- NOT status pills, so
+   no new hues. They share the pager buttons' surface tokens and radius so the
+   two controls read as one family. The active chip is emphasized the same way
+   the view tabs mark aria-current: heavier weight and the accent border, never
+   a colour swap. */
+.schedule-filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-4);
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  font-size: var(--text-sm);
+  line-height: 1.2;
+  padding: .25rem .6rem;
+  color: var(--muted);
+  background: var(--btn-bg);
+  border: 1px solid var(--btn-border);
+  border-radius: var(--radius-sm);
+  text-decoration: none;
+  transition: color var(--motion) ease, background-color var(--motion) ease,
+              border-color var(--motion) ease;
+}
+.chip:hover { color: var(--fg); border-color: var(--btn-border-hover); }
+.chip:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.chip--active { color: var(--fg); font-weight: 600; border-color: var(--accent); }
+
 /* Session-meta enrichment (Phase 7): color is decorative only -- the `+`/`-`
    prefixes and the badge text carry the meaning, so nothing here relies on
    color alone (WCAG 2.2). */

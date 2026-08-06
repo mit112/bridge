@@ -55,6 +55,12 @@ class ScheduleModel:
     history_total: int = 0
     page: int = 0
     page_size: int = 25
+    # History's status filter. `status_filter` is the active status, or None
+    # for "all"; `status_facets` is (status, count) over the UNFILTERED terminal
+    # set -- computed before the filter so the menu and its counts never shift
+    # as the user narrows down. Both stay empty on the Upcoming view.
+    status_filter: str | None = None
+    status_facets: list[tuple[str, int]] = field(default_factory=list)
 
 
 def build_schedule(
@@ -63,6 +69,7 @@ def build_schedule(
     view: str = "upcoming",
     page: int = 0,
     page_size: int = 25,
+    status: str | None = None,
 ) -> ScheduleModel:
     """Assemble the Schedule page for one view.
 
@@ -84,6 +91,17 @@ def build_schedule(
 
     if normalized_view == "history":
         terminal = [r for r in rows if r["status"] not in ACTIVE_STATUSES]
+        # Facets over the full terminal set, before any status slice, so the
+        # menu and its counts stay stable no matter which filter is active.
+        facet_counts: dict[str, int] = {}
+        for r in terminal:
+            facet_counts[r["status"]] = facet_counts.get(r["status"], 0) + 1
+        # An unknown/absent status normalizes to "all" (no filter) -- the same
+        # unknown -> default contract `view` follows. A status only ever filters
+        # when it actually appears in the terminal set.
+        active_status = status if status in facet_counts else None
+        if active_status is not None:
+            terminal = [r for r in terminal if r["status"] == active_status]
         terminal.sort(key=lambda r: (r["completed_at"] or 0), reverse=True)
         start = page * page_size
         page_rows = terminal[start:start + page_size]
@@ -93,6 +111,8 @@ def build_schedule(
             history_total=len(terminal),
             page=page,
             page_size=page_size,
+            status_filter=active_status,
+            status_facets=sorted(facet_counts.items()),
         )
 
     attention_rows = [

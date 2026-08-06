@@ -122,8 +122,8 @@ P0 whose proposed fix sits inside it:
 | Still open | Where | Note |
 |---|---|---|
 | Pin and Restore still tell the user to reload | `projects.js:85` ("✓ Pinned — reload to re-sort"), `:185` ("✓ Restored — reload to see its card") | P0. Both sites carry a comment explaining the deliberate hold: reordering client-side would use a different tiebreak from the server's and reshuffle on the next load. The fix is the audit's — move existing nodes by the server's sort key, and fetch one server-rendered card fragment for Restore — which is structural-lane work. |
-| Counts and pagination for the capped histories | `store.py:386,454,543` (`limit=50`) | P1, structural lane item 2. The cap is now *disclosed*, which was the cheap win; surfacing totals and paging past 50 was always the structural half. |
-| HTML scheduled-history route | `api.py` | P1, structural lane item 2. "See the full history" still navigates a person to raw JSON. |
+| Counts and pagination for the capped histories | `store.py:386,454,543` (`limit=50`) | P1, structural lane item 2. The cap is now *disclosed*, which was the cheap win; surfacing totals and paging past 50 was always the structural half. **Shipped 2026-08-06** — see the status update below. |
+| HTML scheduled-history route | `api.py` | P1, structural lane item 3. "See the full history" still navigates a person to raw JSON. **Shipped 2026-08-06** — and the route + paging already existed from the redesign; the line refs above (`dashboard.html`, which no longer exists) were stale. Only the status filter was new. See the status update below. |
 
 **A note on this section's own history.** Its first version (commit `c7c5fc6`) asserted that the
 empty-state copy and the cap disclosure had *not* shipped. Both had. That claim came from grepping
@@ -182,9 +182,12 @@ Hygiene and hardening:
 
 ### Still open
 
-Two rows now: **counts/pagination for the capped histories** and the **HTML scheduled-history
-route**. The third — Pin and Restore telling the user to reload — shipped; see the section below.
-Nothing from the external-audit triage remains.
+Nothing. The structural lane is fully shipped: item 1 (Pin/Restore reload), item 2
+(counts/pagination for the capped histories), and item 3 (HTML scheduled-history route with a
+status filter) all landed on branch `fix/ux-audit-structural-lane`. See the status-update sections
+below. Nothing from the external-audit triage remains either. The only untouched rows are the P2
+improvements (sortable/filterable detail-table headers), which were always sequenced after paging
+and counts and were deliberately not bundled.
 
 ## Status update — 2026-08-06 (structural lane, item 1: Pin and Restore)
 
@@ -218,3 +221,37 @@ call rather than swapping) and card-ancestor detection; the pin/restore tests no
 re-render and that no copy says "reload". `test_projects_js_never_reloads_over_a_half_typed_prompt`
 still holds — the no-router fallback is `location.assign`, never `location.reload`, and there is no
 `.innerHTML`.
+
+## Status update — 2026-08-06 (structural lane, item 2: history counts + paging)
+
+The `/project/{id}` history tabs (Sessions/Handoffs/Launches) no longer stop dead at 50 with only a
+flat "Showing up to 50" line. `store` gained `count_sessions`/`count_handoffs`/`count_launches` and
+an `offset` on each history read — the same shape `scheduled_runs`/`count_scheduled_runs` already
+used. `build_workspace` takes `page`/`page_size`, slices the selected tab by offset, and carries
+`history_total`; the detail route reads `?page=` (`ge=0`) on the **same** `?tab=` query string. A
+shared `history_pager` macro states "Showing X–Y of N" and offers Previous/Next, clamping an
+out-of-range `?page=` to "0 of N" exactly as the schedule pager does. Only the viewed tab is counted
+or fetched, preserving the "unselected tab pays for nothing" rule. Empty-history copy ("No handoffs
+recorded." etc.) and the no-sortable-headers invariant are unchanged — sortable headers remain a
+separate P2 and were not bundled.
+
+The mutation that asserted the old flat cap disclosure ("present capped history as complete") moved
+onto the pager's total — the new honesty surface — and three anchors that named the pre-`offset`
+store/workspace signatures were updated. All four touched specs falsify clean.
+
+## Status update — 2026-08-06 (structural lane, item 3: scheduled-history status filter)
+
+The audit's framing here was stale. Its evidence pointed at `dashboard.html:130-140` and
+`api.py:1046-1058` — but `dashboard.html` no longer exists (the redesign split it into
+`overview.html`), and no template links a person to raw JSON anymore: Overview's "Open schedule"
+already goes to the HTML `/schedule`, whose History view (`?view=history`) shipped with full
+prev/next paging under the redesign. The one piece genuinely missing was the **status filter**.
+
+`/schedule?view=history` now renders a chip menu of every terminal status present (`fired`,
+`failed`, `cancelled`, `missed`, …) with its count, and `?status=<s>` narrows the list. Facet counts
+are computed over the *unfiltered* terminal set, so the menu never shifts as the user filters; an
+unknown `?status=` normalizes to "all", the same unknown→default contract `view` follows; and the
+pager's Previous/Next carry the active `&status=` so paging never silently drops the filter. The
+JSON API (`GET /api/schedule`, which the CLI parses and `test_api.py` pins to its `{"detail": ...}`
+error shape) is untouched. Chips reuse the pager buttons' surface tokens and are emphasized on
+`aria-current` the same way the view tabs are — no new status hues.

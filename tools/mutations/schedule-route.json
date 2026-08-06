@@ -29,5 +29,25 @@
       "tests/test_schedule_route.py::test_schedule_route_terminal_retryable_row_exposes_retry"
     ],
     "expect_count": 1
+  },
+  {
+    "name": "ignore the status filter, so History shows every terminal row regardless of ?status=",
+    "file": "src/bridge/schedule_view.py",
+    "old": "        if active_status is not None:\n            terminal = [r for r in terminal if r[\"status\"] == active_status]",
+    "new": "        if False:\n            terminal = [r for r in terminal if r[\"status\"] == active_status]",
+    "tests": [
+      "tests/test_schedule_route.py::test_history_status_filter_narrows_to_one_status_with_full_facet_counts"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "trust the raw status even when it names no terminal row, so ?status=bogus filters History to empty",
+    "file": "src/bridge/schedule_view.py",
+    "old": "        active_status = status if status in facet_counts else None",
+    "new": "        active_status = status",
+    "tests": [
+      "tests/test_schedule_route.py::test_history_unknown_status_filter_falls_back_to_all"
+    ],
+    "expect_count": 1
   }
 ]

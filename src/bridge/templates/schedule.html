@@ -32,6 +32,19 @@
        control (and only when `retryable`), never run-now/edit/cancel. #}
     <section class="history" aria-labelledby="schedule-history-title">
       <h2 id="schedule-history-title">History</h2>
+      {# Status filter: chips over the full terminal set (see `status_facets`),
+         each carrying its own status on the SAME `?view=history` query string.
+         `&status=` is literal template text so it stays a bare `&`; only the
+         status word (a fixed lowercase vocabulary) is interpolated. The menu is
+         absent when there is no history to filter. #}
+      {% if model.status_facets %}
+      <nav class="schedule-filter" aria-label="Filter history by status">
+        <a class="chip{% if not model.status_filter %} chip--active{% endif %}" href="/schedule?view=history"{% if not model.status_filter %} aria-current="true"{% endif %}>All</a>
+        {% for status, count in model.status_facets %}
+        <a class="chip{% if model.status_filter == status %} chip--active{% endif %}" href="/schedule?view=history&status={{ status }}"{% if model.status_filter == status %} aria-current="true"{% endif %}>{{ status }} ({{ count }})</a>
+        {% endfor %}
+      </nav>
+      {% endif %}
       {% if not model.history %}
         {{ empty_state("No finished scheduled runs yet.") }}
       {% else %}
@@ -47,11 +60,11 @@
       {% set page_end = [page_start + (model.history | length), model.history_total] | min %}
       <nav class="schedule-pager" aria-label="History pages">
         {% if model.page > 0 %}
-        <a class="btn" href="/schedule?view=history&page={{ model.page - 1 }}">Previous</a>
+        <a class="btn" href="/schedule?view=history&page={{ model.page - 1 }}{% if model.status_filter %}&status={{ model.status_filter }}{% endif %}">Previous</a>
         {% endif %}
         <span class="card__note" data-schedule-pager-status>{% if not model.history_total %}0 of 0{% elif not model.history %}0 of {{ model.history_total }}{% else %}{{ page_start + 1 }}–{{ page_end }} of {{ model.history_total }}{% endif %}</span>
         {% if page_end < model.history_total %}
-        <a class="btn" href="/schedule?view=history&page={{ model.page + 1 }}">Next</a>
+        <a class="btn" href="/schedule?view=history&page={{ model.page + 1 }}{% if model.status_filter %}&status={{ model.status_filter }}{% endif %}">Next</a>
         {% endif %}
       </nav>
     </section>
