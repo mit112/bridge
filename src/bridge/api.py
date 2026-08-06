@@ -35,7 +35,7 @@ from bridge.config import Config
 from bridge.dashboard import DashboardBuilder
 from bridge.models import AgentsState, Handoff, ScheduledRun
 from bridge.overview import build_overview
-from bridge.projects_view import build_projects
+from bridge.projects_view import build_projects, group_projects, status_label
 from bridge.refresh import RefreshCoordinator
 from bridge.registry import display_name, resolve_project
 from bridge.schedule_view import build_schedule
@@ -520,10 +520,7 @@ def create_app(
     except OSError as exc:
         app.state.boot_drain = {"error": repr(exc)}
     templates = Jinja2Templates(directory=str(HERE / "templates"))
-    templates.env.filters["ago"] = _ago
-    templates.env.filters["ago_epoch"] = _ago_epoch
-    templates.env.filters["kilo"] = _kilo
-    templates.env.filters["spark_points"] = spark_points
+    register_template_filters(templates.env)
 
     # The sidebar's connection/freshness readout is shell chrome -- every page
     # renders it, but only Overview builds the full dashboard model that carries
@@ -1387,3 +1384,19 @@ def _kilo(n: int | None) -> str:
     if n < 1_000_000:
         return f"{n / 1000:.0f}k"
     return f"{n / 1_000_000:.1f}M"
+
+
+def register_template_filters(env) -> None:
+    """Register every Jinja filter Bridge's templates use, onto any env.
+
+    `create_app` calls this for its own `Jinja2Templates` env; the handful of
+    tests that build a bare `Environment` to render one template in isolation
+    call it too, so their filter set can never drift from the app's -- add a
+    filter here once and every render surface has it.
+    """
+    env.filters["ago"] = _ago
+    env.filters["ago_epoch"] = _ago_epoch
+    env.filters["kilo"] = _kilo
+    env.filters["spark_points"] = spark_points
+    env.filters["group_projects"] = group_projects
+    env.filters["status_label"] = status_label

@@ -87,7 +87,7 @@
   --text-xs: .75rem; --text-sm: .8125rem; --text-body: 1rem;
   --text-title: 1.25rem; --text-page: 1.875rem;
 
-  --radius-sm: 6px; --radius-md: 8px; --radius-6: 6px; --radius-12: 12px;
+  --radius-sm: 6px; --radius-md: 8px; --radius-12: 12px;
   --control-min: 2.5rem;
 
   /* Timing. */
@@ -249,10 +249,23 @@
   font-style: italic;
   font-display: swap;
 }
+/* Young Serif (OFL) is the display face -- a chunky, warm, single-weight serif
+   that reads as a deliberate brand voice rather than the default high-contrast
+   serif the cream-and-serif look defaults to. It ships one real weight (400);
+   the range claim lets any heavier request resolve to it instead of dropping to
+   the Georgia fallback. Headings that want more presence lean on its size, not
+   a synthesized bold. */
+@font-face {
+  font-family: "Young Serif";
+  src: url("/static/fonts/young-serif-regular-400.woff2") format("woff2");
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+}
 :root {
   --font-sans: "Atkinson Hyperlegible Next", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-  --font-display: "Fraunces", Georgia, "Times New Roman", serif;
+  --font-display: "Young Serif", Georgia, "Times New Roman", serif;
 }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
@@ -586,7 +599,11 @@ a { color: var(--accent); text-underline-offset: .16em; }
   color: var(--nav-item-fg-active);
   font-weight: 600;
   background: var(--nav-overlay-active);
-  box-shadow: inset 3px 0 0 var(--nav-accent);
+  /* The "you are here" bar stays, but neutral: a terracotta accent on the
+     active item was the same colour-for-decoration tell as the card top bars.
+     The translucent block plus the bar plus the bolder label carry active
+     state on their own, no hue needed. */
+  box-shadow: inset 3px 0 0 var(--nav-item-fg-active);
 }
 .sidebar__icon { flex: 0 0 auto; }
 
@@ -645,23 +662,9 @@ a { color: var(--accent); text-underline-offset: .16em; }
   width: min(100%, 74rem);
   margin-inline: auto;
   padding: var(--space-6) var(--space-6) var(--space-4);
-  position: relative;
-  /* An editorial "Scotch rule" -- a heavier line over a thin hairline with a
-     real gap between them -- rather than `3px double`, whose 1px/1px/1px bands
-     collapse into one chunky line at screen density and never read as two
-     rules. The hairline is a pseudo-element (not a second border) so it can sit
-     a clear gap below the thick line; it is inset by the head's own horizontal
-     padding so it spans the same width as the border above it. */
-  border-bottom: 2px solid var(--text);
-}
-.page-head::after {
-  content: "";
-  position: absolute;
-  left: calc(-1 * var(--space-6));
-  right: calc(-1 * var(--space-6));
-  bottom: -4px;
-  height: 1px;
-  background: var(--text);
+  /* A single hairline, not the old two-line "Scotch rule". A control panel
+     wants a quiet boundary under its header, not a broadsheet masthead. */
+  border-bottom: 1px solid var(--rule);
 }
 .page-eyebrow {
   margin: 0 0 var(--space-2);
@@ -671,7 +674,7 @@ a { color: var(--accent); text-underline-offset: .16em; }
   letter-spacing: .2em;
   text-transform: uppercase;
 }
-.page-title { margin: 0; font: 600 clamp(2rem, 1.2rem + 2.6vw, 2.75rem)/1.05 var(--font-display); letter-spacing: -.015em; }
+.page-title { margin: 0; font: 400 clamp(2rem, 1.2rem + 2.6vw, 2.75rem)/1.05 var(--font-display); letter-spacing: -.01em; }
 .page-actions { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
 
 .freshness-strip { display: flex; align-items: baseline; gap: .4rem; font-size: var(--text-sm); }
@@ -1208,7 +1211,6 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
   padding: var(--space-8);
   background: var(--surface);
   border: 1px solid var(--rule);
-  border-top: 3px solid var(--work);
   border-radius: var(--radius-12);
 }
 .schedule-empty__eyebrow {
@@ -1378,13 +1380,16 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
   padding: 1.1875rem 1.25rem 1.125rem;
   background: var(--surface);
   border: 1px solid var(--rule);
-  border-top: 4px solid var(--rule);
   border-radius: 11px;
 }
-.attention-primary--st-run { border-top-color: var(--run); }
-.attention-primary--st-attention { border-top-color: var(--work); }
-.attention-primary--st-review { border-top-color: var(--review); }
-.attention-primary--st-risk { border-top-color: var(--risk); }
+/* The state's colour lives on the kicker WORD, not a bar across the card top.
+   A coloured accent bar on a raised panel is the generic-AI-dashboard card;
+   the kicker already names the state in words, so colouring that word keeps the
+   cue (and the colour+label pairing a11y wants) without the bar. */
+.attention-primary--st-run .attention-kicker { color: var(--run); }
+.attention-primary--st-attention .attention-kicker { color: var(--work); }
+.attention-primary--st-review .attention-kicker { color: var(--review); }
+.attention-primary--st-risk .attention-kicker { color: var(--risk); }
 .attention-primary__top { display: flex; justify-content: space-between; align-items: flex-start; gap: var(--space-5); }
 .attention-primary__top > div { min-width: 0; }
 .attention-kicker {
@@ -1471,13 +1476,13 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
   padding: .875rem;
   background: var(--surface);
   border: 1px solid var(--rule);
-  border-top: 4px solid var(--rule);
   border-radius: 10px;
 }
-.attention-secondary--st-run { border-top-color: var(--run); }
-.attention-secondary--st-attention { border-top-color: var(--work); }
-.attention-secondary--st-review { border-top-color: var(--review); }
-.attention-secondary--st-risk { border-top-color: var(--risk); }
+/* Same de-tint as the primary card: colour the kicker word, drop the top bar. */
+.attention-secondary--st-run .attention-kicker { color: var(--run); }
+.attention-secondary--st-attention .attention-kicker { color: var(--work); }
+.attention-secondary--st-review .attention-kicker { color: var(--review); }
+.attention-secondary--st-risk .attention-kicker { color: var(--risk); }
 .attention-secondary h3 { margin: var(--space-2) 0 var(--space-1); font-size: .9375rem; }
 .attention-secondary > p {
   display: -webkit-box;
@@ -1751,7 +1756,8 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
 .page-lede {
   margin: var(--space-2) 0 0;
   color: var(--text-secondary);
-  font: italic 400 var(--text-title)/1.35 var(--font-display);
+  font: 400 var(--text-base)/1.4 var(--font-sans);
+  max-width: 52ch;
 }
 
 .project-row {
@@ -2013,19 +2019,23 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
   font-size: var(--text-title);
   line-height: 1.15;
 }
-/* The path WRAPS instead of truncating. The base rule ellipsises it, which
-   silently deletes the tail of paths like `/Users/.../boardwatch/.claude/work`
-   with no affordance to get it back; a `title` attribute would be the tidier
-   fix but lives in the shared macro, which this pass does not touch. The
-   handful of longest paths make their rows taller -- that is the accepted
-   trade, and the responsive height criterion is written around it. */
+/* The path is a scan noise-maker, not a scan target: a full absolute path on
+   every one of 36 rows is uniform grey width that competes with the name for
+   the eye and, when it wrapped, made rows ragged. So it truncates to ONE line
+   and truncates from the LEFT (`direction: rtl`), keeping the meaningful leaf
+   visible (`...dev/bridge/web`, never `/Users/mit...`) -- the latin letters
+   dominate the run so the path still reads left-to-right, only the clip edge
+   moves. The full value lives in the row's `title` (added in the shared macro)
+   so nothing is silently deleted. */
 .projects-index .project-row__path {
-  overflow: visible;
+  overflow: hidden;
   font-size: var(--text-xs);
   line-height: 1.35;
-  text-overflow: clip;
-  white-space: normal;
-  overflow-wrap: anywhere;
+  color: var(--text-secondary);
+  direction: rtl;
+  text-align: left;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 /* Metadata is demoted against the serif name by weight, colour and face --
    it inherits `--text-secondary` and 400 from the base rule and only turns
@@ -2048,32 +2058,22 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
   white-space: nowrap;
 }
 .projects-index-head__label--num { text-align: right; }
-/* The last-session note keeps the base rule's own full-width basis, so the
-   activity column reads as two lines: status/branch/dirty, then the note.
-   Riding it on the status line instead looked like it bought a shorter row,
-   but it does not: the identity column beside it is ALREADY two lines (name
-   over path), so it -- not this column -- sets the row height. Measured: with
-   the note on its own line the list is 2375px and single-line-path rows are
-   65px, which is byte-for-byte what sharing the line produced.
-   Sharing it did cost something real, though. It ellipsised 11 of 36 notes,
-   one down to 40px of the 368px it needed, which is the same
-   truncation-without-an-affordance the path treatment above exists to avoid.
-   Full width is therefore free and strictly better.
-
-   The note also carries the row's INK. The two activity lines hold different
-   kinds of thing -- line one is machine metadata (branch, counts), line two is
-   a human sentence someone wrote -- and rendering both in muted secondary made
-   them read as one indistinguishable block. Splitting them on face AND colour
-   (mono/muted for data, sans/ink for prose) is the same division the rest of
-   the Almanac already uses, applied inside the row. Colour does the work here
-   because size cannot: 12px is the floor and 13px is one step off it. */
+/* The last-session note is tertiary information -- what ran here last, and how
+   long ago -- so it is DEMOTED, not promoted. The prior pass rendered it in ink
+   to mark it as prose, but that made two things in the row fight for the eye
+   (the serif name and an ink sentence), which is the flattened hierarchy the
+   readability pass is undoing. It keeps its own line (so the activity column
+   reads as data-then-note) but sits muted and truncates to that one line, so
+   it can never set the row height or pull the eye off the name. Truncation is
+   safe here: the note is a convenience, the full title lives one click away in
+   the session's own page. */
 .projects-index .project-row__session {
   flex: 1 0 100%;
   min-width: 0;
-  white-space: normal;
-  overflow: visible;
-  text-overflow: clip;
-  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-secondary);
 }
 /* Line one is data, so it stays mono and muted -- and gets a little more air
    beneath it than the flex `gap` alone gave, so the two lines read as two. */
@@ -2146,10 +2146,57 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
    throughout the list. `idle` deliberately gets NO edge: a hairline on every
    quiet row would re-add exactly the noise this change removes, and the
    absence is itself the signal. */
+/* Collapsible status groups. The header is the state signal now -- the group
+   name, its count, and the one dot of colour -- so the rows no longer carry a
+   per-row pill or the faint left edge that used to be the only cue. */
+.projects-group { border: 0; }
+.projects-group + .projects-group { margin-top: var(--space-5); }
+.projects-group[hidden] { display: none; }
+/* Sticky so the group a scrolled row belongs to is always answerable: with 36
+   rows across five groups running past one screen, a row loses its status
+   context within a few lines otherwise. Opaque canvas background and a z-index
+   so rows scroll UNDER it, not through it; `top: 0` because the rail is a side
+   rail, not a top bar, so nothing else owns the top edge. */
+.projects-group__head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+  cursor: pointer;
+  list-style: none;
+  background: var(--canvas);
+  border-bottom: 1px solid var(--rule);
+  font: 600 var(--text-sm)/1 var(--font-sans);
+  color: var(--text);
+}
+.projects-group__head::-webkit-details-marker { display: none; }
+.projects-group__head:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.projects-group__chevron {
+  width: 0; height: 0;
+  border-left: 5px solid currentColor;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  transition: transform 120ms ease;
+  color: var(--muted);
+}
+@media (prefers-reduced-motion: reduce) { .projects-group__chevron { transition: none; } }
+.projects-group[open] > .projects-group__head .projects-group__chevron { transform: rotate(90deg); }
+.projects-group__dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+.projects-group[data-project-group="running"] .projects-group__dot { background: var(--run); }
+.projects-group[data-project-group="queued"] .projects-group__dot { background: var(--work); }
+.projects-group[data-project-group="stale"] .projects-group__dot { background: var(--review); }
+.projects-group[data-project-group="pinned"] .projects-group__dot { background: var(--accent); }
+.projects-group__label { letter-spacing: .01em; }
+.projects-group__count {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
 .projects-index .projects-list__item { padding-left: var(--space-3); }
-.projects-index .projects-list__item[data-project-state="running"] { box-shadow: inset 3px 0 0 var(--run); }
-.projects-index .projects-list__item[data-project-state="stale"] { box-shadow: inset 3px 0 0 var(--review); }
-.projects-index .projects-list__item[data-project-state="queued"] { box-shadow: inset 3px 0 0 var(--work); }
 
 /* Deliberately absent: a row hover tint. The hairline rule and the status
    edge are already two separator channels, which is the cap -- so hover
@@ -2206,13 +2253,11 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
   grid-template-areas: "identity remote" "activity activity" "open actions";
   gap: var(--space-2) var(--space-4);
   padding: var(--space-4);
-  /* The status edge becomes the card's top border, which is the same signal in
-     the shape the Overview's attention cards already use -- so a card reads the
-     same on both pages. `border-bottom` is dropped: a card's own edge is its
-     separator, and keeping the row rule as well would be a third channel. */
+  /* A plain neutral card: no status colour of its own (the group header carries
+     that). `border-bottom` is dropped as a separate channel -- the card's own
+     uniform hairline edge is its separator. */
   border: 1px solid var(--rule);
   border-radius: var(--radius-md);
-  border-bottom: 1px solid var(--rule);
 }
 [data-projects-view="grid"] .projects-index .project-row__identity { grid-area: identity; }
 [data-projects-view="grid"] .projects-index .project-row__activity { grid-area: activity; align-content: start; }
@@ -2234,12 +2279,12 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
   align-self: end;
   padding: 0;
 }
-/* Top border instead of the inset left edge, and no left padding to reserve
-   for it. Order matters: this must follow the base state rules it overrides. */
+/* No per-card status bar and no inset left edge: the sticky group header this
+   card sits under already carries the state (its coloured dot + label), so a
+   coloured edge here would be that signal twice -- and the Overview cards
+   dropped their own top bar in the de-tint pass, so keeping one here would
+   split the treatment across pages. */
 [data-projects-view="grid"] .projects-index .projects-list__item { padding-left: var(--space-4); box-shadow: none; }
-[data-projects-view="grid"] .projects-index .projects-list__item[data-project-state="running"] { border-top: 3px solid var(--run); }
-[data-projects-view="grid"] .projects-index .projects-list__item[data-project-state="stale"] { border-top: 3px solid var(--review); }
-[data-projects-view="grid"] .projects-index .projects-list__item[data-project-state="queued"] { border-top: 3px solid var(--work); }
 /* The column-header band describes tracks that no longer exist. */
 [data-projects-view="grid"] .projects-index-head { display: none; }
 

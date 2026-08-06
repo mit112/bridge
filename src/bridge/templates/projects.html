@@ -2,7 +2,7 @@
 {% from "_components.html" import project_summary_row, empty_state %}
 {% block page_title %}Projects{% endblock %}
 {% block page_summary %}
-<p class="page-lede">Every indexed project, searchable and filterable. Pin, hide, and restore stay one click away.</p>
+<p class="page-lede">Everything Bridge has indexed. Search or filter to narrow.</p>
 {% endblock %}
 {% block content %}
 
@@ -77,32 +77,52 @@
    class names off the same macro, so an unscoped `.projects-list` rule written
    for this page would land after `.overview-recent`'s overrides in app.css and
    win on source order. A purpose-named class rather than the `[data-projects-list]`
-   attribute, so the stylesheet does not couple itself to a JS hook name. #}
-<ul class="projects-list projects-index" data-projects-list>
-  {% for row in rows %}
-    {% set state = "queued" if row.status_word == "queued" else ("running" if row.status_word == "running" else ("stale" if row.status_word == "stale" else "idle")) %}
-    <li class="projects-list__item" data-project-card="{{ row.project_id }}"
-        data-project-row-item data-project-state="{{ state }}"
-        data-project-name="{{ row.name }}" data-project-path="{{ row.path }}">
-      {{ project_summary_row(row, show_remote=True) }}
-      <details class="projects-list__actions">
-        {# Visible text is the constant `Actions` so the disclosure column stops
-           resizing per project (the name made it swing 89-211px wide, dragging
-           the `Open project` edge 122px across 36 rows). The name stays in the
-           accessible name via `aria-label`: 36 summaries all announcing
-           "Actions" would be an unusable screen-reader rotor. #}
-        <summary aria-label="Actions for {{ row.name }}">Actions</summary>
-        <button type="button" class="btn btn--pin" data-project-pin="{{ row.project_id }}"
-                aria-pressed="{{ 'true' if row.pinned else 'false' }}"
-                aria-label="Pin {{ row.name }} above every other project">Pin</button>
-        <button type="button" class="btn" data-project-hide="{{ row.project_id }}"
-                aria-label="Hide {{ row.name }} from the dashboard">Hide</button>
-        <span class="card__hide-status" role="status" aria-live="polite"
-              data-project-status="{{ row.project_id }}"></span>
-      </details>
-    </li>
+   attribute, so the stylesheet does not couple itself to a JS hook name.
+
+   The list is partitioned into collapsible status groups (`group_projects`),
+   in `cards.sort_key` order within each. The group header carries the state --
+   its name, its count, and the one spot of colour -- so the rows themselves
+   drop their per-row pill (`show_status=False`) and the faint left edge that
+   used to be the only grouping cue. `data-projects-list` moves to the wrapper
+   so projects.js's search/filter still finds one list root; the per-row
+   `data-project-row-item`/`data-project-state` hooks are unchanged, so
+   filtering keeps working across groups. #}
+<div class="projects-index" data-projects-list>
+  {% for g in rows | group_projects %}
+  <details class="projects-group" data-project-group="{{ g.key }}"{% if g.is_open %} open{% endif %}>
+    <summary class="projects-group__head">
+      <span class="projects-group__chevron" aria-hidden="true"></span>
+      <span class="projects-group__dot" aria-hidden="true"></span>
+      <span class="projects-group__label">{{ g.label }}</span>
+      <span class="projects-group__count">{{ g.rows | length }}</span>
+    </summary>
+    <ul class="projects-list">
+      {% for row in g.rows %}
+      <li class="projects-list__item" data-project-card="{{ row.project_id }}"
+          data-project-row-item data-project-state="{{ row.status_word }}"
+          data-project-name="{{ row.name }}" data-project-path="{{ row.path }}">
+        {{ project_summary_row(row, show_remote=True, show_status=False) }}
+        <details class="projects-list__actions">
+          {# Visible text is the constant `Actions` so the disclosure column stops
+             resizing per project (the name made it swing 89-211px wide, dragging
+             the `Open project` edge 122px across 36 rows). The name stays in the
+             accessible name via `aria-label`: 36 summaries all announcing
+             "Actions" would be an unusable screen-reader rotor. #}
+          <summary aria-label="Actions for {{ row.name }}">Actions</summary>
+          <button type="button" class="btn btn--pin" data-project-pin="{{ row.project_id }}"
+                  aria-pressed="{{ 'true' if row.pinned else 'false' }}"
+                  aria-label="Pin {{ row.name }} above every other project">Pin</button>
+          <button type="button" class="btn" data-project-hide="{{ row.project_id }}"
+                  aria-label="Hide {{ row.name }} from the dashboard">Hide</button>
+          <span class="card__hide-status" role="status" aria-live="polite"
+                data-project-status="{{ row.project_id }}"></span>
+        </details>
+      </li>
+      {% endfor %}
+    </ul>
+  </details>
   {% endfor %}
-</ul>
+</div>
 {# Three different empties need three different sentences (a filter that matched
    nothing is not the same situation as a query that did), so the text is written
    by projects.js from the state it already computed rather than frozen here. The

@@ -79,3 +79,13 @@ No locked constraint is wrong.
 - Preserve localhost-only operation, read-only git, and the server-process sole-writer rule.
 - Preserve handoff `<textarea>` identity and value. Live work may patch leaf `textContent`, attributes, and existing-node order only; it may not replace cards, assign `innerHTML`, or reload.
 - Preserve six-digit lowercase hex color tokens unless the contrast parser is upgraded and deliberately-failing proof is added in the same commit.
+
+## Status update — 2026-08-05 (de-AI / readability pass)
+
+This audit's structural and cheap-win lanes shipped earlier under the product-redesign SDD. A later polish pass, driven by three owner complaints plus a "read less like generic AI" ask, shipped on branch `feat/bridge-deai-projects` (pushed @ `be66384`, 1169 passing, **not yet merged to main**). Three commits:
+
+- `e6792b4` **Projects de-AI + readability.** Grouped, collapsible status sections (state carried by the group header's dot + label, so rows dropped their per-row pill and faint left edge); `stale` now labelled "Uncommitted"; Fraunces → **Young Serif** (OFL) display face; the `.page-head` Scotch double-rule → one hairline app-wide. Readability: the last-session note un-inked to muted so the serif name is the sole ink per row; the path left-truncated to its leaf (full value in `title`) instead of wrapping; sticky group headers.
+- `aacee03` **De-tint status cards + nav.** Removed the coloured accent bar across the top of every card (Overview attention cards, Projects grid cards, the schedule empty-agenda panel) and the sidebar active-item's terracotta left bar — the accent-bar-on-a-panel was the generic-AI tell. Status colour now lives only on small labels/words, never a bar. Extends this audit's P1 palette-restraint finding.
+- `be66384` **Launch double-selector dedup.** Resolves the remaining half of the P0 "two Run now paths / duplicate launch settings" finding: the no-handoff Current tab no longer renders a second model/effort/permission picker. The compose box carries its own picker only when collapsed (a handoff is queued and no project-keyed band exists); otherwise the single launch band owns the one picker and posts the compose prompt.
+
+Still open (next session): vocabulary/token/voice unification across the other pages, a full colour-discipline sweep, and `<details>` collapse-state persistence across navigation.

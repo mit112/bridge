@@ -27,6 +27,70 @@ class ProjectsModel:
     hidden: list[dict]
 
 
+@dataclass(frozen=True)
+class ProjectGroup:
+    key: str
+    label: str
+    is_open: bool
+    rows: list[ProjectSummary]
+
+
+# One label per status word, shared by every surface so a project reads the
+# same on Projects, Overview and the detail page. The enum stays what it is
+# (`stale`) -- JS filters, CSS pills and the mutation anchors all key off it --
+# but no user-facing string ever says the raw word. "stale" is the state Mit
+# flagged as opaque: it means uncommitted work sitting past `stale_hours`, so it
+# reads "Uncommitted", which says what is actually true.
+_STATUS_LABELS = {
+    "queued": "Queued",
+    "running": "Running",
+    "stale": "Uncommitted",
+    "recent": "Recent",
+    "idle": "Idle",
+}
+
+
+def status_label(word: str) -> str:
+    return _STATUS_LABELS.get(word, word.title())
+
+
+# The Projects index groups, in render order, with each group's default
+# disclosure state. `pinned` is not a status word: a pinned project keeps its
+# real status but is pulled to its own group at the top, so a row that sorts
+# above the rest for a reason the user set outright reads as deliberate rather
+# than mis-sorted. The active-work groups open by default; the passive tail
+# (Recent, Idle) starts collapsed so a long list of quiet projects does not
+# bury the two or three that need a decision now.
+_GROUP_ORDER = [
+    ("pinned", "Pinned", True),
+    ("running", "Running", True),
+    ("queued", "Queued", True),
+    ("stale", "Uncommitted", True),
+    ("recent", "Recent", False),
+    ("idle", "Idle", False),
+]
+
+
+def group_projects(rows: list[ProjectSummary]) -> list[ProjectGroup]:
+    """Bucket the already-sorted rows into ordered, collapsible groups.
+
+    Rows arrive in `cards.sort_key` order and stay in it within each bucket --
+    this only partitions, it never re-sorts. A pinned project lands in the
+    Pinned bucket regardless of its status; every other row groups by its
+    `status_word`. Empty groups are dropped so the page shows only the states
+    that actually exist right now.
+    """
+    buckets: dict[str, list[ProjectSummary]] = {key: [] for key, _, _ in _GROUP_ORDER}
+    for row in rows:
+        key = "pinned" if row.pinned else row.status_word
+        buckets.get(key, buckets["idle"]).append(row)
+    return [
+        ProjectGroup(key, label, is_open, buckets[key])
+        for key, label, is_open in _GROUP_ORDER
+        if buckets[key]
+    ]
+
+
 def build_projects(
     store: Store,
     cfg: Config,

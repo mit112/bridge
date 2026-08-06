@@ -340,9 +340,11 @@ def test_projects_index_action_disclosure_is_constant_width_but_still_named(tmp_
     # The name must be gone from the *rendered* text, not merely relocated.
     assert ">Actions for demo-project<" not in html
 
-    # `projects-index` is the CSS scope every rule in this pass hangs off, and
-    # the Overview's own list must never grow it (see app.css's Almanac block).
-    assert 'class="projects-list projects-index"' in html
+    # `projects-index` is the CSS scope every rule in this pass hangs off (now
+    # the group wrapper, with each collapsible group holding a plain
+    # `projects-list`), and the Overview's own list must never grow it.
+    assert 'class="projects-index"' in html
+    assert '<ul class="projects-list">' in html
     assert "projects-index" not in client.get("/").text
     store.close()
 
@@ -362,12 +364,13 @@ def test_projects_index_column_header_band_is_presentational(tmp_path):
     store.close()
 
 
-def test_projects_index_rows_carry_the_state_hook_the_status_edge_reads(tmp_path):
-    """The status edge is pure CSS keyed on `[data-project-state]`, so these
-    four literal strings are an interface, not an implementation detail --
-    renaming one in the template would silently drop a row's colour with no
-    other test noticing. The word beside it is the redundant, non-colour cue
-    (WCAG 1.4.1), so the two must always agree."""
+def test_projects_index_rows_carry_the_state_hook_and_group_by_status(tmp_path):
+    """State now lives in two places that must agree: every row keeps its
+    `[data-project-state]` hook (the interface projects.js filters on), and the
+    row sits inside a collapsible group whose `[data-project-group]` header
+    carries the humanized label and the one dot of colour. The per-row pill is
+    gone -- the group header is the status cue -- so a `pill--` class must not
+    appear inside the ledger any more."""
     cfg = _cfg(tmp_path, "state-hook")
     store = Store(cfg.db_path)
 
@@ -379,25 +382,65 @@ def test_projects_index_rows_carry_the_state_hook_the_status_edge_reads(tmp_path
     store.upsert_project("/p/quiet", "quiet-project")
 
     html = TestClient(create_app(store, cfg)).get("/projects").text
-    pairs = re.findall(
-        r'data-project-state="([a-z]+)".*?<span class="pill pill--([a-z]+)">([a-z]+)</span>',
-        html, re.S,
-    )
-    assert len(pairs) == 2
-    # `idle` is the one state that covers two words -- `_status_word` says
-    # "recent" for a project with a past session and "idle" for one with none
-    # -- and it is also the only state the edge deliberately leaves
-    # uncoloured, so both words must land in that bucket.
-    words = {
-        "queued": {"queued"}, "running": {"running"},
-        "stale": {"stale"}, "idle": {"recent", "idle"},
-    }
-    for state, pill_class, word in pairs:
-        assert state in words, f"unknown state {state!r} has no status edge"
-        assert word in words[state]
-        assert pill_class == word
-    assert "queued" in {state for state, _, _ in pairs}
+
+    # The row hook still spells the raw status word (queued handoff -> queued;
+    # a path with no repo and no session -> idle).
+    assert 'data-project-state="queued"' in html
+    assert 'data-project-state="idle"' in html
+
+    # Each row sits in a group whose header names the state in words. The
+    # header is the redundant non-colour cue (WCAG 1.4.1) beside the dot.
+    assert '<details class="projects-group" data-project-group="queued"' in html
+    assert '<details class="projects-group" data-project-group="idle"' in html
+    assert ">Queued</span>" in html and ">Idle</span>" in html
+
+    # The per-row status pill is gone from the ledger now that the group owns
+    # the state cue.
+    assert "pill pill--" not in html
     store.close()
+
+
+def test_status_label_renames_stale_to_uncommitted():
+    """`stale` is the state Mit flagged as opaque -- it means uncommitted work
+    sitting past `stale_hours`, so no user-facing surface may say the raw word.
+    The enum stays `stale` (JS/CSS/mutation anchors key off it); only the label
+    changes."""
+    from bridge.projects_view import status_label
+
+    assert status_label("stale") == "Uncommitted"
+    assert status_label("running") == "Running"
+    assert status_label("queued") == "Queued"
+    assert status_label("recent") == "Recent"
+    assert status_label("idle") == "Idle"
+
+
+def test_group_projects_buckets_pinned_first_then_by_status(tmp_path):
+    """Groups render in a fixed order (Pinned, Running, Queued, Uncommitted,
+    Recent, Idle), a pinned project is pulled out regardless of its status, and
+    empty groups drop out. Rows keep their incoming sort order within a group."""
+    from bridge.overview import ProjectSummary
+    from bridge.projects_view import group_projects
+
+    def _summary(name, status, pinned=False):
+        return ProjectSummary(
+            project_id=hash(name) & 0xFFFF, name=name, path=f"/p/{name}",
+            status_word=status, branch=None, dirty_count=0,
+            last_session_title=None, last_session_age_seconds=None,
+            tokens_today=0, tokens_5h=0, pinned=pinned, ahead=None, behind=None,
+        )
+
+    rows = [
+        _summary("pinned-idle", "idle", pinned=True),
+        _summary("run-a", "running"),
+        _summary("queue-a", "queued"),
+        _summary("stale-a", "stale"),
+    ]
+    groups = group_projects(rows)
+    assert [g.key for g in groups] == ["pinned", "running", "queued", "stale"]
+    assert [g.label for g in groups] == ["Pinned", "Running", "Queued", "Uncommitted"]
+    assert groups[0].rows[0].name == "pinned-idle"
+    # No Recent/Idle group: the only idle project was pinned out of it.
+    assert "idle" not in {g.key for g in groups}
 
 
 def test_overview_nav_now_links_to_projects(tmp_path):

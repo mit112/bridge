@@ -607,8 +607,8 @@ def _seed_hero(store, monkeypatch, kind: str) -> None:
 def test_every_attention_kind_carries_all_three_status_cues(tmp_path, monkeypatch,
                                                             kind, cls, label, slug):
     """Status is never colour-only (WCAG 1.4.1), so each kind must render all
-    three cues: the top-border colour class, the pill's words, and the mono
-    slug. Nothing else in the suite reads `overview.html`'s `status_map`
+    three cues: the status-colour class (which now tints the kicker word rather
+    than a card top-border bar), the pill's words, and the mono slug. Nothing else in the suite reads `overview.html`'s `status_map`
     literal, so a one-character typo in a class value (`st-reviw`) would fall
     through every `.attention-primary--st-*` rule and paint no status colour at
     all -- silently dropping a cue while the suite stayed green. Each cue is a

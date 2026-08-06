@@ -181,7 +181,7 @@ def test_first_paint_font_faces_are_preloaded(client):
     html = c.get("/").text
     for face in ("atkinson-hyperlegible-next-regular-400",
                  "ibm-plex-mono-regular-400",
-                 "fraunces-semibold-600"):
+                 "young-serif-regular-400"):
         assert (f'<link rel="preload" href="/static/fonts/{face}.woff2" '
                 'as="font" type="font/woff2" crossorigin>') in html, face
     # Faces that may not appear on the first screen stay unpreloaded: an unused
@@ -1223,13 +1223,17 @@ def test_a_card_with_no_queued_handoff_still_renders_a_launch_band(launch_app):
     html = c.get(f"/project/{pid}?tab=current").text
 
     assert f'data-launch="launch-{pid}"' in html
-    # The compose box is self-contained (Task 5 fix round 2): it owns its own
-    # launch selects and points `data-compose-launch` at its own `cid`, never
-    # at the launch band's `lid` -- a queued-handoff page has no band keyed
-    # off the project id at all, so borrowing the band's id would resolve to
-    # nothing.
-    assert f'data-compose-launch="compose-{pid}"' in html
+    # With nothing queued, this band is the SINGLE launch surface: it owns the
+    # one model/effort/permission picker and its primary button posts the
+    # compose textarea (`data-launch-prompt` -> the ad hoc prompt). The compose
+    # box therefore renders no launch picker or Run-now of its own here -- that
+    # second picker was the duplicate selector the workspace used to show. (The
+    # compose box only carries its own picker when it is the collapsed
+    # "Start a different session" surface, i.e. when a handoff IS queued.)
     assert f'id="launch-{pid}-model"' in html
+    assert f'data-launch-prompt="compose-{pid}"' in html
+    assert f'data-compose-launch="compose-{pid}"' not in html
+    assert f'id="compose-{pid}-model"' not in html
     assert f'data-launch-status="launch-{pid}"' in html
     # ...and no queued-handoff artifacts. The compose box's own textarea is
     # unrelated and expected to be present on every card, handoff or not.
@@ -3066,16 +3070,26 @@ def test_an_unrenderable_scheduled_for_omits_the_datetime_attribute(client):
     assert 'datetime="None"' not in body
 
 
-def test_every_card_has_a_compose_box_that_posts_to_launch_and_schedule(client):
+def test_the_no_handoff_compose_box_schedules_here_and_launches_via_the_band(client):
+    """With nothing queued the compose box owns the ad hoc prompt and its own
+    Schedule affordance, while the single launch band below is what launches
+    that prompt -- so the box renders no Run-now/launch picker of its own. That
+    duplicate model/effort/permission selector was the inconsistency the
+    no-handoff workspace used to show."""
     c, _, pid = client
 
     body = c.get(f"/project/{pid}?tab=current").text
 
     cid = f"compose-{pid}"
-    assert f'data-compose-run="{cid}"' in body
-    assert f'data-schedule-toggle="schedule-{cid}"' in body
+    # Always present: the compose box and its schedule affordance.
     assert f'id="{cid}"' in body
+    assert f'data-schedule-toggle="schedule-{cid}"' in body
     assert "datetime-local" in body
+    # The band below is the single launch surface and posts this textarea; the
+    # compose box carries no Run-now or launch picker of its own in this case.
+    assert f'data-launch-prompt="{cid}"' in body
+    assert f'data-compose-run="{cid}"' not in body
+    assert f'id="{cid}-model"' not in body
 
 
 def test_a_queued_handoff_offers_its_own_schedule_affordance(client):
