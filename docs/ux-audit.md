@@ -89,3 +89,15 @@ This audit's structural and cheap-win lanes shipped earlier under the product-re
 - `be66384` **Launch double-selector dedup.** Resolves the remaining half of the P0 "two Run now paths / duplicate launch settings" finding: the no-handoff Current tab no longer renders a second model/effort/permission picker. The compose box carries its own picker only when collapsed (a handoff is queued and no project-keyed band exists); otherwise the single launch band owns the one picker and posts the compose prompt.
 
 Still open (next session): vocabulary/token/voice unification across the other pages, a full colour-discipline sweep, and `<details>` collapse-state persistence across navigation.
+
+## Status update — 2026-08-06 (unification follow-up, merged + live)
+
+The de-AI branch's remaining follow-ups shipped and the whole branch merged to `main` (`git merge --no-ff` @ `fd5ca42`) and went live on the local panel. Three commits:
+
+- `53cc083` **Shared `register_template_filters(env)`.** The six Jinja filters were hand-registered in `create_app` and re-declared verbatim in five test environments; one function now serves them all, so a new filter propagates everywhere for free.
+- `e7433f4` **"Uncommitted" vocabulary propagation.** `status_label` already routes every row pill through the shared macro, so only two hand-written strings still showed the raw word "stale": the Overview attention hint (→ "uncommitted work") and the Settings threshold row (→ "Flag uncommitted after"). Also dropped a dead `--radius-6` token (a duplicate of `--radius-sm`).
+- `672c726` **Group collapse-state persistence.** Each status group's open/closed state now survives navigation via `localStorage`, restored in the `onEnter` hook; a group forced open by an active search/filter is not remembered.
+
+Investigating the "one status word / one launch verb" goal showed the app was already unified where it mattered (shared `status_label`; "Unavailable" the lone can't-determine word). The remaining apparent divergences are intentional and the owner confirmed keeping them: Overview attention **kickers stay action headlines** ("Needs review" / "Working now", not state nouns); **launch verbs stay context-differentiated** ("Start session" / "Continue in Terminal" / "Run now"); the **project detail page keeps no status pill** (adding one would be a design addition, declined).
+
+Still open, all taste/visual and undirected: the full colour-discipline sweep (reserve terracotta for meaning), tokenising the stray hardcoded pill radii (10/11px), and — if it proves distracting — making the collapse-state restore flash-free with a pre-paint hook.
