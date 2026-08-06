@@ -82,7 +82,7 @@ No locked constraint is wrong.
 
 ## Status update — 2026-08-05 (de-AI / readability pass)
 
-This audit's structural lane, and most of its cheap-win lane, shipped earlier under the product-redesign SDD. (**Corrected 2026-08-06** — this sentence originally claimed the cheap-win lane had shipped in full. It had not; see the correction at the foot of this document for the three items that were still open when it was written.) A later polish pass, driven by three owner complaints plus a "read less like generic AI" ask, shipped on branch `feat/bridge-deai-projects` (pushed @ `be66384`, 1169 passing, **not yet merged to main**). Three commits:
+This audit's structural and cheap-win lanes shipped earlier under the product-redesign SDD. (**Annotated 2026-08-06** — the cheap-win lane did ship; the *structural* lane did not, and one P0 whose fix belongs to it is still open. See the foot of this document.) A later polish pass, driven by three owner complaints plus a "read less like generic AI" ask, shipped on branch `feat/bridge-deai-projects` (pushed @ `be66384`, 1169 passing, **not yet merged to main**). Three commits:
 
 - `e6792b4` **Projects de-AI + readability.** Grouped, collapsible status sections (state carried by the group header's dot + label, so rows dropped their per-row pill and faint left edge); `stale` now labelled "Uncommitted"; Fraunces → **Young Serif** (OFL) display face; the `.page-head` Scotch double-rule → one hairline app-wide. Readability: the last-session note un-inked to muted so the serif name is the sole ink per row; the path left-truncated to its leaf (full value in `title`) instead of wrapping; sticky group headers.
 - `aacee03` **De-tint status cards + nav.** Removed the coloured accent bar across the top of every card (Overview attention cards, Projects grid cards, the schedule empty-agenda panel) and the sidebar active-item's terracotta left bar — the accent-bar-on-a-panel was the generic-AI tell. Status colour now lives only on small labels/words, never a bar. Extends this audit's P1 palette-restraint finding.
@@ -108,19 +108,30 @@ Two external audits of the panel (DeepSeek, `~/Downloads/bridge-audit-2026-08-06
 `bridge-audit-round2-2026-08-06.md`) were verified finding by finding against the code and the
 running panel. Roughly half held as written. Neither document should be acted on directly.
 
-**Correction to the 2026-08-05 entry above.** It claimed this audit's cheap-win lane had shipped.
-Three of its items measurably had not, and re-reading that sentence as fact is why two of them were
-re-discovered by the external pass:
+**On the 2026-08-05 entry above.** It says this audit's cheap-win lane shipped. Re-verified
+line by line on 2026-08-06: it did.
 
-| Cheap-win item | Claimed | Actual, as of 2026-08-06 |
+| Cheap-win item | Status | Evidence |
 |---|---|---|
-| Honest empty/cap copy on detail history (lane item 5) | shipped | **Not shipped.** No `empty_state` call in `project.html` or `_workspace_history.html`. |
-| History caps surfaced with counts (P1, `store.py:386,454,543`) | shipped | **Not shipped.** `sessions`/`handoffs`/`launches` still take a silent `limit=50`; no count, no paging. |
-| Pin/Restore stop telling the user to reload (P0) | shipped | **Not shipped.** `projects.js:85,185` still say "reload to re-sort" and "reload to see its card". |
+| Honest empty/cap copy on detail history (lane item 5) | **Shipped** | `_workspace_history.html:37,77,124` ("No handoffs recorded." / "No launches recorded." / "No indexed sessions."), each under its own `<h2>`; cap disclosed at `:18,45,84` ("Showing up to 50 most recent records."). |
+| Lane items 1–4 | **Shipped** | Tokens, live status classes, compose-launch parity, pin label, shared macros — all landed under the product-redesign SDD. |
 
-Everything else in the cheap-win lane did land. The rest of the ranked table above has **not** been
-re-verified row by row in this pass, so it carries no status column — an unverified column would be
-the same failure again, one table wider.
+What is still open is the **structural** lane, which was never claimed to have shipped, plus one
+P0 whose proposed fix sits inside it:
+
+| Still open | Where | Note |
+|---|---|---|
+| Pin and Restore still tell the user to reload | `projects.js:85` ("✓ Pinned — reload to re-sort"), `:185` ("✓ Restored — reload to see its card") | P0. Both sites carry a comment explaining the deliberate hold: reordering client-side would use a different tiebreak from the server's and reshuffle on the next load. The fix is the audit's — move existing nodes by the server's sort key, and fetch one server-rendered card fragment for Restore — which is structural-lane work. |
+| Counts and pagination for the capped histories | `store.py:386,454,543` (`limit=50`) | P1, structural lane item 2. The cap is now *disclosed*, which was the cheap win; surfacing totals and paging past 50 was always the structural half. |
+| HTML scheduled-history route | `api.py` | P1, structural lane item 2. "See the full history" still navigates a person to raw JSON. |
+
+**A note on this section's own history.** Its first version (commit `c7c5fc6`) asserted that the
+empty-state copy and the cap disclosure had *not* shipped. Both had. That claim came from grepping
+for `empty_state` — the `_components.html` macro name — in templates that use a plain
+`<p class="empty">` instead, so the search proved nothing and was read as if it had. A doc whose
+purpose is to say what is true about the product is the worst place to guess, which is the same
+failure the 2026-08-05 entry made and the reason this section exists at all. Verify by reading the
+rendered surface or the template, never by the absence of one identifier.
 
 ### Shipped in this pass
 
@@ -171,6 +182,5 @@ Hygiene and hardening:
 
 ### Still open
 
-- The three corrected cheap-win items in the table above.
-- The structural lane's history integrity work (HTML scheduled history, counts, filters, paging),
-  unchanged since 2026-08-02.
+Exactly the three rows in the "Still open" table above. Nothing from the external-audit triage
+remains.
