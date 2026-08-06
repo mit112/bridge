@@ -382,6 +382,111 @@ def test_attention_emits_one_item_per_handoff(tmp_path):
     store.close()
 
 
+def _live_cards(tmp_path, cfg, status: str):
+    store = Store(cfg.db_path)
+    store.upsert_project("/p/live", "live-project")
+    cards = build_cards(
+        store, cfg,
+        probe_fn=lambda path: GitState(status="ok", branch="main"),
+        agents_fn=lambda: AgentsState(status="ok", sessions=[LiveSession(
+            session_id="live-1", cwd="/p/live", kind="interactive", status=status,
+        )]),
+    )
+    return store, cards
+
+
+@pytest.mark.parametrize("status,kind,summary", [
+    ("busy", "running", "Session busy"),
+    ("working", "running", "Session working"),
+    ("needs_input", "session_input", "Waiting for your input"),
+    ("blocked", "session_input", "Waiting for your input"),
+    ("failed", "session_failed", "Session failed"),
+    ("errored", "session_failed", "Session failed"),
+])
+def test_live_attention_kind_follows_the_session_status(tmp_path, status, kind,
+                                                        summary):
+    """The pill is `kind`-derived, so a `kind` picked off `card.live is not
+    None` asserts activity the status may contradict -- the shipped bug rendered
+    "Working now" directly above "Session idle". Every non-quiet status must map
+    to a kind whose label agrees with its own summary line.
+    """
+    cfg = _cfg(tmp_path)
+    store, cards = _live_cards(tmp_path, cfg, status)
+
+    item, = _attention_from_cards(cards)
+
+    assert item.kind == kind
+    assert item.summary == summary
+    assert item.meta["live_status"] == status
+
+    store.close()
+
+
+@pytest.mark.parametrize("status", ["idle", "unknown", "something-new"])
+def test_a_quiet_live_session_is_not_an_attention_item(tmp_path, status):
+    """A live record is not a claim of live work. `agents.normalize_status`
+    round-trips unrecognised values verbatim and `LIVE_PRIORITY_DEFAULT` already
+    ranks them WITH idle, so anything that is not recognisably active belongs in
+    `recent`, not in the count the page headlines as needing a human.
+    """
+    cfg = _cfg(tmp_path)
+    store, cards = _live_cards(tmp_path, cfg, status)
+
+    assert _attention_from_cards(cards) == []
+
+    store.close()
+
+
+def test_a_quiet_live_session_is_not_counted_or_hidden_from_recent(tmp_path):
+    """`attention_total` headlines the page ("N items need your attention") and
+    `recent` is filtered by whatever attention claimed, so a miscounted idle
+    session both inflates the headline and vanishes from the list it belongs in.
+    """
+    cfg = _cfg(tmp_path)
+    store = Store(cfg.db_path)
+    store.upsert_project("/p/live", "live-project")
+
+    model = build_overview(
+        store, cfg, now=10_000,
+        probe_fn=lambda path: GitState(status="ok", branch="main"),
+        agents_fn=lambda: AgentsState(status="ok", sessions=[LiveSession(
+            session_id="live-1", cwd="/p/live", kind="interactive", status="idle",
+        )]),
+    )
+
+    assert model.attention == []
+    assert model.attention_total == 0
+    assert [row.name for row in model.recent] == ["live-project"]
+
+    store.close()
+
+
+def test_up_next_names_a_scheduled_run_whose_project_is_gone(tmp_path):
+    """`project_name` is `str | None` and the row macro renders it unguarded, so
+    a run whose project no longer resolves printed the literal "None" as the
+    project name. The path is always known, so its leaf is a real answer.
+    """
+    cfg = _cfg(tmp_path)
+    store = Store(cfg.db_path)
+    store.restore_scheduled_run(ScheduledRun(
+        id="run-orphan", project_path="/p/archived-thing", prompt="do the thing",
+        mode="interactive", scheduled_for=10_100, created_at=10_000,
+        status="pending",
+    ))
+
+    model = build_overview(
+        store, cfg, now=10_000,
+        probe_fn=lambda path: GitState(status="ok", branch="main"),
+        agents_fn=lambda: AgentsState(status="ok", sessions=[]),
+    )
+
+    row, = model.up_next
+    assert row.project_id is None
+    assert row.project_name == "archived-thing"
+
+    store.close()
+
+
 # --- Route: GET / renders the calm Overview (Task 2.3) -----------------------
 
 
@@ -554,6 +659,32 @@ def test_overview_route_uses_compact_primary_and_secondary_composition(tmp_path)
     store.close()
 
 
+def test_secondary_card_pluralises_its_changed_file_count(tmp_path, monkeypatch):
+    """The secondary card's footer hardcoded "files changed", so a project with
+    exactly one uncommitted file read "1 files changed" on the landing page."""
+    c, store, _ = _route_client(tmp_path, name="plural")
+    monkeypatch.setattr(agents, "probe",
+                        lambda *a, **k: AgentsState(status="ok", sessions=[]))
+    monkeypatch.setattr(cards_mod.gitprobe, "probe", lambda p: GitState(
+        status="ok", branch="main", dirty_count=1, oldest_uncommitted_at=1,
+    ))
+    pid = store.upsert_project("/p/hero", "hero-project")
+    store.create_handoff(Handoff(
+        id="h1", project_path="/p/hero", next_prompt="keep going", created_at=1,
+    ), pid)
+    store.upsert_project("/p/one-change", "one-change-project")
+
+    html = c.get("/").text
+
+    assert "1 file changed" in html
+    assert "1 files changed" not in html
+    # Same card, one line apart -- "change(s)" next to a correctly pluralised
+    # count reads as an oversight rather than a style.
+    assert "1 uncommitted change" in html
+    assert "change(s)" not in html
+    store.close()
+
+
 def _hero(html: str) -> str:
     """The `.attention-primary` article only -- scoping every hero assertion to
     it keeps a secondary mini-card's markup from satisfying one by accident."""
@@ -575,8 +706,10 @@ def _seed_hero(store, monkeypatch, kind: str) -> None:
     sensors are pinned for every case, so a real live session or a real git
     tree on the machine running the suite cannot promote a different kind.
     """
+    live_status = {"running": "busy", "session_input": "needs_input",
+                   "session_failed": "failed"}.get(kind)
     live = [LiveSession(session_id="live-1", cwd="/p/hero", kind="interactive",
-                        status="busy")] if kind == "running" else []
+                        status=live_status)] if live_status else []
     monkeypatch.setattr(agents, "probe",
                         lambda *a, **k: AgentsState(status="ok", sessions=live))
     git = (GitState(status="ok", branch="main", dirty_count=3,
@@ -601,6 +734,8 @@ def _seed_hero(store, monkeypatch, kind: str) -> None:
 @pytest.mark.parametrize("kind,cls,label,slug", [
     ("handoff", "st-attention", "Ready to continue", "queued"),
     ("running", "st-run", "Working now", "running"),
+    ("session_input", "st-attention", "Needs input", "needs input"),
+    ("session_failed", "st-risk", "Failed", "session failed"),
     ("stale", "st-review", "Needs review", "stale"),
     ("schedule_failure", "st-risk", "Failed", "failed"),
 ])
@@ -625,7 +760,8 @@ def test_every_attention_kind_carries_all_three_status_cues(tmp_path, monkeypatc
     store.close()
 
 
-@pytest.mark.parametrize("kind", ["handoff", "running", "stale", "schedule_failure"])
+@pytest.mark.parametrize("kind", ["handoff", "running", "session_input",
+                                  "session_failed", "stale", "schedule_failure"])
 def test_every_attention_kind_gives_the_hero_a_path_footer(tmp_path, monkeypatch, kind):
     """`overview.html` renders the hero's dotted path footer only `{% if
     primary.meta.path %}`, so a kind that leaves `path` out of its meta drops
