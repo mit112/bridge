@@ -7,26 +7,15 @@ from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader
 
-from bridge.api import _ago, _ago_epoch, _kilo
-from bridge.cards import spark_points
+from bridge.api import register_template_filters
 from bridge.overview import ProjectSummary, ScheduleRow
-from bridge.projects_view import group_projects, status_label
 
 TPL = Path(__file__).resolve().parent.parent / "src" / "bridge" / "templates"
 
 
 def _module():
     env = Environment(loader=FileSystemLoader(str(TPL)), autoescape=True)
-    env.filters["ago"] = _ago
-    env.filters["ago_epoch"] = _ago_epoch
-    # `_components.html` now also defines `live_status`/`token_burn` (Task
-    # 3.3's extraction), which use `kilo`/`spark_points` -- compiling the
-    # template's `.module` requires every filter it names to be registered,
-    # even for a macro this test never calls.
-    env.filters["kilo"] = _kilo
-    env.filters["spark_points"] = spark_points
-    env.filters["group_projects"] = group_projects
-    env.filters["status_label"] = status_label
+    register_template_filters(env)
     return env.get_template("_components.html").module
 
 
@@ -122,12 +111,7 @@ def test_empty_state_emits_message_and_class():
 
 def test_history_table_shell_wraps_caller_with_scroll_region():
     env = Environment(loader=FileSystemLoader(str(TPL)), autoescape=True)
-    env.filters["ago"] = _ago
-    env.filters["ago_epoch"] = _ago_epoch
-    env.filters["kilo"] = _kilo
-    env.filters["spark_points"] = spark_points
-    env.filters["group_projects"] = group_projects
-    env.filters["status_label"] = status_label
+    register_template_filters(env)
     tpl = env.from_string(
         '{% import "_components.html" as c %}'
         '{% call c.history_table_shell("Sessions table") %}'

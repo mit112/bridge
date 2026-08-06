@@ -13,9 +13,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 from jinja2 import Environment, FileSystemLoader
 
-from bridge.api import _ago, _ago_epoch, _kilo, create_app
-from bridge.cards import spark_points
-from bridge.projects_view import group_projects, status_label
+from bridge.api import create_app, register_template_filters
 from bridge.config import load
 from bridge.models import ScheduledRun
 from bridge.overview import ScheduleRow as OverviewScheduleRow
@@ -30,12 +28,7 @@ def _components_module():
     standalone, needed here to render `schedule_row` both ways for the
     shared-macro-contract test below without spinning up a full route."""
     env = Environment(loader=FileSystemLoader(str(TPL)), autoescape=True)
-    env.filters["ago"] = _ago
-    env.filters["ago_epoch"] = _ago_epoch
-    env.filters["kilo"] = _kilo
-    env.filters["spark_points"] = spark_points
-    env.filters["group_projects"] = group_projects
-    env.filters["status_label"] = status_label
+    register_template_filters(env)
     return env.get_template("_components.html").module
 
 

@@ -17,9 +17,7 @@ from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader
 
-from bridge.api import _ago, _ago_epoch, _kilo
-from bridge.cards import spark_points
-from bridge.projects_view import group_projects, status_label
+from bridge.api import register_template_filters
 from bridge.config import ModelChoice, PermissionChoice
 from bridge.models import Card
 
@@ -28,12 +26,7 @@ TPL = Path(__file__).resolve().parent.parent / "src" / "bridge" / "templates"
 
 def _module():
     env = Environment(loader=FileSystemLoader(str(TPL)), autoescape=True)
-    env.filters["ago"] = _ago
-    env.filters["ago_epoch"] = _ago_epoch
-    env.filters["kilo"] = _kilo
-    env.filters["spark_points"] = spark_points
-    env.filters["group_projects"] = group_projects
-    env.filters["status_label"] = status_label
+    register_template_filters(env)
     return env.get_template("_launch.html").module
 
 
