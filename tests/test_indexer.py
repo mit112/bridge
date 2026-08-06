@@ -405,6 +405,7 @@ def render_detail_page(cfg, store, project_id, tab="launches"):
 
     from bridge import api
     from bridge.cards import spark_points
+    from bridge.projects_view import group_projects, status_label
     from bridge.workspace import build_workspace
 
     env = Environment(
@@ -418,6 +419,8 @@ def render_detail_page(cfg, store, project_id, tab="launches"):
     # `spark_points` to compile, even for a launches-tab render that never
     # calls them.
     env.filters["spark_points"] = spark_points
+    env.filters["group_projects"] = group_projects
+    env.filters["status_label"] = status_label
 
     model = build_workspace(store, cfg, project_id, tab)
     return env.get_template("project.html").render(

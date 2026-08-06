@@ -181,7 +181,7 @@ def test_first_paint_font_faces_are_preloaded(client):
     html = c.get("/").text
     for face in ("atkinson-hyperlegible-next-regular-400",
                  "ibm-plex-mono-regular-400",
-                 "fraunces-semibold-600"):
+                 "young-serif-regular-400"):
         assert (f'<link rel="preload" href="/static/fonts/{face}.woff2" '
                 'as="font" type="font/woff2" crossorigin>') in html, face
     # Faces that may not appear on the first screen stay unpreloaded: an unused

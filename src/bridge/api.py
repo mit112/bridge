@@ -35,7 +35,7 @@ from bridge.config import Config
 from bridge.dashboard import DashboardBuilder
 from bridge.models import AgentsState, Handoff, ScheduledRun
 from bridge.overview import build_overview
-from bridge.projects_view import build_projects
+from bridge.projects_view import build_projects, group_projects, status_label
 from bridge.refresh import RefreshCoordinator
 from bridge.registry import display_name, resolve_project
 from bridge.schedule_view import build_schedule
@@ -524,6 +524,8 @@ def create_app(
     templates.env.filters["ago_epoch"] = _ago_epoch
     templates.env.filters["kilo"] = _kilo
     templates.env.filters["spark_points"] = spark_points
+    templates.env.filters["group_projects"] = group_projects
+    templates.env.filters["status_label"] = status_label
 
     # The sidebar's connection/freshness readout is shell chrome -- every page
     # renders it, but only Overview builds the full dashboard model that carries

@@ -53,5 +53,17 @@ unmodified from that source.
   | `fraunces-semibold-600.woff2` | `files/fraunces-latin-600-normal.woff2` | `3a1de7711d147bad4422825045f87597fd77cca72e7c96d3b0a81735d00dda82` |
   | `fraunces-italic-400.woff2` | `files/fraunces-latin-400-italic.woff2` | `475b154af19c6b4ef371db22078b5044a078ce2467e11ef22a7b87f77837caf3` |
 
+## Young Serif
+
+- Source: https://github.com/noirblancrouge/YoungSerif
+- Fetched from Google Fonts' self-host mirror (the static woff2 Google serves;
+  the upstream repo publishes no pre-built woff2)
+- License: SIL Open Font License 1.1 (`OFL-YoungSerif.txt`, copied unmodified
+  from `github.com/google/fonts/ofl/youngserif/OFL.txt`)
+
+  | File | Source | SHA-256 |
+  |---|---|---|
+  | `young-serif-regular-400.woff2` | `fonts.gstatic.com/s/youngserif/v2/...woff2` (latin) | `cb3d88bfd03d56f1a73bbd06884f021ec04ca1bf7e50df7f2d10c958822015bf` |
+
 Fetched 2026-08-02 (Atkinson Hyperlegible Next, IBM Plex Mono); Fraunces
-fetched 2026-08-03.
+fetched 2026-08-03; Young Serif fetched 2026-08-05.

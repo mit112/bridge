@@ -19,6 +19,7 @@ from jinja2 import Environment, FileSystemLoader
 
 from bridge.api import _ago, _ago_epoch, _kilo
 from bridge.cards import spark_points
+from bridge.projects_view import group_projects, status_label
 from bridge.config import ModelChoice, PermissionChoice
 from bridge.models import Card
 
@@ -31,6 +32,8 @@ def _module():
     env.filters["ago_epoch"] = _ago_epoch
     env.filters["kilo"] = _kilo
     env.filters["spark_points"] = spark_points
+    env.filters["group_projects"] = group_projects
+    env.filters["status_label"] = status_label
     return env.get_template("_launch.html").module
 
 

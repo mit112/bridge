@@ -269,6 +269,20 @@ function applyProjectsFilter() {
       row.hidden = !visible;
       if (visible) shown += 1;
     });
+    // Group-aware: a group with no visible rows collapses out of the way, and
+    // a group that still has matches is forced open whenever a search or a
+    // non-"all" filter is active -- otherwise the result the user is looking
+    // for could sit behind a summary that started collapsed. When neither is
+    // active, the server-rendered `open` state (and any the user set by hand)
+    // is left alone.
+    const narrowing = Boolean(query) || filter !== "all";
+    document.querySelectorAll("[data-project-group]").forEach((group) => {
+      const hasVisible = Array.from(
+        group.querySelectorAll("[data-project-row-item]"),
+      ).some((row) => !row.hidden);
+      group.hidden = !hasVisible;
+      if (hasVisible && narrowing) group.open = true;
+    });
   }
 
   const count = document.querySelector("[data-projects-count]");

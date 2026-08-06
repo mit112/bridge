@@ -5,7 +5,11 @@
    percentage-of-cap math happens here); autoescape stays on for all of it,
    so nothing here is ever marked `safe`. #}
 
-{% macro status_pill(state) %}<span class="pill pill--{{ state }}">{{ state }}</span>{% endmacro %}
+{# The class stays keyed off the raw state (CSS/JS/mutation anchors depend on
+   it); the visible text is the humanized label so no surface shows the bare
+   enum. Callers with an already-human label (Overview's attention cards) pass
+   it as `text`. #}
+{% macro status_pill(state, text=none) %}<span class="pill pill--{{ state }}">{{ text if text is not none else state | status_label }}</span>{% endmacro %}
 
 {# Colour plus a word, never colour alone. These leaves are always present so
    a live tick can patch an ended or unavailable state without building a
@@ -54,14 +58,20 @@
 {# `show_remote` adds the ahead/behind "Remote" column. Off by default so the
    Overview recent list keeps its three-track grid; only the Projects index
    opts in (and re-tracks `.projects-index .project-row` to four columns). #}
-{% macro project_summary_row(summary, show_remote=False) %}
+{% macro project_summary_row(summary, show_remote=False, show_status=True) %}
 <div class="project-row">
   <span class="project-row__identity">
     <span class="project-row__name">{{ summary.name }}</span>
-    <code class="project-row__path">{{ summary.path }}</code>
+    {# `title` is the affordance for the left-truncation the Projects index does
+       to this path: the leaf stays visible, the full path is one hover away.
+       Harmless on the Overview's Recent list, which shows the path untruncated. #}
+    <code class="project-row__path" title="{{ summary.path }}">{{ summary.path }}</code>
   </span>
   <span class="project-row__activity">
-    {{ status_pill(summary.status_word) }}
+    {# On the grouped Projects index the group header already names the state,
+       so the row drops its own pill (the caller passes show_status=False) and
+       leads with the branch. Overview's flat Recent list keeps the pill. #}
+    {% if show_status %}{{ status_pill(summary.status_word) }}{% endif %}
     {% if summary.branch %}<span class="project-row__branch">{{ summary.branch }}</span>{% endif %}
     {% if summary.dirty_count %}<span class="project-row__dirty">{{ summary.dirty_count }} dirty</span>{% endif %}
     {% if summary.last_session_title %}
