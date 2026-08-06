@@ -1,4 +1,4 @@
-{% extends "base.html" %}
+{% extends layout|default("base.html") %}
 {% block title %}{{ model.project.name }} — Bridge{% endblock %}
 {% block page_eyebrow %}
 <nav class="breadcrumb" aria-label="Breadcrumb">

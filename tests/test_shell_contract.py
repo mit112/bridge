@@ -130,17 +130,21 @@ def test_no_template_overrides_the_scripts_block():
     )
 
 
-def test_router_only_intercepts_the_sidebar_destinations():
-    """Widening this silently is how /project/{id} would start swapping.
-
-    That route has no fragment mode (Task 8), so intercepting a link to it would
-    swap in a whole document -- sidebar and all -- into the content region.
+def test_router_intercepts_the_sidebar_destinations_and_the_project_workspace():
+    """The workspace has a fragment mode now, so the router swaps it -- and its
+    tabs and the history tables' sort/filter/pager, which all share the
+    /project/{id} path -- instead of tearing down the shell on every click. The
+    five sidebar destinations stay swappable, and the workspace match is scoped
+    to a numeric id so it can never widen to some other /project/... subpath.
     """
     text = source("router.js")
     assert "SWAPPABLE" in text
     for path in ('"/"', '"/projects"', '"/schedule"', '"/diagnostics"', '"/settings"'):
         assert path in text
-    assert "/project/" not in text
+    # The workspace path is matched by a numeric-id regex, not added to the Set
+    # (comments are stripped by `source`, so this sees only real code).
+    assert "WORKSPACE_PATH" in text
+    assert r"\/project\/" in text
 
 
 def test_router_falls_back_to_a_normal_navigation():

@@ -132,12 +132,12 @@
     "expect_count": 1
   },
   {
-    "name": "widen SWAPPABLE to include the project detail route",
+    "name": "stop treating the project workspace as swappable, so navigating into a project (and between its tabs) stays a full-load shell-teardown flash",
     "file": "src/bridge/static/router.js",
-    "old": "const SWAPPABLE = new Set([\"/\", \"/projects\", \"/schedule\", \"/diagnostics\", \"/settings\"]);",
-    "new": "const SWAPPABLE = new Set([\"/\", \"/projects\", \"/schedule\", \"/diagnostics\", \"/settings\", \"/project/\"]);",
+    "old": "  return SWAPPABLE.has(url.pathname) || WORKSPACE_PATH.test(url.pathname);",
+    "new": "  return SWAPPABLE.has(url.pathname);",
     "tests": [
-      "tests/test_shell_contract.py::test_router_only_intercepts_the_sidebar_destinations"
+      "tests/test_swap_lifecycle.py::test_router_swaps_a_navigation_into_the_project_workspace"
     ],
     "expect_count": 1
   },

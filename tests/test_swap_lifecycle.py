@@ -368,6 +368,41 @@ def test_router_ignores_a_modified_click_on_a_swappable_link(tmp_path):
     assert got["fetches"] == 0
 
 
+def test_router_swaps_a_navigation_into_the_project_workspace(tmp_path):
+    """/project/{id} is a swap target now, so bridgeNavigate() to a workspace URL
+    (the "Open project" link, and by the shared path every in-project
+    tab/sort/filter/pager link) fetches the fragment instead of doing a full
+    load -- that full document load is the shell-teardown flash this removes. A
+    NON-swappable path would call location.assign() straight away and never
+    fetch, so a single fetch carrying the fragment header proves the workspace
+    path went through the swap route. Mirrors the failed-fetch test's shape
+    (ok:false so it never reaches the fragment parse)."""
+    got = run_js(
+        """
+        globalThis.fetch = (url, opts) => {
+          globalThis.__calls.fetch.push({ url, opts });
+          return Promise.resolve({ ok: false, status: 500 });
+        };
+        (async () => {
+          await window.bridgeNavigate("/project/7?tab=sessions");
+          report({
+            fetches: globalThis.__calls.fetch.length,
+            header: globalThis.__calls.fetch[0]
+              ? globalThis.__calls.fetch[0].opts.headers["X-Bridge-Fragment"] : null,
+          });
+        })();
+        """,
+        ["shell.js", "router.js"],
+        tmp_path,
+    )
+    assert got["fetches"] == 1, (
+        "bridgeNavigate to a /project/{id} URL did not fetch a fragment -- the "
+        "workspace path is not being treated as swappable, so it stays a full "
+        "load (the shell-teardown flash)"
+    )
+    assert got["header"] == "1", "the swap fetch must ask for the fragment payload"
+
+
 def test_router_lets_the_browser_handle_a_same_document_hash_link(tmp_path):
     """The skip-link (base.html:101, `<a class="skip-link" href="#main">`,
     present on every page) is an in-page focus jump, not a navigation.

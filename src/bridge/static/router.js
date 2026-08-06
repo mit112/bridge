@@ -12,8 +12,16 @@
 
 const SWAPPABLE = new Set(["/", "/projects", "/schedule", "/diagnostics", "/settings"]);
 
+// The project workspace and everything inside it -- its tabs, and the history
+// tables' sort/filter/pager, which only vary the query string -- share the
+// `/project/{id}` path. It has a fragment mode too, so it swaps like the
+// sidebar destinations instead of tearing the shell down on every tab click.
+// Scoped to a numeric id so it can never widen to some other /project/... path.
+const WORKSPACE_PATH = /^\/project\/\d+$/;
+
 function swappable(url) {
-  return url.origin === window.location.origin && SWAPPABLE.has(url.pathname);
+  if (url.origin !== window.location.origin) return false;
+  return SWAPPABLE.has(url.pathname) || WORKSPACE_PATH.test(url.pathname);
 }
 
 function parseFragment(html) {

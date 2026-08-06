@@ -988,6 +988,10 @@ def create_app(
             {
                 "model": model,
                 "active": "projects",
+                # The workspace is a swap target: with the fragment header the
+                # router swaps it (and its tabs/sort/filter) into the persistent
+                # shell instead of tearing the shell down on every click.
+                "layout": _layout_for(request),
                 # The schedule mini-form's hint line reads the same
                 # across-every-project total the dashboard's own compose box
                 # shows -- summed directly off `store.token_totals`, the exact
