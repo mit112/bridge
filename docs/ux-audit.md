@@ -82,7 +82,7 @@ No locked constraint is wrong.
 
 ## Status update — 2026-08-05 (de-AI / readability pass)
 
-This audit's structural and cheap-win lanes shipped earlier under the product-redesign SDD. A later polish pass, driven by three owner complaints plus a "read less like generic AI" ask, shipped on branch `feat/bridge-deai-projects` (pushed @ `be66384`, 1169 passing, **not yet merged to main**). Three commits:
+This audit's structural lane, and most of its cheap-win lane, shipped earlier under the product-redesign SDD. (**Corrected 2026-08-06** — this sentence originally claimed the cheap-win lane had shipped in full. It had not; see the correction at the foot of this document for the three items that were still open when it was written.) A later polish pass, driven by three owner complaints plus a "read less like generic AI" ask, shipped on branch `feat/bridge-deai-projects` (pushed @ `be66384`, 1169 passing, **not yet merged to main**). Three commits:
 
 - `e6792b4` **Projects de-AI + readability.** Grouped, collapsible status sections (state carried by the group header's dot + label, so rows dropped their per-row pill and faint left edge); `stale` now labelled "Uncommitted"; Fraunces → **Young Serif** (OFL) display face; the `.page-head` Scotch double-rule → one hairline app-wide. Readability: the last-session note un-inked to muted so the serif name is the sole ink per row; the path left-truncated to its leaf (full value in `title`) instead of wrapping; sticky group headers.
 - `aacee03` **De-tint status cards + nav.** Removed the coloured accent bar across the top of every card (Overview attention cards, Projects grid cards, the schedule empty-agenda panel) and the sidebar active-item's terracotta left bar — the accent-bar-on-a-panel was the generic-AI tell. Status colour now lives only on small labels/words, never a bar. Extends this audit's P1 palette-restraint finding.
@@ -101,3 +101,76 @@ The de-AI branch's remaining follow-ups shipped and the whole branch merged to `
 Investigating the "one status word / one launch verb" goal showed the app was already unified where it mattered (shared `status_label`; "Unavailable" the lone can't-determine word). The remaining apparent divergences are intentional and the owner confirmed keeping them: Overview attention **kickers stay action headlines** ("Needs review" / "Working now", not state nouns); **launch verbs stay context-differentiated** ("Start session" / "Continue in Terminal" / "Run now"); the **project detail page keeps no status pill** (adding one would be a design addition, declined).
 
 Still open, all taste/visual and undirected: the full colour-discipline sweep (reserve terracotta for meaning), tokenising the stray hardcoded pill radii (10/11px), and — if it proves distracting — making the collapse-state restore flash-free with a pre-paint hook.
+
+## Status update — 2026-08-06 (external audit triage, and a correction)
+
+Two external audits of the panel (DeepSeek, `~/Downloads/bridge-audit-2026-08-06.md` and
+`bridge-audit-round2-2026-08-06.md`) were verified finding by finding against the code and the
+running panel. Roughly half held as written. Neither document should be acted on directly.
+
+**Correction to the 2026-08-05 entry above.** It claimed this audit's cheap-win lane had shipped.
+Three of its items measurably had not, and re-reading that sentence as fact is why two of them were
+re-discovered by the external pass:
+
+| Cheap-win item | Claimed | Actual, as of 2026-08-06 |
+|---|---|---|
+| Honest empty/cap copy on detail history (lane item 5) | shipped | **Not shipped.** No `empty_state` call in `project.html` or `_workspace_history.html`. |
+| History caps surfaced with counts (P1, `store.py:386,454,543`) | shipped | **Not shipped.** `sessions`/`handoffs`/`launches` still take a silent `limit=50`; no count, no paging. |
+| Pin/Restore stop telling the user to reload (P0) | shipped | **Not shipped.** `projects.js:85,185` still say "reload to re-sort" and "reload to see its card". |
+
+Everything else in the cheap-win lane did land. The rest of the ranked table above has **not** been
+re-verified row by row in this pass, so it carries no status column — an unverified column would be
+the same failure again, one table wider.
+
+### Shipped in this pass
+
+Truth-in-UI:
+
+- **Overview attention state follows the session status** (`c9e75bc`, merged `4124bf9`). The
+  attention pill was derived from `card.live is not None`, so a merely-present session rendered
+  "Working now" directly above "Session idle" and inflated the "N items need your attention"
+  headline. Also fixed: a literal `None` as the project name in Up next, `1 files changed`, and
+  `47 uncommitted change(s)`.
+- **The command strip's six numbers now update.** Every visible cell carries
+  `data-dashboard-total`; live.js resolves each hook with `querySelectorAll` rather than
+  `querySelector`, so the on-screen number is patched instead of only its hidden twin inside the
+  collapsed `<details>`. `attention` joins the `topbar` envelope (it had no wire representation at
+  all) and a cell's colour now follows the count it was given.
+- **Freshness casing.** "connected" → "Connected", in `_shell.html` *and* `live.js` — the first SSE
+  tick overwrites the server-rendered word, so casing only the template reverted within a second.
+  The `data-freshness-state` attribute stays lowercase.
+- **The project page can report an unavailable server.** It overrides `shell_status` for its own
+  git cache age and hardcoded "Connected" doing so, making the one page launches are started from
+  the one page structurally unable to show the warning.
+
+Hygiene and hardening:
+
+- Distinct `<title>` on all six routes (four defaulted to the bare word "Bridge").
+- A 404 answers a page URL with a page; `/api/` keeps its `{"detail": ...}` JSON contract.
+- `launcher.launch` refuses a `project_path` that is not a directory, before `resolve_project` can
+  create a registry row for a project that does not exist.
+- An Origin check on unsafe methods. Binding `127.0.0.1` keeps other machines out but not a page in
+  this machine's browser, and `/api/refresh`, schedule `run-now` and schedule `retry` take no body —
+  exactly what a cross-origin form post can reach. Absent `Origin` stays allowed, so the CLI and the
+  hook dispatcher are unaffected.
+- `X-Content-Type-Options: nosniff` on every response.
+- `shell.js` clears the narrow-width nav collapse when the window crosses back above 1024px.
+  Previously the nav stayed `hidden` with the only control that could restore it now `display:none`.
+
+### Rejected, with reasons — do not re-adopt from either audit
+
+- **Their launch fix** (gate on `resolve_project` returning an already-indexed project).
+  `resolve_project` *creates* rows by design; `tests/test_api.py`'s "capturing a handoff must never
+  404 because the project is unindexed" depends on that. It would break the first launch out of any
+  fresh repo. The `is_dir()` guard above is the version that holds.
+- **Their CSP.** It omits `script-src`, which kills the pre-paint theme guard in `base.html` — a
+  white flash on every navigation, to fix nothing.
+- **A token gate on /diagnostics.** The token has to ship in the page; it defends against nothing.
+- CSS pruning, extra font preloads (Young Serif is one variable face and is already preloaded),
+  `<h2>` inside `<summary>`, and demoting the sidebar group headings.
+
+### Still open
+
+- The three corrected cheap-win items in the table above.
+- The structural lane's history integrity work (HTML scheduled history, counts, filters, paging),
+  unchanged since 2026-08-02.
