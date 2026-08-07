@@ -184,6 +184,15 @@ let lastIndexAt = null;
 let lastConnectionState = null;
 let transportReconnecting = false;
 
+// Frame fan-out: liverefresh.js subscribes here rather than opening a second
+// EventSource. Additive -- Overview patching below is unchanged.
+const frameListeners = [];
+function emitFrame(payload) {
+  for (const fn of frameListeners) {
+    try { fn(payload); } catch (error) { console.error("bridge: frame listener failed", error); }
+  }
+}
+
 function initialIndexAt() {
   const strip = query("[data-freshness-strip]");
   if (!strip) return null;
@@ -359,6 +368,7 @@ function connect() {
       return;
     }
     frames += 1;
+    emitFrame(payload);
     if (healthy(frames, openedAt)) backoffMs = BACKOFF_MIN_MS;
     if (payload.schema === 1) applyDashboardUpdate(payload);
     else {
@@ -394,3 +404,4 @@ if (typeof setInterval === "function") {
 
 window.bridgeApplyDashboardUpdate = applyDashboardUpdate;
 window.bridgeLiveSource = liveSource;
+window.bridgeLive = { onFrame(fn) { frameListeners.push(fn); }, _emit: emitFrame };
