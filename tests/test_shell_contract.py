@@ -15,7 +15,8 @@ STATIC = Path(__file__).resolve().parent.parent / "src" / "bridge" / "static"
 TEMPLATES = Path(__file__).resolve().parent.parent / "src" / "bridge" / "templates"
 
 PAGE_SCRIPTS = ["shell.js", "copy.js", "launch.js", "schedule.js",
-                "live.js", "projects.js", "settings.js", "router.js"]
+                "live.js", "projects.js", "settings.js", "router.js",
+                "liverefresh.js"]
 
 def source(name: str) -> str:
     """Source with comments stripped.
@@ -91,7 +92,8 @@ def test_no_module_scope_dom_capture(name):
 
 
 @pytest.mark.parametrize(
-    "name", ["settings.js", "schedule.js", "projects.js", "launch.js", "live.js"]
+    "name", ["settings.js", "schedule.js", "projects.js", "launch.js", "live.js",
+             "liverefresh.js"]
 )
 def test_per_page_behaviour_is_registered_on_the_registry(name):
     assert "bridgePage.onEnter" in source(name), (
