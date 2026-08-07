@@ -229,3 +229,12 @@ def test_every_selector_is_one_the_harness_can_parse():
         f"selector or teach tests/js/minidom.js the form -- do not leave the "
         f"harness silently mis-modelling the code under test."
     )
+
+
+def test_router_exposes_the_fragment_parser_for_reuse():
+    """liverefresh.js reuses router.js's parser instead of shipping a second one."""
+    text = source("router.js")
+    assert "window.bridgeFragment" in text, (
+        "router.js must expose its fragment parser as window.bridgeFragment "
+        "so the live-refresh controller can reuse it"
+    )
