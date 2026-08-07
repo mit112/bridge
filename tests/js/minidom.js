@@ -86,6 +86,7 @@ class El {
   setAttribute(name, value) { this.attrs.set(name, String(value)); }
   removeAttribute(name) { this.attrs.delete(name); }
   hasAttribute(name) { return this.attrs.has(name); }
+  getAttributeNames() { return [...this.attrs.keys()]; }
   get textContent() { return this._text; }
   set textContent(v) { this._text = String(v); this.children = []; }
   append(child) { child.parent = this; this.children.push(child); }
@@ -94,6 +95,20 @@ class El {
     const i = this.parent.children.indexOf(this);
     if (i >= 0) this.parent.children.splice(i, 1);
     this.parent = null;
+  }
+  insertBefore(node, ref) {
+    // Real DOM insertBefore MOVES the node: detach from its current parent
+    // first, or a reorder would clone it into two places. minidom's `append`
+    // deliberately does not detach, so morph uses this exclusively.
+    if (node.parent) {
+      const j = node.parent.children.indexOf(node);
+      if (j >= 0) node.parent.children.splice(j, 1);
+    }
+    node.parent = this;
+    if (ref == null) { this.children.push(node); return node; }
+    const i = this.children.indexOf(ref);
+    this.children.splice(i < 0 ? this.children.length : i, 0, node);
+    return node;
   }
   descendants() {
     const out = [];
