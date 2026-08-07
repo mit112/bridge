@@ -52,10 +52,21 @@ on intentional navigation) would destroy all of that on every background tick �
 unacceptable for an update the user did not ask for. This is the standard
 htmx/Turbo "HTML over the wire" pattern.
 
-**Vendor idiomorph** (single MIT-licensed file, small) as `static/vendor/
-idiomorph.js`, rather than hand-rolling a DOM differ. It is the battle-tested
-standard for this exact problem and is less code for the project to own and
-maintain — the correct "small dependency" tier for an OSS project.
+**Hand-roll a minimal morph** as `static/morph.js` — no third-party JS. The
+rest of the client is dependency-free hand-written code, and Bridge's morph
+needs are narrow: same-URL, same-route re-renders where the tree shape is
+overwhelmingly stable. We do not need a general-purpose differ, only enough to
+walk two sibling lists in parallel and reconcile them:
+
+- Match children by a stable key (`id`, then a `data-key`/`data-*-card`-style
+  identity attribute the templates already use, else position) so reordered or
+  added/removed rows move rather than being torn down and rebuilt.
+- Recurse into matched elements of the same tag; for a matched element, sync
+  attributes (add/update/remove) and, if it has no element children, sync text.
+- Skip any node the ignore predicate protects (see volatile-node markup).
+
+This is a small, well-bounded, testable unit — deliberately less capable than
+idiomorph, matched to exactly the re-renders Bridge produces.
 
 **Overview stays surgical.** `live.js` already patches Overview leaves at ~3s
 granularity and carries many documented, tested bug fixes. It is kept and
@@ -66,9 +77,10 @@ explicitly out of scope here.)
 
 ## Components
 
-### 1. `static/vendor/idiomorph.js` (new, vendored)
-The morph library, unmodified, with its license header intact. Exposed as
-`Idiomorph` for the controller.
+### 1. `static/morph.js` (new, hand-rolled)
+A minimal keyed DOM morph (see Approach). Pure function of
+`(liveNode, incomingNode, ignorePredicate)` with no I/O, so it is unit-testable
+in isolation. Exposed as `window.bridgeMorph` for the controller and tests.
 
 ### 2. `static/liverefresh.js` (new)
 The controller. Responsibilities, each independently testable:
@@ -100,7 +112,7 @@ them:
   overwrite in-flight input. Already treated as an identity boundary by
   `live.js`.
 - Any **focused input** and **open menu / popover** — handled at morph time via
-  idiomorph's ignore callback keyed on `document.activeElement` and an
+  the morph's ignore predicate keyed on `document.activeElement` and an
   `[data-live-preserve]` attribute for statically-known volatile nodes.
 
 ### 4. `live.js` — small extension (no rewrite)
@@ -143,8 +155,9 @@ RefreshCoordinator (reindex ~15s)   agents.probe (status ~3s)
   intact content is correct). Retry on the next signal.
 - **Malformed / unusable fragment:** same — keep current DOM, log to console,
   retry next signal.
-- **Morph library absent (defensive):** controller no-ops; surfaces behave
-  exactly as today (update on navigation only). Progressive enhancement is
+- **Morph throws (defensive):** the controller catches, leaves the current DOM
+  intact, logs to console, and retries on the next signal. Surfaces degrade to
+  today's behavior (update on navigation only). Progressive enhancement is
   preserved.
 - **SSE disconnected:** unchanged from today — `live.js` already handles
   reconnect/backoff and connection-state reporting; the controller just stops
@@ -157,9 +170,12 @@ RefreshCoordinator (reindex ~15s)   agents.probe (status ~3s)
   route; per-project live change triggers on `/project/{id}`; burst coalesces
   to one refresh; refresh deferred while a volatile node is focused / handoff
   is dirty, then runs on the next signal; navigation resets baseline.
-- **Morph preserve tests:** morph HTML with a changed sibling and assert a
-  focused input's value and an open `<details>` survive; assert a
-  `[data-live-preserve]` node is untouched.
+- **Morph unit tests (`morph.js` in isolation):** attribute add/update/remove;
+  text update on a leaf; keyed reconciliation moves/adds/removes rows without
+  rebuilding survivors (assert node identity of an unchanged keyed row is
+  retained); a changed sibling leaves a focused input's value and an open
+  `<details>` intact; a `[data-live-preserve]` node and a focused node are
+  skipped entirely.
 - **Server:** existing fragment-route tests cover the endpoints; add a test
   only if a signal tweak proves necessary.
 - Full existing suite (pytest + JS) must stay green.
