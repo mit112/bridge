@@ -2498,3 +2498,17 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
      is the feedback, the slide is only continuity. */
   .shell { transition: none; }
 }
+
+/* A value the live morph just changed gets a brief tint so the update is
+   perceptible. Colour is a secondary cue only -- the changed text itself is the
+   primary signal -- and motion is dropped entirely under reduced-motion. */
+.live-changed {
+  animation: live-flash 1.2s ease-out;
+}
+@keyframes live-flash {
+  from { background-color: var(--accent-wash, rgba(120, 160, 255, 0.18)); }
+  to   { background-color: transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .live-changed { animation: none; }
+}
