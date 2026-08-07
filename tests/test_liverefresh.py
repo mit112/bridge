@@ -158,6 +158,72 @@ def test_navigating_away_during_an_in_flight_fetch_does_not_clobber_the_new_rout
     assert got["clobbered"] is False, "a stale fetch must never morph into the new route's DOM"
     assert got["fetches"] == 2, "the same-route bump after returning must still get its own fetch"
 
+def test_focus_on_a_non_preserve_node_does_not_abort_the_whole_refresh(tmp_path):
+    # morph.js calls opts.ignore on the ROOT .shell__body first. The old
+    # ignoreNode returned true whenever the root `.contains(activeElement)` --
+    # true any time focus is anywhere in the content area -- so the entire
+    # morph was skipped. A click-focused button (not a data-live-preserve
+    # node) must NOT have that effect: only the exact focused node (and any
+    # data-live-preserve node) may be left untouched; the rest of the tree
+    # still morphs.
+    got = _run("""
+        (async () => {
+        setPath("/schedule");
+        const body = shellBody();
+        const btn = document.createElement("button"); body.append(btn);
+        document.activeElement = btn;                     // simulate click-focus
+        const inc = document.createElement("div"); inc.setAttribute("class", "shell__body");
+        inc.append(document.createElement("p")); window.__parsed = { body: inc };
+        window.bridgePage.enter();
+        window.bridgeLiveRefresh._onFrame({ generation: 1 });
+        window.bridgeLiveRefresh._onFrame({ generation: 2 });   // bump -> refresh
+        window.bridgeLiveRefresh._refreshNow();
+        await new Promise((resolve) => setImmediate(resolve));
+        const tags = Array.from(body.children).map((el) => el.localName || el.tag);
+        report({ tags, stillFocused: document.activeElement === btn });
+        })();
+    """, tmp_path)
+    # Pre-fix, ignoreNode(root) short-circuits the whole morph and `body`
+    # keeps its single original <button> child forever -- this assertion
+    # fails against that code.
+    assert "p" in got["tags"], "the incoming fragment must be morphed in, not aborted at the root"
+    assert "button" in got["tags"], "the focused node itself is still preserved in place"
+    assert got["stillFocused"] is True
+
+def test_a_newer_bump_during_an_in_flight_fetch_is_not_dropped(tmp_path):
+    # If a fresher generation arrives from onFrame while a refresh fetch is
+    # still in flight, the success handler must not blindly null out
+    # pendingGeneration -- doing so would silently drop that newer bump and
+    # the view would never catch up to it. Observe this by checking that a
+    # later _refreshNow() still issues a fetch for the retained bump.
+    got = _run("""
+        (async () => {
+        setPath("/schedule");
+        shellBody();
+        const inc = document.createElement("div"); inc.setAttribute("class", "shell__body");
+        window.__parsed = { body: inc };
+
+        window.bridgePage.enter();
+        window.bridgeLiveRefresh._onFrame({ generation: 1 });   // baseline = 1
+        window.bridgeLiveRefresh._onFrame({ generation: 2 });   // bump -> pending = 2
+        window.bridgeLiveRefresh._refreshNow();                 // fetch #1 in flight
+
+        // A fresher frame lands before fetch #1's .then settles.
+        window.bridgeLiveRefresh._onFrame({ generation: 3 });   // pending -> 3
+
+        await new Promise((resolve) => setImmediate(resolve));  // let fetch #1 settle
+        const fetchesAfterFirst = globalThis.__calls.fetch.length;
+
+        window.bridgeLiveRefresh._refreshNow();                 // should still fire: gen 3 pending
+        report({ fetchesAfterFirst, fetchesAfterSecondCall: globalThis.__calls.fetch.length });
+        })();
+    """, tmp_path)
+    assert got["fetchesAfterFirst"] == 1
+    assert got["fetchesAfterSecondCall"] == 2, (
+        "the newer pending generation (3) must survive fetch #1's success handler "
+        "so a subsequent refresh still fetches instead of no-op'ing"
+    )
+
 def test_a_debounced_burst_schedules_only_one_refresh(tmp_path):
     got = _run("""
         setPath("/schedule");

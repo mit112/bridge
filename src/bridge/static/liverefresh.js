@@ -37,8 +37,7 @@
   function ignoreNode(el) {
     if (!el || !el.hasAttribute) return false;
     if (el.hasAttribute("data-live-preserve")) return true;
-    const active = document.activeElement;
-    if (active && (el === active || (el.contains && el.contains(active)))) return true;
+    if (el === document.activeElement) return true;
     return false;
   }
 
@@ -74,7 +73,7 @@
         if (!liveBody) return;
         window.bridgeMorph(liveBody, parsed.body, { ignore: ignoreNode, onChange: highlight });
         baselineGeneration = generationAtFetch;
-        pendingGeneration = null;
+        if (pendingGeneration != null && pendingGeneration <= generationAtFetch) pendingGeneration = null;
       })
       .catch((error) => { console.error("bridge: live refresh kept stale DOM", error); });
   }
