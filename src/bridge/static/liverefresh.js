@@ -55,12 +55,19 @@
     if (pendingGeneration == null && !workspaceLiveChanged()) return;
     if (protectedFocus()) return;                 // defer: retried on the next frame
     const generationAtFetch = lastSeenGeneration;
+    const pathAtFetch = window.location.pathname;
     fetch(window.location.href, { headers: { "X-Bridge-Fragment": "1" }, credentials: "same-origin" })
       .then((response) => {
         if (!response.ok) throw new Error("HTTP " + response.status);
         return response.text();
       })
       .then((html) => {
+        // The route can change while this fetch is in flight (leave() fires,
+        // a new enter() runs) -- morphing a stale fragment into whatever page
+        // is now on screen, or stamping this fetch's generation onto the new
+        // view's baseline, would both be silent corruption. Bail and keep the
+        // DOM/baseline exactly as the new view already set them.
+        if (!owned || window.location.pathname !== pathAtFetch) return;
         const parsed = window.bridgeFragment.parse(html);
         if (!parsed || !parsed.body) throw new Error("unusable fragment");
         const liveBody = document.querySelector(".shell__body");
@@ -89,7 +96,13 @@
     // No baseline yet for this view (freshest possible reading is this frame
     // itself) -- adopt it rather than comparing against null, which would
     // otherwise never let a first-ever frame establish a baseline to bump from.
-    if (baselineGeneration == null) { baselineGeneration = generation; return; }
+    // A non-finite generation can't serve as a baseline either: NaN fails
+    // every `>` comparison, which would silently wedge refresh off until the
+    // next enter() rather than just waiting for a usable frame.
+    if (baselineGeneration == null) {
+      if (Number.isFinite(generation)) baselineGeneration = generation;
+      return;
+    }
     if (Number.isFinite(generation) && generation > baselineGeneration) {
       pendingGeneration = generation;
       schedule();

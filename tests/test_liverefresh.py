@@ -116,3 +116,65 @@ def test_focus_in_a_protected_node_defers_the_refresh(tmp_path):
     """, tmp_path)
     assert got["deferred"] == 0, "must not refresh while a protected node has focus"
     assert got["after"] == 1
+
+def test_navigating_away_during_an_in_flight_fetch_does_not_clobber_the_new_route(tmp_path):
+    got = _run("""
+        (async () => {
+        setPath("/schedule");
+        const body = shellBody();
+        const marker = document.createElement("span");
+        marker.setAttribute("data-marker", "original"); body.append(marker);
+        const inc = document.createElement("div"); inc.setAttribute("class", "shell__body");
+        inc.append(document.createElement("p")); window.__parsed = { body: inc };
+
+        window.bridgePage.enter();                            // land on /schedule
+        window.bridgeLiveRefresh._onFrame({ generation: 1 });  // baseline = 1
+        window.bridgeLiveRefresh._onFrame({ generation: 2 });  // bump -> pending
+        window.bridgeLiveRefresh._refreshNow();                // fetch #1: in flight, unresolved
+
+        // Navigate to ANOTHER owned route while fetch #1 is still pending --
+        // `owned` stays true, only the path differs, so this exercises the
+        // path check specifically, not just the owned flag.
+        await window.bridgePage.leave();
+        setPath("/diagnostics");
+        window.bridgePage.enter();
+
+        // Let fetch #1's chain fully settle now that the route has moved on.
+        await new Promise((resolve) => setImmediate(resolve));
+
+        const clobbered = body.children.length !== 1 || marker.parent !== body;
+
+        // Back on /schedule, a fresh bump must still get its own fetch --
+        // proof the earlier in-flight fetch never silently consumed this one
+        // by corrupting the baseline.
+        setPath("/schedule");
+        window.bridgePage.enter();
+        window.bridgeLiveRefresh._onFrame({ generation: 3 });
+        window.bridgeLiveRefresh._refreshNow();                // fetch #2
+
+        report({ clobbered, fetches: globalThis.__calls.fetch.length });
+        })();
+    """, tmp_path)
+    assert got["clobbered"] is False, "a stale fetch must never morph into the new route's DOM"
+    assert got["fetches"] == 2, "the same-route bump after returning must still get its own fetch"
+
+def test_a_debounced_burst_schedules_only_one_refresh(tmp_path):
+    got = _run("""
+        setPath("/schedule");
+        shellBody();
+        window.bridgePage.enter();
+        window.bridgeLiveRefresh._onFrame({ generation: 1 });   // baseline = 1
+
+        // minidom's default setTimeout is a no-op that returns 0 (falsy), which
+        // would defeat the `if (timer) return` coalescing check regardless of
+        // whether it works -- a real browser's setTimeout returns a nonzero id.
+        // Swap in a stub that mimics that truthiness so the coalescing branch
+        // is actually exercised.
+        let scheduled = 0;
+        globalThis.setTimeout = (fn, ms) => { scheduled += 1; return scheduled; };
+
+        window.bridgeLiveRefresh._onFrame({ generation: 2 });   // schedules once
+        window.bridgeLiveRefresh._onFrame({ generation: 3 });   // same burst -> coalesced
+        report({ scheduled });
+    """, tmp_path)
+    assert got["scheduled"] == 1, "a burst of bumps within the debounce window must schedule once"
