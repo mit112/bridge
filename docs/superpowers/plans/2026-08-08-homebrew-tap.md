@@ -273,16 +273,23 @@ class Bridge < Formula
   def install
     # Installs Bridge + all resources above into libexec as a venv and links
     # the `bridge` console entry point (pyproject [project.scripts]) into
-    # #{bin}. The keg lives under <prefix>/Cellar/bridge/HEAD-<sha>, which is a
-    # Cellar of /opt/homebrew or /usr/local -- what the app's install_method()
-    # resolves against to detect Homebrew.
+    # #{bin}. The keg lives under <prefix>/Cellar/bridge/HEAD-<sha>, a Cellar of
+    # /opt/homebrew or /usr/local -- what the app's install_method() resolves
+    # against to detect Homebrew.
     virtualenv_install_with_resources
+
+    # A Homebrew install has no PEP 610 direct_url.json, so stamp the resolved
+    # commit into the sentinel installed_sha() falls back to. buildpath is the
+    # git checkout, so rev-parse gives the exact full SHA.
+    sha = Utils.safe_popen_read("git", "-C", buildpath, "rev-parse", "HEAD").strip
+    build_py = Dir[libexec/"lib/python*/site-packages/bridge/_build.py"].first
+    (Pathname.new(build_py)).atomic_write(%Q(COMMIT_SHA = "#{sha}"\n)) if build_py && sha.match?(/\A[0-9a-f]{40}\z/)
   end
 
   test do
     # No network, no LaunchAgent: just prove the entry point runs and reports
-    # a version line. HEAD builds have .git, so the hatchling build hook injects
-    # the SHA and --version succeeds.
+    # a version line. The install step stamped the resolved commit into
+    # _build.py, so --version reports a real SHA.
     assert_match(/\d|unknown/i, shell_output("#{bin}/bridge --version"))
   end
 end

@@ -4,9 +4,9 @@
 
 **Goal:** Give Bridge one shared `bridge update` engine plus a background update-check and a secured one-click panel button, so friends tracking `main` HEAD can stay current safely.
 
-**Architecture:** A hatchling build hook stamps the exact built commit into a generated `src/bridge/_build.py` shipped in the wheel. A new `bridge.update` module is the single primitive both the CLI (`bridge update`) and the panel button (`POST /api/update`) call: it detects the install method by resolving the running executable against package-manager prefixes, resolves the remote SHA with `git ls-remote`, classifies current/behind/diverged/unknown (fail-closed), and runs the install as a lockfile-guarded transaction that verifies a fresh PID reports the target SHA and rolls back on mismatch. A bounded worker thread — isolated from the 15s refresh loop — polls the remote SHA on a ~30-minute cache and surfaces an `update` object on the status API the panel already polls (`/api/diagnostics`). The panel shows a per-SHA-dismissible banner with a copy-able `bridge update` fallback and a secured one-click button.
+**Architecture:** Bridge learns its own commit from the PEP 610 `direct_url.json` the installer records for git installs (`vcs_info.commit_id`), falling back to a plain committed `src/bridge/_build.py` sentinel that the Homebrew formula stamps at install time — no build hook. A new `bridge.update` module is the single primitive both the CLI (`bridge update`) and the panel button (`POST /api/update`) call: it detects the install method by resolving the running executable against package-manager prefixes, resolves the remote SHA with `git ls-remote`, classifies current/behind/diverged/unknown (fail-closed), and runs the install as a lockfile-guarded transaction that verifies a fresh PID reports the target SHA and rolls back on mismatch. A bounded worker thread — isolated from the 15s refresh loop — polls the remote SHA on a ~30-minute cache and surfaces an `update` object on the status API the panel already polls (`/api/diagnostics`). The panel shows a per-SHA-dismissible banner with a copy-able `bridge update` fallback and a secured one-click button.
 
-**Tech Stack:** Python 3.13, FastAPI + uvicorn + jinja2, hatchling build (custom build hook), uv-managed, pytest + `fastapi.testclient.TestClient`, macOS-only. stdlib `subprocess`, `urllib`, `threading`, `secrets`, `tomllib`.
+**Tech Stack:** Python 3.13, FastAPI + uvicorn + jinja2, hatchling build (no custom hook), uv-managed, pytest + `fastapi.testclient.TestClient`, macOS-only. stdlib `subprocess`, `urllib`, `threading`, `secrets`, `tomllib`, `importlib.metadata`, `json`.
 
 ## Global Constraints
 
@@ -54,7 +54,7 @@ class UpdateResult:
     error: str | None
     rolled_back: bool
 
-def installed_sha() -> str | None: ...                       # _build.COMMIT_SHA; None for "unknown"/dev
+def installed_sha() -> str | None: ...                       # PEP 610 direct_url.json vcs commit; else _build sentinel; None for dev
 def install_method() -> InstallMethod: ...
 def resolve_remote_sha(url: str = REPO_URL, ref: str = REPO_REF,
                        timeout: float = 8.0) -> str | None: ...  # None on failure (fail closed)
@@ -67,177 +67,196 @@ The status API `update` object (on `GET /api/diagnostics`) is exactly `asdict(Up
 
 ---
 
-### Task 1: Build hook stamps the built commit into `_build.py`
+### Task 1: `installed_sha()` via PEP 610 `direct_url.json` (+ `update.py` skeleton + `_build.py` sentinel)
 
 **Files:**
-- Create: `tools/build_hooks.py` (hatchling `BuildHookInterface`)
-- Create: `src/bridge/_build.py` (dev-install sentinel, committed; overwritten in wheels)
-- Modify: `pyproject.toml` (register the build hook + include `tools` already present in sdist)
-- Test: `tests/test_build_hook.py`
+- Create: `src/bridge/update.py` (module skeleton: constants, dataclasses, `installed_sha()`)
+- Create: `src/bridge/_build.py` (plain committed sentinel `COMMIT_SHA = "unknown"`; the Homebrew formula stamps the real SHA at install — see Plan 3. NO build hook, NO pyproject change.)
+- Test: `tests/test_update_installed_sha.py`
 
 **Interfaces:**
-- Produces: module `bridge._build` exposing `COMMIT_SHA: str`. Committed value is the sentinel `"unknown"`. A wheel/sdist build overwrites it with the exact built commit or **raises** (build fails) when it cannot be determined for a distributable build.
+- Produces: `src/bridge/update.py` exposing `REPO_URL`, `REPO_REF`, the `InstallMethod`/`Classification` Literals, the frozen `UpdateState` and `UpdateResult` dataclasses (verbatim from the Shared Interface Contract), and `installed_sha() -> str | None`. `installed_sha()` returns the full 40-hex commit from the installer's `direct_url.json` (`vcs_info.commit_id`) for a git install; else the `_build.COMMIT_SHA` sentinel when a formula has stamped a real SHA; else `None` (editable/dev/unknown → never nudge).
+- Consumes: nothing (first task).
 
 - [ ] **Step 1: Write the failing test**
 
 ```python
-# tests/test_build_hook.py
-import importlib
-import subprocess
-
-import pytest
-
-import bridge._build as build_mod
-from tools.build_hooks import BridgeBuildHook, _resolve_commit_sha
-
-
-def test_committed_sentinel_is_unknown():
-    # The value checked into src/ is the dev sentinel; wheels overwrite it.
-    importlib.reload(build_mod)
-    assert build_mod.COMMIT_SHA == "unknown"
-
-
-def test_resolve_commit_sha_reads_git_head(tmp_path):
-    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
-    subprocess.run(["git", "config", "user.email", "t@t"], cwd=tmp_path, check=True)
-    subprocess.run(["git", "config", "user.name", "t"], cwd=tmp_path, check=True)
-    (tmp_path / "f").write_text("x")
-    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
-    subprocess.run(["git", "commit", "-qm", "init"], cwd=tmp_path, check=True)
-    head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=tmp_path,
-                          capture_output=True, text=True, check=True).stdout.strip()
-    assert _resolve_commit_sha(str(tmp_path)) == head
-
-
-def test_resolve_commit_sha_raises_without_git(tmp_path):
-    # A distributable build with no .git must fail, not ship "unknown".
-    with pytest.raises(RuntimeError, match="commit SHA"):
-        _resolve_commit_sha(str(tmp_path))
-```
-
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `uv run pytest tests/test_build_hook.py -v`
-Expected: FAIL — `ModuleNotFoundError: No module named 'tools.build_hooks'` / `bridge._build`.
-
-- [ ] **Step 3: Write the committed sentinel module**
-
-```python
-# src/bridge/_build.py
-"""Build-stamped commit SHA. The value committed here is the dev sentinel;
-a hatchling build hook overwrites it in the wheel/sdist with the exact built
-commit (or fails the build). Editable/dev installs keep 'unknown' and never
-trigger an update nudge."""
-
-COMMIT_SHA = "unknown"
-```
-
-- [ ] **Step 4: Write the build hook**
-
-```python
-# tools/build_hooks.py
-"""Hatchling build hook: stamp bridge/_build.py with the exact built commit.
-
-A distributable build that cannot determine its commit FAILS rather than
-shipping 'unknown' -- an unknown-SHA wheel could never verify a post-install
-match, so it is not distributable."""
-
-from __future__ import annotations
-
-import subprocess
-from pathlib import Path
-
-from hatchling.builders.hooks.plugin.interface import BuildHookInterface
-
-_TARGET = "src/bridge/_build.py"
-
-
-def _resolve_commit_sha(root: str) -> str:
-    try:
-        proc = subprocess.run(
-            ["git", "-C", root, "rev-parse", "HEAD"],
-            capture_output=True, text=True, check=False,
-        )
-    except (OSError, ValueError) as exc:
-        raise RuntimeError(f"cannot determine build commit SHA: {exc}") from exc
-    sha = proc.stdout.strip()
-    if proc.returncode != 0 or len(sha) != 40:
-        raise RuntimeError(
-            "cannot determine build commit SHA (no .git / not a commit); "
-            "refusing to build a distributable with an unknown SHA"
-        )
-    return sha
-
-
-class BridgeBuildHook(BuildHookInterface):
-    PLUGIN_NAME = "bridge-build"
-
-    def initialize(self, version: str, build_data: dict) -> None:
-        sha = _resolve_commit_sha(self.root)
-        target = Path(self.root) / _TARGET
-        target.write_text(f'COMMIT_SHA = "{sha}"\n', encoding="utf-8")
-```
-
-- [ ] **Step 5: Register the hook in `pyproject.toml`**
-
-Add under `[build-system]` and a hook table. `tools` is already in the sdist `only-include`.
-
-```toml
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
-
-[tool.hatch.build.hooks.custom]
-path = "tools/build_hooks.py"
-```
-
-- [ ] **Step 6: Run tests to verify they pass**
-
-Run: `uv run pytest tests/test_build_hook.py -v`
-Expected: PASS (all three).
-
-- [ ] **Step 7: Verify an actual build stamps the SHA**
-
-Run: `uv build 2>&1 | tail -3 && python -c "import zipfile,glob; z=zipfile.ZipFile(sorted(glob.glob('dist/*.whl'))[-1]); print(z.read('bridge/_build.py').decode())"`
-Expected: prints `COMMIT_SHA = "<40-hex>"` (not `"unknown"`).
-
-- [ ] **Step 8: Commit**
-
-```bash
-git add tools/build_hooks.py src/bridge/_build.py pyproject.toml tests/test_build_hook.py
-git commit -m "feat: stamp built commit SHA into _build.py via build hook"
-```
-
----
-
-### Task 2: `installed_sha()` + `install_method()`
-
-**Files:**
-- Create: `src/bridge/update.py`
-- Test: `tests/test_update_detect.py`
-
-**Interfaces:**
-- Consumes: `bridge._build.COMMIT_SHA` (Task 1).
-- Produces:
-  - `installed_sha() -> str | None` — returns `_build.COMMIT_SHA`, or `None` when it is `"unknown"` or empty.
-  - `install_method() -> InstallMethod` where `InstallMethod = Literal["uv", "brew", "dev", "unknown"]`.
-  - Module constants `REPO_URL`, `REPO_REF`.
-
-- [ ] **Step 1: Write the failing test**
-
-```python
-# tests/test_update_detect.py
+# tests/test_update_installed_sha.py
+import json
 import bridge.update as U
 
 
-def test_installed_sha_none_for_unknown(monkeypatch):
+def test_git_install_returns_vcs_commit(monkeypatch):
+    payload = json.dumps({"url": U.REPO_URL,
+                          "vcs_info": {"vcs": "git", "commit_id": "a" * 40}})
+    monkeypatch.setattr(U, "_read_direct_url", lambda: payload)
+    assert U.installed_sha() == "a" * 40
+
+
+def test_editable_install_returns_none(monkeypatch):
+    payload = json.dumps({"url": "file:///repo", "dir_info": {"editable": True}})
+    monkeypatch.setattr(U, "_read_direct_url", lambda: payload)
     monkeypatch.setattr(U._build, "COMMIT_SHA", "unknown")
     assert U.installed_sha() is None
 
 
-def test_installed_sha_returns_stamped(monkeypatch):
-    monkeypatch.setattr(U._build, "COMMIT_SHA", "a" * 40)
-    assert U.installed_sha() == "a" * 40
+def test_falls_back_to_build_sentinel(monkeypatch):
+    monkeypatch.setattr(U, "_read_direct_url", lambda: None)  # no direct_url (e.g. Homebrew)
+    monkeypatch.setattr(U._build, "COMMIT_SHA", "b" * 40)
+    assert U.installed_sha() == "b" * 40
+
+
+def test_unknown_when_no_source(monkeypatch):
+    monkeypatch.setattr(U, "_read_direct_url", lambda: None)
+    monkeypatch.setattr(U._build, "COMMIT_SHA", "unknown")
+    assert U.installed_sha() is None
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `uv run pytest tests/test_update_installed_sha.py -v`
+Expected: FAIL — `ModuleNotFoundError: No module named 'bridge.update'`.
+
+- [ ] **Step 3: Write the `_build.py` sentinel**
+
+```python
+# src/bridge/_build.py
+"""Commit-SHA sentinel. A plain committed module — NOT written by any build
+hook. Editable/dev installs keep "unknown". The Homebrew formula overwrites
+COMMIT_SHA with the resolved commit at install time (see the Homebrew plan);
+git installs via uv don't need it because installed_sha() reads the commit
+from the installer's PEP 610 direct_url.json instead."""
+
+COMMIT_SHA = "unknown"
+```
+
+- [ ] **Step 4: Write the `update.py` skeleton + `installed_sha()`**
+
+```python
+# src/bridge/update.py
+"""The one update primitive the CLI (`bridge update`) and the panel button
+(`POST /api/update`) both call.
+
+It never installs the floating `@main`: the check resolves a concrete SHA and
+the install pins that exact SHA. The running commit is read from the installer's
+PEP 610 `direct_url.json` (git installs), falling back to the `_build` sentinel
+that the Homebrew formula stamps."""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+import re
+import shutil
+import subprocess
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Literal
+
+from bridge import _build
+
+log = logging.getLogger(__name__)
+
+REPO_URL = "https://github.com/mit112/bridge.git"
+REPO_REF = "refs/heads/main"
+
+InstallMethod = Literal["uv", "brew", "dev", "unknown"]
+Classification = Literal["current", "behind", "diverged", "unknown"]
+
+_SHA_RE = re.compile(r"\A[0-9a-f]{40}\Z")
+
+
+@dataclass(frozen=True)
+class UpdateState:
+    state: Literal["current", "behind", "diverged", "unknown", "stale"]
+    installed_sha: str | None
+    latest_sha: str | None
+    checked_at: str | None
+    error: str | None
+
+
+@dataclass(frozen=True)
+class UpdateResult:
+    ok: bool
+    previous_sha: str | None
+    attempted_sha: str
+    method: InstallMethod
+    started_at: str
+    ended_at: str | None
+    exit_status: int | None
+    log_path: str
+    error: str | None
+    rolled_back: bool
+
+
+def _read_direct_url() -> str | None:
+    """The raw text of this distribution's PEP 610 direct_url.json, or None."""
+    try:
+        from importlib.metadata import distribution
+        return distribution("bridge").read_text("direct_url.json")
+    except Exception:
+        return None
+
+
+def installed_sha() -> str | None:
+    """The exact commit this install was built from, or None for dev/editable.
+
+    1. A git install (`uv tool install git+...@<sha>`) records the resolved
+       commit in direct_url.json's `vcs_info.commit_id` (PEP 610) -- full 40-hex.
+    2. Otherwise fall back to the `_build.COMMIT_SHA` sentinel, which the Homebrew
+       formula stamps at install time.
+    3. Editable/dev installs (dir_info.editable, or an unstamped sentinel) have no
+       verifiable commit -> None, so the caller never nudges."""
+    raw = _read_direct_url()
+    if raw:
+        try:
+            commit = json.loads(raw).get("vcs_info", {}).get("commit_id", "")
+        except (ValueError, AttributeError):
+            commit = ""
+        if _SHA_RE.match(commit or ""):
+            return commit
+    sha = getattr(_build, "COMMIT_SHA", "unknown")
+    if _SHA_RE.match(sha or ""):
+        return sha
+    return None
+```
+
+- [ ] **Step 5: Run test to verify it passes**
+
+Run: `uv run pytest tests/test_update_installed_sha.py -v`
+Expected: PASS (4 passed).
+
+- [ ] **Step 6: Confirm no build-system change and a clean tree**
+
+Run: `git status --porcelain pyproject.toml` (expected: empty — Task 1 does NOT touch pyproject) and `uv build 2>&1 | tail -2` (expected: builds an sdist AND a wheel with no error, because there is no build hook to fail).
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add src/bridge/update.py src/bridge/_build.py tests/test_update_installed_sha.py
+git commit -m "feat: installed_sha() via PEP 610 direct_url.json + _build sentinel"
+```
+
+---
+
+### Task 2: `install_method()`
+
+**Files:**
+- Modify: `src/bridge/update.py`
+- Test: `tests/test_update_method.py`
+
+**Interfaces:**
+- Consumes: the `update.py` skeleton + `installed_sha()` (Task 1).
+- Produces:
+  - `install_method() -> InstallMethod` where `InstallMethod = Literal["uv", "brew", "dev", "unknown"]`.
+
+- [ ] **Step 1: Write the failing test**
+
+```python
+# tests/test_update_method.py
+import bridge.update as U
 
 
 def test_install_method_uv(monkeypatch, tmp_path):
@@ -268,7 +287,7 @@ def test_install_method_unknown_when_ambiguous(monkeypatch, tmp_path):
     monkeypatch.setattr(U, "_running_executable", lambda: exe)
     monkeypatch.setattr(U, "_uv_tools_dir", lambda: tmp_path / "uv")
     monkeypatch.setattr(U, "_brew_cellars", lambda: [tmp_path / "cellar"])
-    monkeypatch.setattr(U._build, "COMMIT_SHA", "a" * 40)
+    monkeypatch.setattr(U, "installed_sha", lambda: "a" * 40)
     assert U.install_method() == "unknown"
 
 
@@ -279,60 +298,20 @@ def test_install_method_dev_when_editable(monkeypatch, tmp_path):
     monkeypatch.setattr(U, "_running_executable", lambda: exe)
     monkeypatch.setattr(U, "_uv_tools_dir", lambda: tmp_path / "uv")
     monkeypatch.setattr(U, "_brew_cellars", lambda: [tmp_path / "cellar"])
-    monkeypatch.setattr(U._build, "COMMIT_SHA", "unknown")
+    monkeypatch.setattr(U, "installed_sha", lambda: None)
     assert U.install_method() == "dev"
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `uv run pytest tests/test_update_detect.py -v`
-Expected: FAIL — `ModuleNotFoundError: No module named 'bridge.update'`.
+Run: `uv run pytest tests/test_update_method.py -v`
+Expected: FAIL — `AttributeError: module 'bridge.update' has no attribute 'install_method'` (the module imports fine; only `install_method` is missing).
 
 - [ ] **Step 3: Write the minimal implementation**
 
+`update.py` already exists from Task 1 (module header, imports, constants, dataclasses, `_read_direct_url()`, and `installed_sha()`). Append only the new function and its helpers:
+
 ```python
-# src/bridge/update.py
-"""The one update primitive the CLI (`bridge update`) and the panel button
-(`POST /api/update`) both call.
-
-It never installs the floating `@main`: the check resolves a concrete SHA and
-the install pins that exact SHA. Install-method detection resolves the running
-executable against package-manager-owned prefixes rather than substring guesses,
-and returns "unknown" (never a guess) for pipx/editable/ambiguous installs."""
-
-from __future__ import annotations
-
-import logging
-import os
-import shutil
-import subprocess
-import sys
-from pathlib import Path
-from typing import Literal
-
-from bridge import _build
-
-log = logging.getLogger(__name__)
-
-REPO_URL = "https://github.com/mit112/bridge.git"
-REPO_REF = "refs/heads/main"
-
-InstallMethod = Literal["uv", "brew", "dev", "unknown"]
-Classification = Literal["current", "behind", "diverged", "unknown"]
-
-
-def installed_sha() -> str | None:
-    """The commit this process was built from, or None for a dev/editable install.
-
-    `_build.COMMIT_SHA` is stamped by the build hook (Task 1). The committed
-    sentinel "unknown" -- and an empty value -- both mean "no verifiable build",
-    which the caller treats as "never nudge"."""
-    sha = getattr(_build, "COMMIT_SHA", "unknown")
-    if not sha or sha == "unknown":
-        return None
-    return sha
-
-
 def _running_executable() -> Path:
     """The resolved path of the console script that started this process."""
     return Path(sys.argv[0]).resolve()
@@ -388,14 +367,14 @@ def install_method() -> InstallMethod:
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `uv run pytest tests/test_update_detect.py -v`
-Expected: PASS (all six).
+Run: `uv run pytest tests/test_update_method.py -v`
+Expected: PASS (all four).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/bridge/update.py tests/test_update_detect.py
-git commit -m "feat: detect installed SHA and install method"
+git add src/bridge/update.py tests/test_update_method.py
+git commit -m "feat: detect install method"
 ```
 
 ---
@@ -931,7 +910,7 @@ git commit -m "feat: run_update transaction with fresh-PID verify and rollback"
 - Test: `tests/test_cli_update.py`
 
 **Interfaces:**
-- Consumes: `update.installed_sha`, `update.install_method`, `update.run_update`, `update.UpdateResult` (Tasks 2/5).
+- Consumes: `update.installed_sha`, `update.install_method`, `update.run_update`, `update.UpdateResult` (Tasks 1/2/5).
 - Produces:
   - `cmd_update(args, cfg) -> int` — resolves the SHA to install (from the panel's surfaced state via `/api/diagnostics`, else `resolve_remote_sha()`), calls `run_update`, prints outcome, returns 0 on success / 1 on failure.
   - `--version` output becomes `bridge <ver> (<short-sha> <method>)`; `bridge status` gains a `build:` line.
