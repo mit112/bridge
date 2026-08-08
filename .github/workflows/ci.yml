@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+# One in-flight run per ref; cancel superseded runs to keep the required
+# check fast and unambiguous.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test
+    runs-on: macos-latest
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.13"
+
+      - name: Sync dependencies (with dev extras)
+        run: uv sync --extra dev
+
+      - name: Run the test suite under a clean HOME (hermetic)
+        env:
+          # The suite must pass with no real ~/.bridge or ~/.claude corpus
+          # present (docs/ARCHITECTURE.md). Point HOME at a throwaway dir so
+          # CI actually exercises hermeticity instead of trusting the runner.
+          HOME: ${{ runner.temp }}/clean-home
+        run: |
+          mkdir -p "$HOME"
+          uv run pytest
