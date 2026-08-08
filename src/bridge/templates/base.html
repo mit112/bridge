@@ -179,6 +179,10 @@
      section -- independent of launch.js's own delegated listeners. #}
   <script src="/static/schedule.js" defer></script>
   <script src="/static/live.js" defer></script>
+  {# morph.js defines window.bridgeMorph; liverefresh.js consumes it, live.js's
+     frame fan-out, and router.js's fragment parser -- so both load after them. #}
+  <script src="/static/morph.js" defer></script>
+  <script src="/static/liverefresh.js" defer></script>
   <script src="/static/projects.js" defer></script>
   {# Loaded for every page, not just /settings. Bridge swaps only the content
      region, so `{% block scripts %}` is never evaluated on a swapped

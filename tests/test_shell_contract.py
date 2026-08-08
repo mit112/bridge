@@ -15,7 +15,8 @@ STATIC = Path(__file__).resolve().parent.parent / "src" / "bridge" / "static"
 TEMPLATES = Path(__file__).resolve().parent.parent / "src" / "bridge" / "templates"
 
 PAGE_SCRIPTS = ["shell.js", "copy.js", "launch.js", "schedule.js",
-                "live.js", "projects.js", "settings.js", "router.js"]
+                "live.js", "projects.js", "settings.js", "router.js",
+                "liverefresh.js"]
 
 def source(name: str) -> str:
     """Source with comments stripped.
@@ -91,7 +92,8 @@ def test_no_module_scope_dom_capture(name):
 
 
 @pytest.mark.parametrize(
-    "name", ["settings.js", "schedule.js", "projects.js", "launch.js", "live.js"]
+    "name", ["settings.js", "schedule.js", "projects.js", "launch.js", "live.js",
+             "liverefresh.js"]
 )
 def test_per_page_behaviour_is_registered_on_the_registry(name):
     assert "bridgePage.onEnter" in source(name), (
@@ -228,4 +230,13 @@ def test_every_selector_is_one_the_harness_can_parse():
         f"selector forms the mini-DOM cannot parse: {bad}. Either simplify the "
         f"selector or teach tests/js/minidom.js the form -- do not leave the "
         f"harness silently mis-modelling the code under test."
+    )
+
+
+def test_router_exposes_the_fragment_parser_for_reuse():
+    """liverefresh.js reuses router.js's parser instead of shipping a second one."""
+    text = source("router.js")
+    assert "window.bridgeFragment" in text, (
+        "router.js must expose its fragment parser as window.bridgeFragment "
+        "so the live-refresh controller can reuse it"
     )

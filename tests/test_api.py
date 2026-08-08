@@ -219,6 +219,17 @@ def test_pin_control_has_a_persistent_visible_label(client):
     assert "📌" not in button.group(0)
 
 
+def test_editable_surfaces_are_marked_live_preserve(client):
+    c, _, pid = client
+    html = c.get(f"/project/{pid}").text
+    assert "data-compose-prompt" in html
+    # Every compose/handoff textarea the user can type into is protected from a
+    # background morph clobbering an in-progress draft.
+    assert 'data-live-preserve' in html, (
+        "the compose/handoff editing surfaces must carry data-live-preserve"
+    )
+
+
 def test_author_css_cannot_override_hidden_disclosures():
     css = (
         Path(__file__).resolve().parent.parent

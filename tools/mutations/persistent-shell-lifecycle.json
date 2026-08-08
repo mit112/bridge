@@ -74,8 +74,8 @@
   {
     "name": "remove launch.js's onLeave prompt-flush registration",
     "file": "src/bridge/static/launch.js",
-    "old": "if (window.bridgePage) {\n  window.bridgePage.onLeave(() => Promise.all(\n    Array.from(document.querySelectorAll(\"[data-prompt-handoff]\")).map(savePrompt),\n  ));\n  window.bridgePage.onEnter(prefillLaunchDefaults);\n}",
-    "new": "if (window.bridgePage) {\n  window.bridgePage.onEnter(prefillLaunchDefaults);\n}",
+    "old": "if (window.bridgePage) {\n  window.bridgePage.onLeave(() => Promise.all(\n    Array.from(document.querySelectorAll(\"[data-prompt-handoff]\")).map(savePrompt),\n  ));\n  window.bridgePage.onEnter(prefillLaunchDefaults);\n  window.bridgePage.onEnter(restoreComposeDrafts);\n}",
+    "new": "if (window.bridgePage) {\n  window.bridgePage.onEnter(prefillLaunchDefaults);\n  window.bridgePage.onEnter(restoreComposeDrafts);\n}",
     "tests": [
       "tests/test_swap_lifecycle.py::test_an_edited_prompt_is_saved_before_the_content_is_swapped"
     ],
@@ -185,8 +185,8 @@
   {
     "name": "stop registering prefillLaunchDefaults as a per-page-view hook",
     "file": "src/bridge/static/launch.js",
-    "old": "if (window.bridgePage) {\n  window.bridgePage.onLeave(() => Promise.all(\n    Array.from(document.querySelectorAll(\"[data-prompt-handoff]\")).map(savePrompt),\n  ));\n  window.bridgePage.onEnter(prefillLaunchDefaults);\n}\nif (!window.bridgePage) prefillLaunchDefaults();",
-    "new": "if (window.bridgePage) {\n  window.bridgePage.onLeave(() => Promise.all(\n    Array.from(document.querySelectorAll(\"[data-prompt-handoff]\")).map(savePrompt),\n  ));\n}\nprefillLaunchDefaults();",
+    "old": "if (window.bridgePage) {\n  window.bridgePage.onLeave(() => Promise.all(\n    Array.from(document.querySelectorAll(\"[data-prompt-handoff]\")).map(savePrompt),\n  ));\n  window.bridgePage.onEnter(prefillLaunchDefaults);\n  window.bridgePage.onEnter(restoreComposeDrafts);\n}\nif (!window.bridgePage) {\n  prefillLaunchDefaults();\n  restoreComposeDrafts();\n}",
+    "new": "if (window.bridgePage) {\n  window.bridgePage.onLeave(() => Promise.all(\n    Array.from(document.querySelectorAll(\"[data-prompt-handoff]\")).map(savePrompt),\n  ));\n}\nprefillLaunchDefaults();\nrestoreComposeDrafts();",
     "tests": [
       "tests/test_shell_contract.py::test_per_page_behaviour_is_registered_on_the_registry[launch.js]"
     ],

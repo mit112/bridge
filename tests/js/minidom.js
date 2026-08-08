@@ -83,9 +83,20 @@ class El {
   get id() { return this.getAttribute("id") || ""; }
   set id(v) { this.setAttribute("id", v); }
   getAttribute(name) { return this.attrs.has(name) ? this.attrs.get(name) : null; }
-  setAttribute(name, value) { this.attrs.set(name, String(value)); }
+  // Every real DOM keeps `classList` live against the `class` content
+  // attribute in both directions. `classList` was previously a Set snapshotted
+  // only at construction time, so a class assigned via `setAttribute("class",
+  // ...)` after creation -- exactly what a query selector like `.shell__body`
+  // is checked against -- was invisible to every class selector forever.
+  setAttribute(name, value) {
+    this.attrs.set(name, String(value));
+    if (name === "class") {
+      this.classList = new Set(String(value).split(/\s+/).filter(Boolean));
+    }
+  }
   removeAttribute(name) { this.attrs.delete(name); }
   hasAttribute(name) { return this.attrs.has(name); }
+  getAttributeNames() { return [...this.attrs.keys()]; }
   get textContent() { return this._text; }
   set textContent(v) { this._text = String(v); this.children = []; }
   append(child) { child.parent = this; this.children.push(child); }
@@ -94,6 +105,20 @@ class El {
     const i = this.parent.children.indexOf(this);
     if (i >= 0) this.parent.children.splice(i, 1);
     this.parent = null;
+  }
+  insertBefore(node, ref) {
+    // Real DOM insertBefore MOVES the node: detach from its current parent
+    // first, or a reorder would clone it into two places. minidom's `append`
+    // deliberately does not detach, so morph uses this exclusively.
+    if (node.parent) {
+      const j = node.parent.children.indexOf(node);
+      if (j >= 0) node.parent.children.splice(j, 1);
+    }
+    node.parent = this;
+    if (ref == null) { this.children.push(node); return node; }
+    const i = this.children.indexOf(ref);
+    this.children.splice(i < 0 ? this.children.length : i, 0, node);
+    return node;
   }
   descendants() {
     const out = [];
@@ -179,6 +204,13 @@ function makeDocument(root) {
     _m: new Map(),
     getItem(k) { return this._m.has(k) ? this._m.get(k) : null; },
     setItem(k, v) { this._m.set(k, String(v)); },
+    removeItem(k) { this._m.delete(k); },
+  };
+  globalThis.sessionStorage = {
+    _m: new Map(),
+    getItem(k) { return this._m.has(k) ? this._m.get(k) : null; },
+    setItem(k, v) { this._m.set(k, String(v)); },
+    removeItem(k) { this._m.delete(k); },
   };
   // Counting stubs -- the duplicate-hazard tests assert on these.
   globalThis.__calls = { fetch: [], eventSource: [], interval: 0 };

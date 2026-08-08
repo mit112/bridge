@@ -3623,3 +3623,196 @@ def test_widening_past_the_rail_breakpoint_restores_the_nav(tmp_path):
     assert got["wideExpanded"] == "true", (
         "the Menu button still claims the nav is collapsed"
     )
+
+
+# --- Compose-box draft persistence across a router swap ---------------------
+#
+# The compose textarea (`_launch.html`'s ad hoc "start a new session" prompt,
+# `id="compose-<project_id>"`) has no server-side record -- unlike the handoff
+# prompt, which `savePrompt` above flushes to the server on `onLeave`. A
+# navigation swap (`.shell__body` replaced via the router) destroys the field
+# with nothing to restore it from, so typed text was silently lost. The fix is
+# client-side only: `sessionStorage` under `bridge.compose.<field.id>`, saved
+# on every `input` and restored on `bridgePage.onEnter`. `sessionStorage`
+# (never `localStorage`) is the point -- the draft must not survive a browser
+# restart, only in-tab navigation and reload.
+#
+# The harness reuses EMPTY_STATE_HARNESS's compose/band/button shape (this is
+# the same field the empty-state "Start session" band points at) and adds a
+# `sessionStorage` stub keyed by a Map, with an optional THROW flag so the
+# storage-failure tests can prove `getItem`/`setItem` throwing is a silent
+# no-op rather than a broken handler. `window.bridgePage` is stubbed with the
+# same queue-and-run shape `SETTINGS_HARNESS` uses, so `onEnter(fn)` queues and
+# `enter()` fires every queued hook once -- the same call shell.js makes for
+# the page's first view and every swap after it.
+COMPOSE_DRAFT_HARNESS = """
+globalThis.window = globalThis;
+let clickHandlers = [];
+let inputHandlers = [];
+
+const composeField = {
+  id: "compose-1", value: "",
+  closest: (sel) => (sel === "[data-compose-prompt]" ? composeField : null),
+};
+const button = {
+  disabled: true, attrs: { "data-launch-button": "launch-1" },
+  getAttribute(n) { return this.attrs[n] ?? null; },
+  setAttribute() {}, removeAttribute() {},
+  closest: (sel) => (sel === "[data-launch-button]" ? button : null),
+};
+const band = {
+  attrs: { "data-launch": "launch-1", "data-launch-path": "/Users/mitsheth/dev/demo",
+           "data-launch-prompt": "compose-1" },
+  getAttribute(n) { return Object.prototype.hasOwnProperty.call(this.attrs, n) ? this.attrs[n] : null; },
+  querySelector: (sel) => (sel === "[data-launch-button]" ? button : null),
+};
+const controls = {
+  '[data-launch="launch-1"]': band,
+  '[data-launch-prompt="compose-1"]': band,
+};
+globalThis.document = {
+  addEventListener(type, fn) {
+    if (type === "click") clickHandlers.push(fn);
+    if (type === "input") inputHandlers.push(fn);
+  },
+  getElementById: (id) => (id === "compose-1" ? composeField : null),
+  querySelector: (sel) => controls[sel] ?? null,
+  querySelectorAll: (sel) =>
+    sel === "[data-compose-prompt]" ? [composeField] : [],
+  createRange: () => ({}),
+};
+globalThis.navigator = { clipboard: { writeText: async () => {} } };
+globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => ({}) });
+
+// A Map-backed sessionStorage stub, matching minidom.js's stub shape, with an
+// optional THROW switch the failure tests flip on.
+let throwOnAccess = THROW;
+const storageMap = new Map();
+globalThis.sessionStorage = {
+  getItem(k) {
+    if (throwOnAccess) throw new Error("blocked");
+    return storageMap.has(k) ? storageMap.get(k) : null;
+  },
+  setItem(k, v) {
+    if (throwOnAccess) throw new Error("blocked");
+    storageMap.set(k, String(v));
+  },
+  removeItem(k) {
+    if (throwOnAccess) throw new Error("blocked");
+    storageMap.delete(k);
+  },
+};
+// Preload a draft for the restore tests, from Python-supplied JSON.
+for (const [k, v] of Object.entries(PRELOAD)) storageMap.set(k, v);
+
+const enterHooks = [];
+window.bridgePage = {
+  onEnter(fn) { enterHooks.push(fn); },
+  // launch.js also registers an `onLeave` hook (the handoff-prompt flush);
+  // this harness never calls it, but a real page always defines it, so it
+  // must exist or `window.bridgePage.onLeave(...)` throws at load time.
+  onLeave() {},
+  enter() { for (const fn of enterHooks) fn(); },
+};
+
+const fs = require("fs");
+eval(fs.readFileSync(process.argv[2], "utf8"));
+
+const fireInput = () => Promise.all(inputHandlers.map((fn) =>
+  fn({ target: { closest: (sel) => composeField.closest(sel) } })));
+
+(async () => {
+  SCRIPT
+  console.log(JSON.stringify({
+    storage: Object.fromEntries(storageMap),
+    fieldValue: composeField.value,
+    buttonDisabled: button.disabled,
+  }));
+})();
+"""
+
+
+def _run_compose_draft(tmp_path, script: str, preload: dict, throw: bool = False) -> dict:
+    harness = tmp_path / "compose_draft_harness.js"
+    text = (
+        COMPOSE_DRAFT_HARNESS
+        .replace("SCRIPT", script)
+        .replace("PRELOAD", json.dumps(preload))
+        .replace("THROW", "true" if throw else "false")
+    )
+    harness.write_text(text)
+    proc = subprocess.run(
+        [_node(), str(harness), str(LAUNCH_JS)], capture_output=True, text=True
+    )
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout)
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_typing_into_the_compose_field_persists_the_draft_to_session_storage(tmp_path):
+    got = _run_compose_draft(tmp_path, """
+    composeField.value = "half-written prompt";
+    await fireInput();
+    """, preload={})
+    assert got["storage"] == {"bridge.compose.compose-1": "half-written prompt"}
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_on_enter_an_empty_compose_field_is_repopulated_from_its_draft_and_enables_the_button(
+    tmp_path,
+):
+    got = _run_compose_draft(tmp_path, """
+    window.bridgePage.enter();
+    """, preload={"bridge.compose.compose-1": "resume this session"})
+    assert got["fieldValue"] == "resume this session"
+    assert got["buttonDisabled"] is False
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_emptying_the_compose_field_removes_its_draft(tmp_path):
+    got = _run_compose_draft(tmp_path, """
+    composeField.value = "will be deleted";
+    await fireInput();
+    composeField.value = "";
+    await fireInput();
+    """, preload={})
+    assert got["storage"] == {}
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_storage_throwing_on_input_is_a_silent_no_op(tmp_path):
+    """A blocked or full sessionStorage must not break the delegated input
+    handler that also toggles the launch button."""
+    got = _run_compose_draft(tmp_path, """
+    composeField.value = "typed anyway";
+    await fireInput();
+    """, preload={}, throw=True)
+    assert got["fieldValue"] == "typed anyway"
+    assert got["buttonDisabled"] is False
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_storage_throwing_on_enter_is_a_silent_no_op(tmp_path):
+    """A blocked sessionStorage must not break `onEnter` restoration either --
+    the field simply stays whatever the server rendered it as."""
+    got = _run_compose_draft(tmp_path, """
+    window.bridgePage.enter();
+    """, preload={}, throw=True)
+    assert got["fieldValue"] == ""
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_restore_never_clobbers_text_the_user_is_already_mid_typing(tmp_path):
+    """`restoreComposeDrafts` only restores into a field that is CURRENTLY
+    empty (`if (field.value !== "") return;`). Every other restore test here
+    starts from an empty field, so that guard has no negative-branch coverage
+    -- deleting it would leave every other test green while a stale draft
+    silently overwrote in-progress typing on a swap. This sets the field to a
+    non-blank value the user has already typed, preloads a DIFFERENT draft
+    under the same key, fires `onEnter`, and asserts the user's typed value
+    survives untouched."""
+    got = _run_compose_draft(tmp_path, """
+    composeField.value = "the user is still typing this";
+    window.bridgePage.enter();
+    """, preload={"bridge.compose.compose-1": "a stale draft from before"})
+    assert got["fieldValue"] == "the user is still typing this"

@@ -44,7 +44,7 @@
   <section class="compose" aria-labelledby="{{ cid }}-title" data-compose="{{ cid }}">
     <h2 class="compose__title" id="{{ cid }}-title">New session</h2>
     <label class="compose__label" for="{{ cid }}">Prompt for {{ card.name }}</label>
-    <textarea class="compose__prompt" id="{{ cid }}" data-compose-prompt="{{ cid }}"></textarea>
+    <textarea class="compose__prompt" id="{{ cid }}" data-compose-prompt="{{ cid }}" data-live-preserve></textarea>
     {# The compose box carries its OWN options + Run-now ONLY when it is the
        collapsed "Start a different session" surface -- i.e. a handoff is queued,
        so every launch band on the page is keyed off a handoff id and no
@@ -122,7 +122,7 @@
          the <pre> did: an unescaped `</textarea>` would close the field early. #}
       <label class="handoff__label" for="{{ hid }}">Prompt for {{ card.name }}</label>
       <textarea class="handoff__prompt" id="{{ hid }}"
-                data-prompt-handoff="{{ handoff.id }}">{{ handoff.next_prompt }}</textarea>
+                data-prompt-handoff="{{ handoff.id }}" data-live-preserve>{{ handoff.next_prompt }}</textarea>
       {% if collapse_prompt %}
         </details>
       </div>

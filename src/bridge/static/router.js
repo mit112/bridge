@@ -113,6 +113,10 @@ async function navigate(href, { push = true } = {}) {
 
 window.bridgeNavigate = navigate;
 
+// Shared so liverefresh.js parses fragments through the one implementation
+// instead of shipping a second DOMParser path that could drift from this one.
+window.bridgeFragment = { parse: parseFragment };
+
 if (document.addEventListener) {
   document.addEventListener("click", (event) => {
     // The standard opt-outs: a modified or non-primary click must keep its
