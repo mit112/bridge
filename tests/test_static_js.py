@@ -3799,3 +3799,20 @@ def test_storage_throwing_on_enter_is_a_silent_no_op(tmp_path):
     window.bridgePage.enter();
     """, preload={}, throw=True)
     assert got["fieldValue"] == ""
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_restore_never_clobbers_text_the_user_is_already_mid_typing(tmp_path):
+    """`restoreComposeDrafts` only restores into a field that is CURRENTLY
+    empty (`if (field.value !== "") return;`). Every other restore test here
+    starts from an empty field, so that guard has no negative-branch coverage
+    -- deleting it would leave every other test green while a stale draft
+    silently overwrote in-progress typing on a swap. This sets the field to a
+    non-blank value the user has already typed, preloads a DIFFERENT draft
+    under the same key, fires `onEnter`, and asserts the user's typed value
+    survives untouched."""
+    got = _run_compose_draft(tmp_path, """
+    composeField.value = "the user is still typing this";
+    window.bridgePage.enter();
+    """, preload={"bridge.compose.compose-1": "a stale draft from before"})
+    assert got["fieldValue"] == "the user is still typing this"
