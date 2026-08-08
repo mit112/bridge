@@ -8,6 +8,7 @@ are both thin clients of `POST /api/launch`, and neither imports `launcher`.
 import dataclasses
 import json
 import logging
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import asdict
@@ -37,6 +38,7 @@ from bridge.cards import (
 from bridge.config import Config
 from bridge.dashboard import DashboardBuilder
 from bridge.models import AgentsState, Handoff, ScheduledRun
+from bridge.notify import ChangeNotifier
 from bridge.overview import build_overview
 from bridge.projects_view import build_projects, group_projects, status_label
 from bridge.refresh import RefreshCoordinator
@@ -492,6 +494,7 @@ def _layout_for(request: Request) -> str:
 def create_app(
     store: Store, cfg: Config, launch_fn: LaunchFn = launcher.launch,
     refresh_coordinator: RefreshCoordinator | None = None,
+    notifier: ChangeNotifier | None = None,
 ) -> FastAPI:
     app = FastAPI(title="Bridge")
 
@@ -542,6 +545,10 @@ def create_app(
     if refresh_coordinator is None:
         refresh_coordinator = RefreshCoordinator(store, cfg)
     app.state.refresh_coordinator = refresh_coordinator
+
+    if notifier is None:
+        notifier = ChangeNotifier()
+    app.state.notifier = notifier
 
     # Drain before serving. Under the manual-`bridge serve` uptime model this is
     # the main way handoffs arrive, so it runs on every boot.
@@ -647,6 +654,7 @@ def create_app(
             hook_state.record(event)
         except Exception:  # noqa: BLE001
             pass
+        app.state.notifier.bump()
         return {"ok": True}
 
     # --- SSE ----------------------------------------------------------------
@@ -664,6 +672,11 @@ def create_app(
     # class that produced three separate reported failures elsewhere.
 
     SSE_MAX_SECONDS = 300.0
+    REBUILD_FLOOR_S = 0.2      # min seconds between builds; caps probe cost under storms
+    MAX_SSE_CONNECTIONS = 32   # sync SSE connections each pin a threadpool worker
+
+    _sse_connections = {"n": 0}
+    _sse_lock = threading.Lock()
 
     def _frame(event: str, payload: dict) -> str:
         # The trailing BLANK line terminates the frame. With a single "\n" the
@@ -760,7 +773,17 @@ def create_app(
 
     @app.get("/events")
     def events(max_ticks: int | None = None, interval: float = 3.0,
-               max_seconds: float = SSE_MAX_SECONDS):
+               floor: float = REBUILD_FLOOR_S, max_seconds: float = SSE_MAX_SECONDS):
+        # `interval` keeps its name (many call sites already use it) but now
+        # means the fallback wait timeout: the loop wakes on the notifier
+        # instead of sleeping, and `interval` bounds how long it will wait
+        # with no bump at all.
+        with _sse_lock:
+            if _sse_connections["n"] >= MAX_SSE_CONNECTIONS:
+                return JSONResponse({"detail": "too many live connections"},
+                                    status_code=503)
+            _sse_connections["n"] += 1
+
         def live_signature(payload: dict) -> dict:
             return {
                 "topbar": {"running": payload["topbar"]["running"]},
@@ -780,39 +803,55 @@ def create_app(
             previous = None
             previous_generation = None
             previous_live_signature = None
-            while True:
-                status = refresh_coordinator.status_snapshot()
-                if previous is None:
-                    payload = dashboard_builder.full_update()
-                    yield _frame("snapshot", payload)
-                    previous_generation = payload["generation"]
-                    previous = payload
-                    previous_live_signature = live_signature(payload)
-                elif status.generation != previous_generation:
-                    payload = dashboard_builder.full_update()
-                    yield _frame("update", payload)
-                    previous_generation = payload["generation"]
-                    previous = payload
-                    previous_live_signature = live_signature(payload)
-                else:
-                    payload = dashboard_builder.live_patch()
-                    current_live_signature = live_signature(payload)
-                    if current_live_signature != previous_live_signature:
+            since = app.state.notifier.revision   # captured BEFORE the first build
+            try:
+                while True:
+                    status = refresh_coordinator.status_snapshot()
+                    built_at = time.monotonic()
+                    if previous is None:
+                        payload = dashboard_builder.full_update()
+                        yield _frame("snapshot", payload)
+                        previous_generation = payload["generation"]
+                        previous = payload
+                        previous_live_signature = live_signature(payload)
+                    elif status.generation != previous_generation:
+                        payload = dashboard_builder.full_update()
                         yield _frame("update", payload)
-                    previous = payload
-                    previous_live_signature = current_live_signature
-                ticks += 1
+                        previous_generation = payload["generation"]
+                        previous = payload
+                        previous_live_signature = live_signature(payload)
+                    else:
+                        payload = dashboard_builder.live_patch()
+                        current_live_signature = live_signature(payload)
+                        if current_live_signature != previous_live_signature:
+                            yield _frame("update", payload)
+                        previous = payload
+                        previous_live_signature = current_live_signature
+                    ticks += 1
 
-                if max_ticks is not None and ticks >= max_ticks:
-                    break
-                if time.monotonic() - started >= max_seconds:
-                    # Cap the stream and tell the client to resync rather than
-                    # running an unbounded generator. EventSource reconnects on
-                    # its own and gets a fresh snapshot.
-                    yield _frame("refresh", {"reason": "stream capped"})
-                    break
-                time.sleep(interval)         # the lock is NOT held here
-                yield ": heartbeat\n\n"
+                    if max_ticks is not None and ticks >= max_ticks:
+                        break
+                    if time.monotonic() - started >= max_seconds:
+                        # Cap the stream and tell the client to resync rather
+                        # than running an unbounded generator. EventSource
+                        # reconnects on its own and gets a fresh snapshot.
+                        yield _frame("refresh", {"reason": "stream capped"})
+                        break
+
+                    # Rebuild floor: never re-probe faster than `floor`. A
+                    # bump wakes `wait` early, but the remainder is slept out
+                    # first so a storm of bumps still can't drive the probe
+                    # cost above one rebuild per `floor` seconds.
+                    elapsed = time.monotonic() - built_at
+                    if elapsed < floor:
+                        time.sleep(floor - elapsed)
+                    # Wait for the next change (or the fallback timeout). The
+                    # store lock is NOT held here.
+                    since = app.state.notifier.wait(since=since, timeout=interval)
+                    yield ": heartbeat\n\n"
+            finally:
+                with _sse_lock:
+                    _sse_connections["n"] -= 1
 
         return StreamingResponse(
             stream(), media_type="text/event-stream",
@@ -1094,6 +1133,7 @@ def create_app(
         # a project that was never indexed, or from an old ~/Documents path.
         project_id = resolve_project(store, h.project_path)
         store.create_handoff(h, project_id)
+        app.state.notifier.bump()
         return {"id": h.id, "project_id": project_id, "journaled": journaled}
 
     @app.get("/api/handoff")
@@ -1175,6 +1215,7 @@ def create_app(
             spool.journal_status(handoff_id, body.status, now_epoch(), cfg.spool_dir)
             store.set_handoff_status(handoff_id, body.status)
 
+        app.state.notifier.bump()
         return dict(store.get_handoff(handoff_id))
 
     @app.post("/api/launch")
@@ -1241,6 +1282,7 @@ def create_app(
         except launcher.LaunchError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+        app.state.notifier.bump()
         return {
             "launch_id": result.launch_id,
             "outcome": result.outcome,
@@ -1295,6 +1337,7 @@ def create_app(
             log.exception("failed to journal scheduled run %r", job.id)
             journaled = False
         store.create_scheduled_run(job)
+        app.state.notifier.bump()
         return {**dict(store.get_scheduled_run(job.id)), "journaled": journaled}
 
     @app.get("/api/schedule")
@@ -1341,6 +1384,7 @@ def create_app(
         schedspool.journal(merged, cfg.spool_dir)
         if not store.edit_pending(id, **patch_fields):
             raise _unknown_or_conflict(id)
+        app.state.notifier.bump()
         return dict(store.get_scheduled_run(id))
 
     @app.delete("/api/schedule/{id}")
@@ -1355,6 +1399,7 @@ def create_app(
         schedspool.journal_status(id, "cancelled", now_epoch(), cfg.spool_dir)
         if not store.cancel_pending(id):
             raise _unknown_or_conflict(id)
+        app.state.notifier.bump()
         return dict(store.get_scheduled_run(id))
 
     @app.post("/api/schedule/{id}/run-now")
@@ -1362,7 +1407,9 @@ def create_app(
         row = store.claim_specific(id)
         if row is None:
             raise _unknown_or_conflict(id)
-        return dict(_fire_claimed_job(store, cfg, row, launch_fn))
+        result = dict(_fire_claimed_job(store, cfg, row, launch_fn))
+        app.state.notifier.bump()
+        return result
 
     @app.post("/api/schedule/{id}/retry")
     def retry_schedule(id: str):
@@ -1400,8 +1447,11 @@ def create_app(
                 row["id"], status="failed",
                 error=f"could not journal the retry: {exc}",
             )
+            app.state.notifier.bump()
             return dict(store.get_scheduled_run(row["id"]))
-        return dict(_fire_claimed_job(store, cfg, row, launch_fn))
+        result = dict(_fire_claimed_job(store, cfg, row, launch_fn))
+        app.state.notifier.bump()
+        return result
 
     return app
 

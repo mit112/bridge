@@ -16,8 +16,10 @@ from pathlib import Path
 from bridge import schedspool, spool
 from bridge.config import load
 from bridge.indexer import reindex
+from bridge.notify import ChangeNotifier
 from bridge.refresh import RefreshCoordinator
 from bridge.store import SCHEDULED_RUN_RETENTION_DAYS, Store, now_epoch
+from bridge.watcher import FileWatcher
 
 log = logging.getLogger(__name__)
 
@@ -151,11 +153,20 @@ def run_db_command(argv: list[str] | None = None) -> int:
     # suite builds apps directly for route tests, and none of them may spawn a
     # background thread that claims and fires real scheduled runs.
     stop = threading.Event()
-    refresh_coordinator = RefreshCoordinator(store, cfg)
+    notifier = ChangeNotifier()
+    refresh_coordinator = RefreshCoordinator(store, cfg, on_change=notifier.bump)
     refresh_thread = threading.Thread(
         target=refresh_coordinator.run_periodic, args=(stop,), daemon=True
     )
     refresh_thread.start()
+    # A watcher that fails to start (e.g. the platform's file-events backend is
+    # unavailable) must not stop the server -- the periodic refresh thread
+    # above still covers changes, just on its ~15s interval instead of instantly.
+    watcher = FileWatcher(cfg.claude_projects_dir, on_change=refresh_coordinator.run_once)
+    try:
+        watcher.start()
+    except Exception:  # noqa: BLE001 - the periodic refresh still covers changes
+        log.exception("file watcher failed to start; falling back to periodic reindex")
     t = threading.Thread(
         target=scheduler.run_scheduler, args=(store, cfg, stop), daemon=True
     )
@@ -163,17 +174,20 @@ def run_db_command(argv: list[str] | None = None) -> int:
 
     try:
         uvicorn.run(
-            create_app(store, cfg, refresh_coordinator=refresh_coordinator),
+            create_app(store, cfg, refresh_coordinator=refresh_coordinator,
+                       notifier=notifier),
             host="127.0.0.1", port=cfg.port,
         )
     finally:
-        _shutdown_scheduler(stop, t, store, refresh_thread)
+        watcher.stop()
+        _shutdown_scheduler(stop, t, store, refresh_thread, watcher=watcher)
     return 0
 
 
 def _shutdown_scheduler(
     stop: threading.Event, t: threading.Thread, store: Store,
     refresh_thread: threading.Thread | None = None,
+    watcher: FileWatcher | None = None,
     join_timeout: float = 30.0,
 ) -> None:
     """Stop the scheduler thread, then close the store -- but only once the
@@ -185,12 +199,23 @@ def _shutdown_scheduler(
     the thread is still alive after `join_timeout` -- a hung launch -- skip the
     close entirely: the daemon dies with the process, and WAL durability does
     not require an explicit `close()`.
+
+    The watcher's own `stop()` (join + timeout) is expected to have already
+    been called by the caller before this runs -- it is not repeated here.
+    But a watcher-triggered `run_once()` reindex can still be mid-flight if
+    that join timed out, so its liveness joins the same guard: `store.close()`
+    must wait on the watcher too, or a reindex still touching the store races
+    the close.
     """
     stop.set()
     t.join(timeout=join_timeout)
     if refresh_thread is not None:
         refresh_thread.join(timeout=join_timeout)
-    if not t.is_alive() and (refresh_thread is None or not refresh_thread.is_alive()):
+    if (
+        not t.is_alive()
+        and (refresh_thread is None or not refresh_thread.is_alive())
+        and (watcher is None or not watcher.is_alive())
+    ):
         store.close()
 
 

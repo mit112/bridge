@@ -85,3 +85,55 @@ def test_status_snapshot_is_immutable(store, tmp_path):
     status = RefreshCoordinator(store, cfg).status_snapshot()
     with pytest.raises(AttributeError):
         status.generation = 4
+
+
+def test_on_change_fires_after_generation_is_published(store, tmp_path):
+    cfg = load({"db_path": tmp_path / "refresh.db", "spool_dir": tmp_path / "spool"})
+    from bridge.indexer import IndexStats
+
+    seen = []
+    coordinator = RefreshCoordinator(
+        store,
+        cfg,
+        lambda *_: IndexStats(),
+        on_change=lambda: seen.append(coordinator.status_snapshot().generation),
+    )
+    coordinator.run_once()
+    # The callback observed the NEW generation, proving it ran after publish.
+    assert seen == [1]
+
+
+def test_on_change_fires_on_failure_too(store, tmp_path):
+    cfg = load({"db_path": tmp_path / "refresh.db", "spool_dir": tmp_path / "spool"})
+
+    def boom_reindex(*_):
+        raise RuntimeError("boom")
+
+    calls = []
+    coordinator = RefreshCoordinator(
+        store, cfg, boom_reindex, on_change=lambda: calls.append(1)
+    )
+    coordinator.run_once()
+    assert calls == [1]
+
+
+def test_on_change_none_is_a_noop(store, tmp_path):
+    cfg = load({"db_path": tmp_path / "refresh.db", "spool_dir": tmp_path / "spool"})
+    from bridge.indexer import IndexStats
+
+    coordinator = RefreshCoordinator(store, cfg, lambda *_: IndexStats())
+    coordinator.run_once()  # must not raise
+
+
+def test_on_change_exception_does_not_break_run_once(store, tmp_path):
+    cfg = load({"db_path": tmp_path / "refresh.db", "spool_dir": tmp_path / "spool"})
+    from bridge.indexer import IndexStats
+
+    def raiser():
+        raise RuntimeError("cb boom")
+
+    coordinator = RefreshCoordinator(
+        store, cfg, lambda *_: IndexStats(), on_change=raiser
+    )
+    result = coordinator.run_once()
+    assert result.completed is True

@@ -9,6 +9,7 @@ from bridge import launcher, spool
 from bridge.api import create_app
 from bridge.config import load
 from bridge.models import GitState, Handoff, Launch, ScheduledRun, SessionRecord
+from bridge.notify import ChangeNotifier
 from bridge.registry import resolve_project
 from bridge.refresh import RefreshCoordinator, RefreshStatus
 from bridge.store import Store, now_epoch
@@ -2002,6 +2003,142 @@ def test_the_stream_never_writes(client):
     assert (before is None) == (after is None)
 
 
+def test_events_emits_promptly_on_a_bump_without_waiting_the_fallback(
+    tmp_path, monkeypatch
+):
+    """The SSE loop must WAKE on a `notifier.bump()`, not merely poll fast
+    enough to look that way. `interval` here is a 5 s fallback -- if the loop
+    were still sleeping through it instead of waiting on the notifier, this
+    stream would take on the order of 5 s. It has to finish in a small
+    fraction of that instead.
+    """
+    import threading
+    import time as _time
+
+    from bridge import agents
+    from bridge.models import AgentsState, LiveSession
+    from bridge.notify import ChangeNotifier
+
+    cfg = load({"db_path": tmp_path / "push.db", "spool_dir": tmp_path / "spool"})
+    store = Store(cfg.db_path)
+    store.upsert_project("/p/push", "push")
+
+    # First probe is empty; every probe after the bump reports a live session,
+    # so the second tick's live_signature differs and an "update" frame is
+    # forced to emit -- proving the wake actually reached a rebuilt tick.
+    busy = AgentsState(status="ok", sessions=[LiveSession(
+        session_id="aaaaaaaa-0000-0000-0000-000000000009", cwd="/p/push",
+        kind="interactive", status="busy", started_at=5)])
+    remaining = [AgentsState(status="ok", sessions=[])]
+    monkeypatch.setattr(
+        agents, "probe", lambda *a, **k: remaining.pop(0) if remaining else busy
+    )
+
+    notifier = ChangeNotifier()
+    c = TestClient(create_app(store, cfg, notifier=notifier))
+
+    def bump_soon():
+        _time.sleep(0.05)
+        notifier.bump()
+
+    thread = threading.Thread(target=bump_soon)
+    thread.start()
+    started = _time.monotonic()
+    with c.stream("GET", "/events?max_ticks=2&interval=5&floor=0") as r:
+        frames = _frames("".join(r.iter_text()))
+    elapsed = _time.monotonic() - started
+    thread.join()
+    store.close()
+
+    assert [name for name, _ in frames] == ["snapshot", "update"]
+    assert elapsed < 1.0, (
+        f"push took {elapsed:.2f}s -- looks like it waited the 5s fallback"
+    )
+
+
+def test_events_still_emits_on_the_fallback_timeout_with_no_bump(client):
+    """With no bump, the loop must still wake on the fallback timeout rather
+    than hang forever waiting on the notifier."""
+    import time as _time
+
+    c, _, _ = client
+    started = _time.monotonic()
+    with c.stream(
+        "GET", "/events?interval=0.05&floor=0&max_seconds=0.15&max_ticks=50"
+    ) as r:
+        frames = _frames("".join(r.iter_text()))
+    elapsed = _time.monotonic() - started
+
+    assert [name for name, _ in frames][-1] == "refresh"
+    assert elapsed < 2.0, "the stream hung waiting on the notifier fallback"
+
+
+def test_the_sse_connection_counter_returns_to_zero_after_streams_close(client):
+    """`_sse_connections` is decremented in a `finally`, so a closed stream
+    must always free its slot -- including one that never drains to its own
+    completion. Left leaking, the cap (32 connections) would eventually 503
+    every new tab with nothing visibly still open to explain it.
+    """
+    c, _, _ = client
+
+    # More sequential opens than the cap. Each one fully drains its bounded
+    # stream and closes before the next opens; if the counter leaked instead
+    # of returning to 0, one of these 40 would 503.
+    for i in range(40):
+        with c.stream("GET", "/events?max_ticks=1&interval=0") as r:
+            assert r.status_code == 200, f"open #{i} was rejected -- counter leaked"
+            "".join(r.iter_text())
+
+    # A mid-stream disconnect must free its slot too: pull one frame and walk
+    # away without draining the rest, the way a closed browser tab would.
+    with c.stream("GET", "/events?interval=0&floor=0&max_seconds=2") as r:
+        assert r.status_code == 200
+        next(r.iter_text())
+
+    # The slot from the abandoned stream above must still be free.
+    with c.stream("GET", "/events?max_ticks=1&interval=0") as r:
+        assert r.status_code == 200, "the aborted stream's slot was never freed"
+        "".join(r.iter_text())
+
+
+def test_past_the_connection_cap_returns_503_without_leaking_a_slot(client):
+    """Past `MAX_SSE_CONNECTIONS` the endpoint must reject with 503 -- and the
+    rejected request must NOT increment the counter, or a storm of refused
+    connections would itself exhaust the cap for everyone else.
+    """
+    import threading
+    import time as _time
+
+    c, _, _ = client
+
+    # Hold 32 connections open concurrently: each sits past its first frame
+    # in the rebuild-floor sleep and then the notifier wait (~2s total), so
+    # none of them has reached its `finally` decrement while the 33rd fires.
+    def hold():
+        with c.stream("GET", "/events?max_ticks=2&interval=1&floor=1") as r:
+            assert r.status_code == 200
+            "".join(r.iter_text())
+
+    threads = [threading.Thread(target=hold) for _ in range(32)]
+    for t in threads:
+        t.start()
+    _time.sleep(0.5)  # let all 32 threads reach the counter increment
+
+    over_cap = c.get("/events?max_ticks=1&interval=0")
+    assert over_cap.status_code == 503
+    assert over_cap.json() == {"detail": "too many live connections"}
+
+    for t in threads:
+        t.join(timeout=5)
+        assert not t.is_alive(), "a held-open stream never finished"
+
+    # The rejected request must not have taken a slot: once the 32 holders
+    # have closed, a fresh request succeeds again.
+    with c.stream("GET", "/events?max_ticks=1&interval=0") as r:
+        assert r.status_code == 200, "the 503 leaked a slot from the counter"
+        "".join(r.iter_text())
+
+
 def test_live_js_never_touches_the_prompt_textarea():
     """The handoff prompt is the only state Bridge cannot rebuild."""
     source = (Path(__file__).resolve().parent.parent / "src" / "bridge"
@@ -3349,3 +3486,134 @@ def test_responses_forbid_content_type_sniffing(client):
 
     for path in ("/", "/api/projects", "/static/app.css"):
         assert c.get(path).headers["x-content-type-options"] == "nosniff", path
+
+
+# --- in-process writes wake the SSE stream -----------------------------------
+#
+# Every user write that changes state must bump `app.state.notifier` so a
+# connected `/events` stream wakes instantly rather than waiting out its
+# fallback poll. `/api/refresh` is deliberately NOT tested here for a bump of
+# its own: it goes through `refresh_coordinator.run_once()`, which already
+# bumps via Task 2's `on_change` hook, so asserting a second explicit bump
+# there would just be testing a redundant call.
+
+@pytest.fixture
+def app_with_notifier_client(tmp_path):
+    """A plain app (no launcher involved) wired to a notifier the test can
+    inspect, for handlers that never spawn a session."""
+    cfg = load({"db_path": tmp_path / "n.db", "spool_dir": tmp_path / "spool"})
+    store = Store(cfg.db_path)
+    notifier = ChangeNotifier()
+    app = create_app(store, cfg, notifier=notifier)
+    yield TestClient(app), notifier
+    store.close()
+
+
+@pytest.fixture
+def launch_app_with_notifier(tmp_path):
+    """`launch_app`'s recording-launcher double, but with an inspectable
+    notifier, for the handlers that go through `fire`/`launch_fn`."""
+    cfg = load({
+        "db_path": tmp_path / "ln.db",
+        "spool_dir": tmp_path / "spool",
+        "launches_dir": tmp_path / "launches",
+    })
+    store = Store(cfg.db_path)
+    fake = recording_launcher()
+    notifier = ChangeNotifier()
+    app = create_app(store, cfg, launch_fn=fake, notifier=notifier)
+    yield TestClient(app), store, cfg, fake, notifier
+    store.close()
+
+
+def test_posting_a_hook_bumps_the_notifier(app_with_notifier_client):
+    client, n = app_with_notifier_client
+    before = n.revision
+    client.post("/api/hooks", json={"hook_event_name": "Notification"})
+    assert n.revision > before
+
+
+def test_creating_a_handoff_bumps_the_notifier(app_with_notifier_client):
+    client, n = app_with_notifier_client
+    before = n.revision
+    r = client.post("/api/handoff", json={
+        "id": "h1", "project_path": DEMO, "next_prompt": "do the thing",
+    })
+    assert r.status_code == 201
+    assert n.revision > before
+
+
+def test_patching_a_handoff_bumps_the_notifier(app_with_notifier_client):
+    client, n = app_with_notifier_client
+    client.post("/api/handoff", json={
+        "id": "h2", "project_path": DEMO, "next_prompt": "do the thing",
+    })
+    before = n.revision
+    r = client.patch("/api/handoff/h2", json={"status": "dismissed"})
+    assert r.status_code == 200
+    assert n.revision > before
+
+
+def test_launch_bumps_the_notifier(launch_app_with_notifier):
+    client, store, cfg, fake, n = launch_app_with_notifier
+    before = n.revision
+    r = client.post("/api/launch", json={
+        "project_path": DEMO, "prompt": "do the thing",
+    })
+    assert r.status_code == 200
+    assert n.revision > before
+
+
+def test_creating_a_schedule_bumps_the_notifier(launch_app_with_notifier):
+    client, store, cfg, fake, n = launch_app_with_notifier
+    before = n.revision
+    r = client.post("/api/schedule", json={
+        "project_path": DEMO, "prompt": "scheduled prompt",
+        "scheduled_for": 9_000_000_000,
+    })
+    assert r.status_code == 201
+    assert n.revision > before
+
+
+def test_run_now_bumps_the_notifier(launch_app_with_notifier):
+    client, store, cfg, fake, n = launch_app_with_notifier
+    jid = client.post("/api/schedule", json={
+        "project_path": DEMO, "prompt": "go",
+        "scheduled_for": 9_000_000_000, "mode": "background",
+    }).json()["id"]
+    before = n.revision
+
+    r = client.post(f"/api/schedule/{jid}/run-now")
+
+    assert r.status_code == 200
+    assert n.revision > before
+
+
+def test_retry_bumps_the_notifier(launch_app_with_notifier):
+    client, store, cfg, fake, n = launch_app_with_notifier
+    jid = client.post("/api/schedule", json={
+        "project_path": DEMO, "prompt": "go",
+        "scheduled_for": 9_000_000_000, "mode": "background",
+    }).json()["id"]
+    fake.result = launcher.LaunchError("no claude on PATH")
+    client.post(f"/api/schedule/{jid}/run-now")
+    before = n.revision
+
+    r = client.post(f"/api/schedule/{jid}/retry")
+
+    assert r.status_code == 200
+    assert n.revision > before
+
+
+def test_cancelling_a_schedule_bumps_the_notifier(launch_app_with_notifier):
+    client, store, cfg, fake, n = launch_app_with_notifier
+    jid = client.post("/api/schedule", json={
+        "project_path": DEMO, "prompt": "go",
+        "scheduled_for": 9_000_000_000, "mode": "background",
+    }).json()["id"]
+    before = n.revision
+
+    r = client.delete(f"/api/schedule/{jid}")
+
+    assert r.status_code == 200
+    assert n.revision > before

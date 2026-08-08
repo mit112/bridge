@@ -251,18 +251,54 @@ def test_shutdown_waits_for_refresh_worker_before_closing_store():
     assert refresh_thread.joined_with == 0.01
 
 
+def test_shutdown_does_not_close_the_store_while_the_watcher_is_still_alive():
+    """A watcher-triggered `run_once()` reindex still mid-flight after the
+    watcher's own join timeout must not have the store closed under it --
+    the same race as the scheduler/refresh guard, extended to the watcher."""
+    stop = threading.Event()
+    t = _FakeThread(alive=False)
+    refresh_thread = _FakeThread(alive=False)
+    watcher = _FakeThread(alive=True)
+    store = _FakeStore()
+
+    _shutdown_scheduler(
+        stop, t, store, refresh_thread=refresh_thread, watcher=watcher,
+        join_timeout=0.01,
+    )
+
+    assert not store.closed, "closing while the watcher is alive is the race"
+
+
+def test_shutdown_closes_the_store_once_scheduler_refresh_and_watcher_all_stopped():
+    stop = threading.Event()
+    t = _FakeThread(alive=False)
+    refresh_thread = _FakeThread(alive=False)
+    watcher = _FakeThread(alive=False)
+    store = _FakeStore()
+
+    _shutdown_scheduler(
+        stop, t, store, refresh_thread=refresh_thread, watcher=watcher,
+        join_timeout=0.01,
+    )
+
+    assert store.closed
+
+
 def test_serve_starts_the_in_process_refresh_worker(serve_cfg, monkeypatch):
     from bridge import __main__ as entry
 
     calls = []
 
     class FakeCoordinator:
-        def __init__(self, store, cfg):
+        def __init__(self, store, cfg, on_change=None):
             calls.append((store, cfg))
 
         def run_periodic(self, stop):
             calls.append(stop)
             stop.wait(0.01)
+
+        def run_once(self):
+            pass
 
     monkeypatch.setattr(entry, "RefreshCoordinator", FakeCoordinator)
     assert main(["serve"]) == 0
