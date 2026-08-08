@@ -2072,6 +2072,72 @@ def test_events_still_emits_on_the_fallback_timeout_with_no_bump(client):
     assert elapsed < 2.0, "the stream hung waiting on the notifier fallback"
 
 
+def test_the_sse_connection_counter_returns_to_zero_after_streams_close(client):
+    """`_sse_connections` is decremented in a `finally`, so a closed stream
+    must always free its slot -- including one that never drains to its own
+    completion. Left leaking, the cap (32 connections) would eventually 503
+    every new tab with nothing visibly still open to explain it.
+    """
+    c, _, _ = client
+
+    # More sequential opens than the cap. Each one fully drains its bounded
+    # stream and closes before the next opens; if the counter leaked instead
+    # of returning to 0, one of these 40 would 503.
+    for i in range(40):
+        with c.stream("GET", "/events?max_ticks=1&interval=0") as r:
+            assert r.status_code == 200, f"open #{i} was rejected -- counter leaked"
+            "".join(r.iter_text())
+
+    # A mid-stream disconnect must free its slot too: pull one frame and walk
+    # away without draining the rest, the way a closed browser tab would.
+    with c.stream("GET", "/events?interval=0&floor=0&max_seconds=2") as r:
+        assert r.status_code == 200
+        next(r.iter_text())
+
+    # The slot from the abandoned stream above must still be free.
+    with c.stream("GET", "/events?max_ticks=1&interval=0") as r:
+        assert r.status_code == 200, "the aborted stream's slot was never freed"
+        "".join(r.iter_text())
+
+
+def test_past_the_connection_cap_returns_503_without_leaking_a_slot(client):
+    """Past `MAX_SSE_CONNECTIONS` the endpoint must reject with 503 -- and the
+    rejected request must NOT increment the counter, or a storm of refused
+    connections would itself exhaust the cap for everyone else.
+    """
+    import threading
+    import time as _time
+
+    c, _, _ = client
+
+    # Hold 32 connections open concurrently: each sits past its first frame
+    # in the rebuild-floor sleep and then the notifier wait (~2s total), so
+    # none of them has reached its `finally` decrement while the 33rd fires.
+    def hold():
+        with c.stream("GET", "/events?max_ticks=2&interval=1&floor=1") as r:
+            assert r.status_code == 200
+            "".join(r.iter_text())
+
+    threads = [threading.Thread(target=hold) for _ in range(32)]
+    for t in threads:
+        t.start()
+    _time.sleep(0.5)  # let all 32 threads reach the counter increment
+
+    over_cap = c.get("/events?max_ticks=1&interval=0")
+    assert over_cap.status_code == 503
+    assert over_cap.json() == {"detail": "too many live connections"}
+
+    for t in threads:
+        t.join(timeout=5)
+        assert not t.is_alive(), "a held-open stream never finished"
+
+    # The rejected request must not have taken a slot: once the 32 holders
+    # have closed, a fresh request succeeds again.
+    with c.stream("GET", "/events?max_ticks=1&interval=0") as r:
+        assert r.status_code == 200, "the 503 leaked a slot from the counter"
+        "".join(r.iter_text())
+
+
 def test_live_js_never_touches_the_prompt_textarea():
     """The handoff prompt is the only state Bridge cannot rebuild."""
     source = (Path(__file__).resolve().parent.parent / "src" / "bridge"
