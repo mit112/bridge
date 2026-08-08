@@ -257,12 +257,15 @@ def test_serve_starts_the_in_process_refresh_worker(serve_cfg, monkeypatch):
     calls = []
 
     class FakeCoordinator:
-        def __init__(self, store, cfg):
+        def __init__(self, store, cfg, on_change=None):
             calls.append((store, cfg))
 
         def run_periodic(self, stop):
             calls.append(stop)
             stop.wait(0.01)
+
+        def run_once(self):
+            pass
 
     monkeypatch.setattr(entry, "RefreshCoordinator", FakeCoordinator)
     assert main(["serve"]) == 0

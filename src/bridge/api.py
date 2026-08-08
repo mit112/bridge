@@ -1384,6 +1384,7 @@ def create_app(
         schedspool.journal(merged, cfg.spool_dir)
         if not store.edit_pending(id, **patch_fields):
             raise _unknown_or_conflict(id)
+        app.state.notifier.bump()
         return dict(store.get_scheduled_run(id))
 
     @app.delete("/api/schedule/{id}")
