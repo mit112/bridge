@@ -10,13 +10,17 @@
   const WORKSPACE = /^\/project\/\d+$/;
   const OWNED = new Set(["/schedule", "/diagnostics", "/settings"]);
   const DEBOUNCE_MS = 250;
+  const LIVE_UNSET = Symbol("unset");   // no fast-signal baseline observed yet for this view
 
   let owned = false;
   let projectId = null;
   let baselineGeneration = null;   // last generation acknowledged for this view
   let lastSeenGeneration = null;   // most recent generation observed on the wire
   let pendingGeneration = null;    // a bump waiting to be applied
-  let lastProjectLive = null;
+  let lastLiveSignal = LIVE_UNSET; // last ~3s fast signal (per-card status or topbar.running) observed
+  let refreshRequested = false;    // a trigger (generation bump or live-signal change) fired
+  let refreshVersion = 0;         // bumped alongside refreshRequested so a fetch in flight
+                                  // doesn't clear a request that arrived after it started
   let timer = null;
 
   function currentPath() { return window.location.pathname; }
@@ -51,8 +55,10 @@
 
   function refreshNow() {
     if (!owned) return;
-    if (pendingGeneration == null && !workspaceLiveChanged()) return;
-    if (protectedFocus()) return;                 // defer: retried on the next frame
+    if (!refreshRequested) return;
+    if (protectedFocus()) return;                 // defer: retried on the next frame,
+                                                    // refreshRequested stays set
+    const versionAtFetch = refreshVersion;
     const generationAtFetch = lastSeenGeneration;
     const pathAtFetch = window.location.pathname;
     fetch(window.location.href, { headers: { "X-Bridge-Fragment": "1" }, credentials: "same-origin" })
@@ -74,12 +80,30 @@
         window.bridgeMorph(liveBody, parsed.body, { ignore: ignoreNode, onChange: highlight });
         baselineGeneration = generationAtFetch;
         if (pendingGeneration != null && pendingGeneration <= generationAtFetch) pendingGeneration = null;
+        // A newer trigger (generation bump or live-signal change) may have
+        // fired while this fetch was in flight -- refreshVersion moved on,
+        // so leave refreshRequested set rather than dropping that trigger.
+        if (refreshVersion === versionAtFetch) refreshRequested = false;
       })
       .catch((error) => { console.error("bridge: live refresh kept stale DOM", error); });
   }
 
-  function workspaceLiveChanged() {
-    return false;   // replaced below once a frame carries per-card live; see note
+  // The route's fast (~3s) live signal for the CURRENT view only -- a
+  // workspace watches just its own project's card, never another project's;
+  // /schedule and /diagnostics watch the shared topbar running count;
+  // /settings has no live data and always reads as null (never changes).
+  function currentLiveSignal(frame) {
+    const path = currentPath();
+    if (WORKSPACE.test(path)) {
+      const status = frame && frame.cards && frame.cards[projectId] &&
+        frame.cards[projectId].live && frame.cards[projectId].live.status;
+      return status == null ? null : status;
+    }
+    if (path === "/schedule" || path === "/diagnostics") {
+      const running = frame && frame.topbar && frame.topbar.running;
+      return running == null ? null : running;
+    }
+    return null;
   }
 
   function schedule() {
@@ -100,10 +124,22 @@
     // next enter() rather than just waiting for a usable frame.
     if (baselineGeneration == null) {
       if (Number.isFinite(generation)) baselineGeneration = generation;
-      return;
-    }
-    if (Number.isFinite(generation) && generation > baselineGeneration) {
+    } else if (Number.isFinite(generation) && generation > baselineGeneration) {
       pendingGeneration = generation;
+      refreshRequested = true;
+      refreshVersion += 1;
+      schedule();
+    }
+
+    // Fast per-route live signal, same cold-start discipline as generation:
+    // the first frame for this view only adopts a baseline, never triggers.
+    const signal = currentLiveSignal(frame);
+    if (lastLiveSignal === LIVE_UNSET) {
+      lastLiveSignal = signal;
+    } else if (signal !== lastLiveSignal) {
+      lastLiveSignal = signal;
+      refreshRequested = true;
+      refreshVersion += 1;
       schedule();
     }
   }
@@ -114,13 +150,15 @@
     projectId = projectIdOf(path);
     baselineGeneration = lastSeenGeneration;       // only future bumps refresh
     pendingGeneration = null;
-    lastProjectLive = null;
+    lastLiveSignal = LIVE_UNSET;
+    refreshRequested = false;
   }
 
   function leave() {
     if (timer) { clearTimeout(timer); timer = null; }
     owned = false;
     pendingGeneration = null;
+    refreshRequested = false;
   }
 
   window.bridgeLive.onFrame(onFrame);
