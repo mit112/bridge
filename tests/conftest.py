@@ -37,6 +37,35 @@ def launch_by_session(store, session_id: str):
 
 
 @pytest.fixture(autouse=True)
+def testclient_addresses_the_panel_over_loopback(monkeypatch):
+    """Give every `TestClient` a loopback `base_url` instead of `testserver`.
+
+    `_loopback_host_only` refuses any request whose `Host` is not a loopback
+    literal, because that header is the only thing separating a real local page
+    from a DNS-rebound attacker page. Starlette's default `base_url` is
+    `http://testserver`, which is neither -- so without this the suite would
+    address the app over a hostname no real client ever uses, and every route
+    test would 403.
+
+    Patched here rather than at the ~40 `TestClient(...)` call sites so that a
+    test added later inherits it: a fixture someone forgets to pass is exactly
+    how the guards above earned their autouse.
+
+    A test that wants to exercise the check itself passes `Host` explicitly on
+    the request, which overrides the header this base_url produces.
+    """
+    from fastapi.testclient import TestClient
+
+    original = TestClient.__init__
+
+    def loopback_by_default(self, app, *args, **kwargs):
+        kwargs.setdefault("base_url", "http://127.0.0.1")
+        original(self, app, *args, **kwargs)
+
+    monkeypatch.setattr(TestClient, "__init__", loopback_by_default)
+
+
+@pytest.fixture(autouse=True)
 def never_touch_the_real_bridge_dir(monkeypatch):
     """Refuse any spool or launcher operation against the user's real `~/.bridge`.
 

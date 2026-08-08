@@ -289,8 +289,8 @@ with a running background task reports finished early.
   past the blocklist; and on approval it writes `'\r'`, selecting whatever option is *highlighted*, so
   drift in Claude's default selection silently changes what gets approved.
 - **Copying Claude's session directory** as the handoff mechanism. ccmanager encodes paths as
-  `replace(/[/\\.]/g, '-')` but Claude also maps **spaces** to `-`; `/Users/mitsheth/Documents/Vandit
-  - Zeel` → `-Users-mitsheth-Documents-Vandit---Zeel`, so its copy silently no-ops. Bridge already
+  `replace(/[/\\.]/g, '-')` but Claude also maps **spaces** to `-`; `~/Documents/Client
+  - Archive` → `-Users-you-Documents-Client---Archive`, so its copy silently no-ops. Bridge already
   refuses to decode directory names (`registry.py:3-6`) and takes real paths from `cwd` inside
   transcripts — keep that.
 - **`Last-Event-ID` replay** — Task 8.

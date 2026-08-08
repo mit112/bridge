@@ -3453,7 +3453,7 @@ def test_the_panels_own_origin_is_allowed(client):
     only compared against a hardcoded host would break the Refresh button."""
     c, _, _ = client
 
-    r = c.post("/api/refresh", headers={"Origin": "http://testserver"})
+    r = c.post("/api/refresh", headers={"Origin": "http://127.0.0.1"})
 
     assert r.status_code == 200
 
@@ -3476,6 +3476,61 @@ def test_a_cross_origin_read_is_still_served(client):
     c, _, _ = client
 
     assert c.get("/", headers={"Origin": "https://evil.example"}).status_code == 200
+
+
+# --- DNS rebinding -----------------------------------------------------------
+
+
+def test_a_rebound_host_cannot_write(client):
+    """The Origin check alone is defeated when the attacker owns the hostname.
+
+    Point `evil.example` at 127.0.0.1, get the user to open
+    `http://evil.example:8787/`, and the browser now sends
+    `Origin: http://evil.example:8787` AND `Host: evil.example:8787`. They
+    agree, so an Origin-vs-Host comparison passes and the page is same-origin
+    for every purpose -- including `POST /api/launch` with
+    `permission_mode: bypassPermissions`. Host must be pinned to a loopback
+    literal, which an attacker cannot make the browser send for their own page.
+    """
+    c, _, _ = client
+
+    r = c.post("/api/refresh", headers={
+        "Host": "evil.example:8787", "Origin": "http://evil.example:8787",
+    })
+
+    assert r.status_code == 403
+    assert r.json()["detail"] == "non-loopback host refused"
+
+
+def test_a_rebound_host_cannot_read_either(client):
+    """Reads matter as much as writes here: once rebinding makes the page
+    same-origin, the browser hands it every response body -- every project
+    path, transcript excerpt, and queued prompt. So the check covers GET."""
+    c, _, _ = client
+
+    assert c.get("/api/projects", headers={"Host": "evil.example"}).status_code == 403
+    assert c.get("/", headers={"Host": "evil.example"}).status_code == 403
+
+
+@pytest.mark.parametrize("host", [
+    "127.0.0.1", "127.0.0.1:8787", "localhost", "localhost:8787",
+    "[::1]", "[::1]:8787",
+])
+def test_every_loopback_spelling_is_allowed(client, host):
+    """`bridge open`, the hooks, and the CLI all address 127.0.0.1, but a user
+    who types `localhost:8787` must not be locked out of their own panel."""
+    c, _, _ = client
+
+    assert c.get("/api/projects", headers={"Host": host}).status_code == 200
+
+
+def test_a_hostname_that_merely_contains_a_loopback_name_is_refused(client):
+    """Guards a substring check: `localhost.evil.example` is not localhost."""
+    c, _, _ = client
+
+    for host in ("localhost.evil.example", "127.0.0.1.evil.example",
+                 "notlocalhost", "evil.example:127.0.0.1"):
+        assert c.get("/", headers={"Host": host}).status_code == 403, host
 
 
 def test_responses_forbid_content_type_sniffing(client):

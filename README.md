@@ -50,8 +50,11 @@ sets up a LaunchAgent so the panel stays running.
 git clone https://github.com/mit112/bridge.git
 cd bridge
 uv sync --extra dev
-bridge setup
+uv run bridge setup
 ```
+
+`uv sync` does not put `.venv/bin` on your PATH, so use `uv run bridge …` (or
+activate the venv) when working from a clone.
 
 ## The handoff loop
 
@@ -60,10 +63,11 @@ next-session prompt and records them against the current project. `bridge next`
 prints the prompt back, so `claude "$(bridge next)"` opens the next session on it.
 
 `bridge setup` installs the slash command for you (`~/.claude/commands/handoff.md`).
-To install it manually:
+To install it manually, from a clone of this repo:
 
 ```bash
-cp ~/dev/bridge/commands/handoff.md ~/.claude/commands/handoff.md
+mkdir -p ~/.claude/commands
+cp commands/handoff.md ~/.claude/commands/handoff.md
 ```
 
 The handoff is durable: if the panel is down, `bridge handoff` spools the prompt
@@ -129,15 +133,34 @@ bridge backfill  Import stray HANDOFF.md / NEXT-SESSION.md files
 
 ## Scope and safety
 
-Bridge never writes to a project repository. Its only writes are its own SQLite
-database under `~/.bridge/`. All git access is read-only. It binds to localhost
-only and has no authentication — it is a local tool for a local machine.
+**Bridge never writes to a project repository, and all git access is read-only.**
+Outside your repos it writes its own data under `~/.bridge/`, plus exactly the
+setup files you approve when prompted: `~/.claude/commands/handoff.md` (the
+slash command) and `~/Library/LaunchAgents/` (the LaunchAgent). Both are removed
+by `bridge setup --uninstall`.
 
-When you choose to enable the hooks feature (Phase 4), `bridge setup` will
-guide you through adding three `type: "http"` hooks to `~/.claude/settings.json`
-(`Notification`, `SessionStart`, `SessionEnd`) that POST to
-`http://127.0.0.1:8787/api/hooks`. Each carries `timeout: 2` so a stopped
-Bridge costs nothing — the connection is refused immediately.
+Bridge binds to `127.0.0.1` and has **no authentication** — it is a local tool
+for a local machine. Anything running as you on this machine can drive it,
+including starting a Claude Code session. Requests are refused unless the `Host`
+header is a loopback literal, which is what stops a hostile web page from
+reaching the panel through a rebound DNS name. Don't expose the port to a
+network or put it behind a reverse proxy.
+
+### Live session status (optional)
+
+Session liveness — the "working now" / "needs input" states — comes from Claude
+Code hooks, and **`bridge setup` does not install these**; add them by hand.
+`/settings` in the panel shows whether they are installed and prints the exact
+JSON for your port. In `~/.claude/settings.json`, give `Notification`,
+`SessionStart`, and `SessionEnd` a handler shaped like:
+
+```json
+{"hooks": [{"type": "http", "url": "http://127.0.0.1:8787/api/hooks", "timeout": 2}]}
+```
+
+and add that same URL to `allowedHttpHookUrls`. The `timeout: 2` is why a
+stopped Bridge costs nothing — the connection is refused immediately.
+Everything else in the panel works without hooks.
 
 ## Uninstall
 
@@ -157,3 +180,8 @@ uv run pytest
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+The bundled webfonts (Atkinson Hyperlegible Next, Fraunces, IBM Plex Mono,
+Young Serif) are **not** MIT: each is under the SIL Open Font License 1.1, with
+its license text and full provenance in
+[`src/bridge/static/fonts/`](src/bridge/static/fonts/).

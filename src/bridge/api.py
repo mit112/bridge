@@ -481,6 +481,25 @@ FRAGMENT_HEADER = "x-bridge-fragment"
 # HEAD are excluded because every one of Bridge's is a read.
 UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
+# The only hostnames a browser can address a panel bound to 127.0.0.1 with,
+# absent an attacker-controlled DNS record. `::1` appears unbracketed because
+# `_hostname` strips the brackets a Host header is required to carry.
+LOOPBACK_HOSTNAMES = frozenset({"127.0.0.1", "localhost", "::1"})
+
+
+def _hostname(host: str) -> str:
+    """The host part of a `Host` header, with any port removed.
+
+    Split on the LAST colon and only when what follows is a port, so
+    `evil.example:127.0.0.1` does not read as the host `evil.example:127.0.0.1`
+    being compared away to something loopback-looking. IPv6 is only recognised
+    bracketed, which is what RFC 3986 requires of a Host header anyway.
+    """
+    if host.startswith("["):
+        return host.partition("]")[0].lstrip("[").lower()
+    name, sep, port = host.rpartition(":")
+    return name.lower() if sep and port.isdigit() else host.lower()
+
 
 def _layout_for(request: Request) -> str:
     """Which layout a page template extends.
@@ -513,6 +532,28 @@ def create_app(
             response.headers["Cache-Control"] = "no-store"
             response.headers["Vary"] = "X-Bridge-Fragment"
         return response
+
+    # Binding 127.0.0.1 does not decide which NAME the browser used to get here.
+    # An attacker who points `evil.example` at 127.0.0.1 and gets the user to
+    # open `http://evil.example:8787/` has a page the browser treats as
+    # same-origin with the panel: `Origin` and `Host` both read
+    # `evil.example:8787`, so the Origin check below sees them agree and allows
+    # the write. That reaches `POST /api/launch` with
+    # `permission_mode: bypassPermissions`, and every GET's body besides.
+    #
+    # Pinning `Host` to a loopback literal is what the Origin check cannot do
+    # on its own: the attacker controls the name, but cannot make a browser
+    # send `Host: 127.0.0.1` for a page served from their own domain. This runs
+    # on reads too -- once the page is same-origin, the responses are readable.
+    @app.middleware("http")
+    async def _loopback_host_only(request: Request, call_next):
+        host = request.headers.get("host")
+        if host is not None and _hostname(host) not in LOOPBACK_HOSTNAMES:
+            log.warning("refused non-loopback %s %s for host %r",
+                        request.method, request.url.path, host)
+            return JSONResponse({"detail": "non-loopback host refused"},
+                                status_code=403)
+        return await call_next(request)
 
     # Binding 127.0.0.1 keeps another machine out; it does NOT keep out a page
     # already in this machine's browser. A cross-origin `<form method=post>`

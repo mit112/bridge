@@ -224,7 +224,7 @@ a move — the spellings genuinely differ. The StreakSync entry folds a deleted
 worktree into its parent repo, which is a judgment call: the work landed in the
 parent, so its sessions belong there.
 
-`~/Documents/Vandit & Zeel/VANDITZEEL` has **no alias target** — the directory is
+`~/Documents/Client Archive/OLDPROJECT` has **no alias target** — the directory is
 gone entirely. It gets archived via `set_project_status`, not aliased.
 
 **Re-attribution needs no migration.** The SQLite database is a pure derived cache

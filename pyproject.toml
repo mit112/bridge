@@ -40,7 +40,12 @@ packages = ["src/bridge"]
 force-include = { "commands/handoff.md" = "bridge/commands/handoff.md" }
 
 [tool.hatch.build.targets.sdist]
-include = ["commands/handoff.md"]
+# No `include` key: hatchling treats it as a REPLACEMENT for the default file
+# selection, not an addition, so listing `commands/handoff.md` alone shipped an
+# sdist with no `src/bridge` in it at all -- and since `uv build` and
+# `python -m build` build the wheel FROM the sdist, the wheel was empty too.
+# The default (everything tracked, minus `.gitignore`) is what we want.
+only-include = ["src", "commands", "tests", "tools", "README.md", "LICENSE"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

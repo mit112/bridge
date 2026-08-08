@@ -2,6 +2,11 @@ MIT License
 
 Copyright (c) 2025 Mit Sheth
 
+This license covers Bridge's own source. It does NOT cover the webfonts bundled
+under src/bridge/static/fonts/, which are licensed under the SIL Open Font
+License 1.1 by their respective authors; see the OFL-*.txt files and
+PROVENANCE.md in that directory.
+
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
 in the Software without restriction, including without limitation the rights

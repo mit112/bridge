@@ -1,33 +1,55 @@
 """Which transcript directories are real projects, and what to call them.
 
-Transcript directory names path-encode `/` as `-`, which is lossy:
-`-Users-mitsheth-dev-Job-apps` maps to both "Job apps" (the real directory)
+Transcript directory names path-encode `/`, `.` and space all as `-`, which is
+lossy: `-Users-you-dev-Job-apps` maps to both "Job apps" (the real directory)
 and "Job-apps". Real paths therefore come only from the `cwd` field inside a
 transcript. Nothing here decodes a directory name into a path.
+
+Every rule below is derived from the *running user's* home. Hardcoding one
+username here is not a cosmetic leak: `is_noise` decides which directories
+become project cards, so a foreign home means the panel shows the user's home
+directory and their dotfile directories as projects, and filters nothing.
 """
 
+import re
 from pathlib import Path
 
-# Container directories that hold projects but are not projects themselves.
-# Matched EXACTLY, never by prefix: "-Users-mitsheth" is a prefix of every
-# other entry, and an ancestor-based rule would wrongly hide real parents
-# like -Users-mitsheth-dev-projectY (which contains boardwatch).
-CONTAINER_DIRS = frozenset({
-    "-Users-mitsheth",
-    "-Users-mitsheth-dev",
-    "-Users-mitsheth-Documents",
-})
+# Directory names directly under $HOME that hold projects but are not projects
+# themselves. Matched EXACTLY, never by prefix: the encoded home is a prefix of
+# every project under it, and an ancestor-based rule would wrongly hide real
+# parents like `~/dev/projectY` (which contains `projectY/boardwatch`).
+CONTAINER_NAMES = ("dev", "Documents")
 
-NOISE_PREFIXES = (
-    "-private-tmp-",
-    "-Users-mitsheth--claude",
-    "-Users-mitsheth--local-share-ecc-homunculus",
-    "-Volumes-",
-)
+# Independent of $HOME: Claude Code's own sandbox transcripts, and mounted
+# volumes, are never the user's projects.
+GLOBAL_NOISE_PREFIXES = ("-private-tmp-", "-Volumes-")
 
 
-def is_noise(dir_name: str) -> bool:
-    return dir_name in CONTAINER_DIRS or dir_name.startswith(NOISE_PREFIXES)
+def encode_path(path: Path | str) -> str:
+    """Claude Code's transcript-directory encoding, reproduced exactly.
+
+    `/`, `.` and space all collapse to `-`. Encoding forward is well defined;
+    it is only *decoding* that is ambiguous, which is why nothing here does it.
+    """
+    return re.sub(r"[/. ]", "-", str(path))
+
+
+def _rules(home: Path | None) -> tuple[frozenset[str], tuple[str, ...]]:
+    """(container dirs, noise prefixes) for one home. Cheap enough to redo."""
+    encoded = encode_path(Path(home) if home is not None else Path.home())
+    containers = frozenset(
+        {encoded} | {f"{encoded}-{name}" for name in CONTAINER_NAMES}
+    )
+    # `<home>--` is every dotdir under home: `.claude`, `.config`, `.local/...`.
+    # Hidden directories are not projects, so the rule generalises rather than
+    # naming the handful of tools that happen to be installed here.
+    return containers, (*GLOBAL_NOISE_PREFIXES, f"{encoded}--")
+
+
+def is_noise(dir_name: str, home: Path | None = None) -> bool:
+    """`home` is injected only by tests; production always reads `Path.home()`."""
+    containers, prefixes = _rules(home)
+    return dir_name in containers or dir_name.startswith(prefixes)
 
 
 def display_name(project_path: str) -> str:
