@@ -2002,6 +2002,76 @@ def test_the_stream_never_writes(client):
     assert (before is None) == (after is None)
 
 
+def test_events_emits_promptly_on_a_bump_without_waiting_the_fallback(
+    tmp_path, monkeypatch
+):
+    """The SSE loop must WAKE on a `notifier.bump()`, not merely poll fast
+    enough to look that way. `interval` here is a 5 s fallback -- if the loop
+    were still sleeping through it instead of waiting on the notifier, this
+    stream would take on the order of 5 s. It has to finish in a small
+    fraction of that instead.
+    """
+    import threading
+    import time as _time
+
+    from bridge import agents
+    from bridge.models import AgentsState, LiveSession
+    from bridge.notify import ChangeNotifier
+
+    cfg = load({"db_path": tmp_path / "push.db", "spool_dir": tmp_path / "spool"})
+    store = Store(cfg.db_path)
+    store.upsert_project("/p/push", "push")
+
+    # First probe is empty; every probe after the bump reports a live session,
+    # so the second tick's live_signature differs and an "update" frame is
+    # forced to emit -- proving the wake actually reached a rebuilt tick.
+    busy = AgentsState(status="ok", sessions=[LiveSession(
+        session_id="aaaaaaaa-0000-0000-0000-000000000009", cwd="/p/push",
+        kind="interactive", status="busy", started_at=5)])
+    remaining = [AgentsState(status="ok", sessions=[])]
+    monkeypatch.setattr(
+        agents, "probe", lambda *a, **k: remaining.pop(0) if remaining else busy
+    )
+
+    notifier = ChangeNotifier()
+    c = TestClient(create_app(store, cfg, notifier=notifier))
+
+    def bump_soon():
+        _time.sleep(0.05)
+        notifier.bump()
+
+    thread = threading.Thread(target=bump_soon)
+    thread.start()
+    started = _time.monotonic()
+    with c.stream("GET", "/events?max_ticks=2&interval=5&floor=0") as r:
+        frames = _frames("".join(r.iter_text()))
+    elapsed = _time.monotonic() - started
+    thread.join()
+    store.close()
+
+    assert [name for name, _ in frames] == ["snapshot", "update"]
+    assert elapsed < 1.0, (
+        f"push took {elapsed:.2f}s -- looks like it waited the 5s fallback"
+    )
+
+
+def test_events_still_emits_on_the_fallback_timeout_with_no_bump(client):
+    """With no bump, the loop must still wake on the fallback timeout rather
+    than hang forever waiting on the notifier."""
+    import time as _time
+
+    c, _, _ = client
+    started = _time.monotonic()
+    with c.stream(
+        "GET", "/events?interval=0.05&floor=0&max_seconds=0.15&max_ticks=50"
+    ) as r:
+        frames = _frames("".join(r.iter_text()))
+    elapsed = _time.monotonic() - started
+
+    assert [name for name, _ in frames][-1] == "refresh"
+    assert elapsed < 2.0, "the stream hung waiting on the notifier fallback"
+
+
 def test_live_js_never_touches_the_prompt_textarea():
     """The handoff prompt is the only state Bridge cannot rebuild."""
     source = (Path(__file__).resolve().parent.parent / "src" / "bridge"
