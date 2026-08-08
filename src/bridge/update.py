@@ -85,3 +85,56 @@ def installed_sha() -> str | None:
     if isinstance(sha, str) and _SHA_RE.match(sha):
         return sha
     return None
+
+
+def _running_executable() -> Path:
+    """The resolved path of the console script that started this process."""
+    return Path(sys.argv[0]).resolve()
+
+
+def _uv_tools_dir() -> Path:
+    """uv's tools directory: `uv tool dir`, falling back to the default."""
+    uv = shutil.which("uv")
+    if uv is not None:
+        try:
+            proc = subprocess.run([uv, "tool", "dir"], capture_output=True,
+                                  text=True, check=False, timeout=5)
+            if proc.returncode == 0 and proc.stdout.strip():
+                return Path(proc.stdout.strip()).resolve()
+        except (OSError, ValueError, subprocess.SubprocessError):
+            pass
+    return (Path.home() / ".local" / "share" / "uv" / "tools").resolve()
+
+
+def _brew_cellars() -> list[Path]:
+    """Both Homebrew prefixes' Cellars: Apple silicon and Intel."""
+    out = []
+    for prefix in ("/opt/homebrew", "/usr/local"):
+        cellar = Path(prefix) / "Cellar"
+        if cellar.is_dir():
+            out.append(cellar.resolve())
+    return out
+
+
+def _is_within(child: Path, parent: Path) -> bool:
+    try:
+        child.relative_to(parent)
+        return True
+    except ValueError:
+        return False
+
+
+def install_method() -> InstallMethod:
+    """Resolve the running executable against package-manager prefixes.
+
+    Never guesses: an executable under neither a uv-tools dir nor a Homebrew
+    Cellar is "dev" when the build SHA is a dev sentinel (editable/source), and
+    "unknown" otherwise (pipx/ambiguous) -- so an ambiguous install is refused
+    rather than updated as if it were uv."""
+    exe = _running_executable()
+    if _is_within(exe, _uv_tools_dir()):
+        return "uv"
+    for cellar in _brew_cellars():
+        if _is_within(exe, cellar):
+            return "brew"
+    return "dev" if installed_sha() is None else "unknown"
