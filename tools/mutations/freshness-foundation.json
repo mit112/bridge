@@ -27,8 +27,8 @@
     {
       "name": "send a liveness patch after a successful generation instead of a full snapshot",
       "file": "src/bridge/api.py",
-      "old": "                elif status.generation != previous_generation:\n                    payload = dashboard_builder.full_update()\n                    yield _frame(\"update\", payload)",
-      "new": "                elif status.generation != previous_generation:\n                    payload = dashboard_builder.live_patch()\n                    yield _frame(\"update\", payload)",
+      "old": "                    elif status.generation != previous_generation:\n                        payload = dashboard_builder.full_update()\n                        yield _frame(\"update\", payload)",
+      "new": "                    elif status.generation != previous_generation:\n                        payload = dashboard_builder.live_patch()\n                        yield _frame(\"update\", payload)",
       "tests": ["tests/test_api.py::test_sse_emits_full_update_after_periodic_generation"],
       "expect_count": 1
     },

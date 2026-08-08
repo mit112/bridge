@@ -2,8 +2,8 @@
   {
     "name": "hold the store lock across the sleep, so the whole panel hangs while a tab is open (the single worst regression available in this phase)",
     "file": "src/bridge/api.py",
-    "old": "                time.sleep(interval)         # the lock is NOT held here",
-    "new": "                with store._lock:\n                    time.sleep(interval)",
+    "old": "                    if elapsed < floor:\n                        time.sleep(floor - elapsed)",
+    "new": "                    if elapsed < floor:\n                        with store._lock:\n                            time.sleep(floor - elapsed)",
     "tests": [
       "tests/test_api.py::test_the_stream_never_holds_the_store_lock_while_it_sleeps"
     ],
@@ -42,8 +42,8 @@
   {
     "name": "send a delta instead of a snapshot on connect, so a reconnecting client never learns the full picture",
     "file": "src/bridge/api.py",
-    "old": "                if previous is None:\n                    payload = dashboard_builder.full_update()\n                    yield _frame(\"snapshot\", payload)",
-    "new": "                if False:\n                    payload = dashboard_builder.full_update()\n                    yield _frame(\"snapshot\", payload)",
+    "old": "                    if previous is None:\n                        payload = dashboard_builder.full_update()\n                        yield _frame(\"snapshot\", payload)",
+    "new": "                    if False:\n                        payload = dashboard_builder.full_update()\n                        yield _frame(\"snapshot\", payload)",
     "tests": [
       "tests/test_api.py::test_events_opens_with_a_full_snapshot_in_sse_frame_format",
       "tests/test_api.py::test_every_reconnect_begins_with_a_snapshot_so_no_replay_is_needed"
@@ -63,8 +63,8 @@
   {
     "name": "cap the stream silently with no refresh event, leaving the client to guess it should resync",
     "file": "src/bridge/api.py",
-    "old": "                    yield _frame(\"refresh\", {\"reason\": \"stream capped\"})\n                    break",
-    "new": "                    break",
+    "old": "                        yield _frame(\"refresh\", {\"reason\": \"stream capped\"})\n                        break",
+    "new": "                        break",
     "tests": [
       "tests/test_api.py::test_a_capped_stream_ends_with_a_named_refresh_rather_than_running_forever"
     ],
