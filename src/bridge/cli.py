@@ -40,7 +40,7 @@ import urllib.request
 import uuid
 from pathlib import Path
 
-from bridge import spool
+from bridge import __version__, configure_logging, spool
 from bridge.config import ConfigError, load
 from bridge.models import Handoff
 
@@ -288,6 +288,7 @@ def cmd_status(args, cfg) -> int:
     except Exception:  # noqa: BLE001
         status, body, panel = None, None, "down"
 
+    print(f"version: {__version__}")
     print(f"project: {project}")
     print(f"panel:   {panel} ({_base(cfg)})")
     print(f"spooled: {pending} awaiting drain")
@@ -310,8 +311,20 @@ def cmd_open(args, cfg) -> int:
     return 0
 
 
+def cmd_diagnose(args, cfg) -> int:
+    """A read-only snapshot for a bug report: versions, resolved config, the
+    LaunchAgent's state and the tail of the serve log. Imported lazily so the
+    handoff path never pays for `platform`/`subprocess` it does not use."""
+    from bridge import diagnose
+
+    print(diagnose.render(cfg, log_lines=args.lines))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="bridge")
+    parser.add_argument("--version", action="version",
+                        version=f"bridge {__version__}")
     sub = parser.add_subparsers(dest="cmd")
 
     h = sub.add_parser("handoff", help="record a next-session prompt")
@@ -351,6 +364,11 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("status", help="show panel and handoff state")
     s.add_argument("--project")
 
+    d = sub.add_parser("diagnose",
+                       help="print a read-only diagnostics snapshot")
+    d.add_argument("--lines", type=int, default=40,
+                   help="how many trailing lines of serve.log to show")
+
     sub.add_parser("open", help="open the panel in a browser")
 
     su = sub.add_parser("setup", help="interactive first-time setup")
@@ -383,6 +401,7 @@ HANDLERS = {
     "launch": cmd_launch,
     "next": cmd_next,
     "status": cmd_status,
+    "diagnose": cmd_diagnose,
     "open": cmd_open,
 }
 
@@ -398,6 +417,7 @@ def _run_setup(args) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    configure_logging()
     parser = build_parser()
     try:
         args = parser.parse_args(argv)

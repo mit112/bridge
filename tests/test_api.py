@@ -1513,6 +1513,14 @@ def test_diagnostics_records_which_sensor_answered_and_what_version(client):
     assert "claude_version" in body
 
 
+def test_diagnostics_reports_the_bridge_version(client):
+    """The runtime version belongs in the payload so a bug report can name the
+    build rather than a guess at it."""
+    from bridge import __version__
+
+    assert client[0].get("/api/diagnostics").json()["version"] == __version__
+
+
 def test_diagnostics_counts_only_still_queued_handoffs(client):
     c, store, pid = client
     store.create_handoff(Handoff(id="dq1", project_path=DEMO,

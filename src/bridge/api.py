@@ -27,7 +27,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, field_validator, model_validator
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from bridge import agents, hooks, launcher, schedspool, spool
+from bridge import __version__, agents, hooks, launcher, schedspool, spool
 from bridge.cards import (
     FIVE_HOURS,
     GitProbeCache,
@@ -825,6 +825,7 @@ def create_app(
 
         live = agents.probe() if state is None else state
         return {
+            "version": __version__,
             "last_index": last_index,
             "parse_errors": parse_errors,
             "spool_depth": spool.pending_count(cfg.spool_dir),

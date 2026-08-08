@@ -13,7 +13,7 @@ import threading
 from dataclasses import asdict
 from pathlib import Path
 
-from bridge import schedspool, spool
+from bridge import configure_logging, schedspool, spool
 from bridge.config import load
 from bridge.indexer import reindex
 from bridge.notify import ChangeNotifier
@@ -25,6 +25,7 @@ log = logging.getLogger(__name__)
 
 
 def run_db_command(argv: list[str] | None = None) -> int:
+    configure_logging()
     parser = argparse.ArgumentParser(prog="bridge")
     sub = parser.add_subparsers(dest="cmd")
     for name in ("index", "serve", "backfill"):
