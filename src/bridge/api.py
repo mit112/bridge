@@ -654,6 +654,7 @@ def create_app(
             hook_state.record(event)
         except Exception:  # noqa: BLE001
             pass
+        app.state.notifier.bump()
         return {"ok": True}
 
     # --- SSE ----------------------------------------------------------------
@@ -1132,6 +1133,7 @@ def create_app(
         # a project that was never indexed, or from an old ~/Documents path.
         project_id = resolve_project(store, h.project_path)
         store.create_handoff(h, project_id)
+        app.state.notifier.bump()
         return {"id": h.id, "project_id": project_id, "journaled": journaled}
 
     @app.get("/api/handoff")
@@ -1213,6 +1215,7 @@ def create_app(
             spool.journal_status(handoff_id, body.status, now_epoch(), cfg.spool_dir)
             store.set_handoff_status(handoff_id, body.status)
 
+        app.state.notifier.bump()
         return dict(store.get_handoff(handoff_id))
 
     @app.post("/api/launch")
@@ -1279,6 +1282,7 @@ def create_app(
         except launcher.LaunchError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+        app.state.notifier.bump()
         return {
             "launch_id": result.launch_id,
             "outcome": result.outcome,
@@ -1333,6 +1337,7 @@ def create_app(
             log.exception("failed to journal scheduled run %r", job.id)
             journaled = False
         store.create_scheduled_run(job)
+        app.state.notifier.bump()
         return {**dict(store.get_scheduled_run(job.id)), "journaled": journaled}
 
     @app.get("/api/schedule")
@@ -1393,6 +1398,7 @@ def create_app(
         schedspool.journal_status(id, "cancelled", now_epoch(), cfg.spool_dir)
         if not store.cancel_pending(id):
             raise _unknown_or_conflict(id)
+        app.state.notifier.bump()
         return dict(store.get_scheduled_run(id))
 
     @app.post("/api/schedule/{id}/run-now")
@@ -1400,7 +1406,9 @@ def create_app(
         row = store.claim_specific(id)
         if row is None:
             raise _unknown_or_conflict(id)
-        return dict(_fire_claimed_job(store, cfg, row, launch_fn))
+        result = dict(_fire_claimed_job(store, cfg, row, launch_fn))
+        app.state.notifier.bump()
+        return result
 
     @app.post("/api/schedule/{id}/retry")
     def retry_schedule(id: str):
@@ -1438,8 +1446,11 @@ def create_app(
                 row["id"], status="failed",
                 error=f"could not journal the retry: {exc}",
             )
+            app.state.notifier.bump()
             return dict(store.get_scheduled_run(row["id"]))
-        return dict(_fire_claimed_job(store, cfg, row, launch_fn))
+        result = dict(_fire_claimed_job(store, cfg, row, launch_fn))
+        app.state.notifier.bump()
+        return result
 
     return app
 

@@ -9,6 +9,7 @@ from bridge import launcher, spool
 from bridge.api import create_app
 from bridge.config import load
 from bridge.models import GitState, Handoff, Launch, ScheduledRun, SessionRecord
+from bridge.notify import ChangeNotifier
 from bridge.registry import resolve_project
 from bridge.refresh import RefreshCoordinator, RefreshStatus
 from bridge.store import Store, now_epoch
@@ -3485,3 +3486,134 @@ def test_responses_forbid_content_type_sniffing(client):
 
     for path in ("/", "/api/projects", "/static/app.css"):
         assert c.get(path).headers["x-content-type-options"] == "nosniff", path
+
+
+# --- in-process writes wake the SSE stream -----------------------------------
+#
+# Every user write that changes state must bump `app.state.notifier` so a
+# connected `/events` stream wakes instantly rather than waiting out its
+# fallback poll. `/api/refresh` is deliberately NOT tested here for a bump of
+# its own: it goes through `refresh_coordinator.run_once()`, which already
+# bumps via Task 2's `on_change` hook, so asserting a second explicit bump
+# there would just be testing a redundant call.
+
+@pytest.fixture
+def app_with_notifier_client(tmp_path):
+    """A plain app (no launcher involved) wired to a notifier the test can
+    inspect, for handlers that never spawn a session."""
+    cfg = load({"db_path": tmp_path / "n.db", "spool_dir": tmp_path / "spool"})
+    store = Store(cfg.db_path)
+    notifier = ChangeNotifier()
+    app = create_app(store, cfg, notifier=notifier)
+    yield TestClient(app), notifier
+    store.close()
+
+
+@pytest.fixture
+def launch_app_with_notifier(tmp_path):
+    """`launch_app`'s recording-launcher double, but with an inspectable
+    notifier, for the handlers that go through `fire`/`launch_fn`."""
+    cfg = load({
+        "db_path": tmp_path / "ln.db",
+        "spool_dir": tmp_path / "spool",
+        "launches_dir": tmp_path / "launches",
+    })
+    store = Store(cfg.db_path)
+    fake = recording_launcher()
+    notifier = ChangeNotifier()
+    app = create_app(store, cfg, launch_fn=fake, notifier=notifier)
+    yield TestClient(app), store, cfg, fake, notifier
+    store.close()
+
+
+def test_posting_a_hook_bumps_the_notifier(app_with_notifier_client):
+    client, n = app_with_notifier_client
+    before = n.revision
+    client.post("/api/hooks", json={"hook_event_name": "Notification"})
+    assert n.revision > before
+
+
+def test_creating_a_handoff_bumps_the_notifier(app_with_notifier_client):
+    client, n = app_with_notifier_client
+    before = n.revision
+    r = client.post("/api/handoff", json={
+        "id": "h1", "project_path": DEMO, "next_prompt": "do the thing",
+    })
+    assert r.status_code == 201
+    assert n.revision > before
+
+
+def test_patching_a_handoff_bumps_the_notifier(app_with_notifier_client):
+    client, n = app_with_notifier_client
+    client.post("/api/handoff", json={
+        "id": "h2", "project_path": DEMO, "next_prompt": "do the thing",
+    })
+    before = n.revision
+    r = client.patch("/api/handoff/h2", json={"status": "dismissed"})
+    assert r.status_code == 200
+    assert n.revision > before
+
+
+def test_launch_bumps_the_notifier(launch_app_with_notifier):
+    client, store, cfg, fake, n = launch_app_with_notifier
+    before = n.revision
+    r = client.post("/api/launch", json={
+        "project_path": DEMO, "prompt": "do the thing",
+    })
+    assert r.status_code == 200
+    assert n.revision > before
+
+
+def test_creating_a_schedule_bumps_the_notifier(launch_app_with_notifier):
+    client, store, cfg, fake, n = launch_app_with_notifier
+    before = n.revision
+    r = client.post("/api/schedule", json={
+        "project_path": DEMO, "prompt": "scheduled prompt",
+        "scheduled_for": 9_000_000_000,
+    })
+    assert r.status_code == 201
+    assert n.revision > before
+
+
+def test_run_now_bumps_the_notifier(launch_app_with_notifier):
+    client, store, cfg, fake, n = launch_app_with_notifier
+    jid = client.post("/api/schedule", json={
+        "project_path": DEMO, "prompt": "go",
+        "scheduled_for": 9_000_000_000, "mode": "background",
+    }).json()["id"]
+    before = n.revision
+
+    r = client.post(f"/api/schedule/{jid}/run-now")
+
+    assert r.status_code == 200
+    assert n.revision > before
+
+
+def test_retry_bumps_the_notifier(launch_app_with_notifier):
+    client, store, cfg, fake, n = launch_app_with_notifier
+    jid = client.post("/api/schedule", json={
+        "project_path": DEMO, "prompt": "go",
+        "scheduled_for": 9_000_000_000, "mode": "background",
+    }).json()["id"]
+    fake.result = launcher.LaunchError("no claude on PATH")
+    client.post(f"/api/schedule/{jid}/run-now")
+    before = n.revision
+
+    r = client.post(f"/api/schedule/{jid}/retry")
+
+    assert r.status_code == 200
+    assert n.revision > before
+
+
+def test_cancelling_a_schedule_bumps_the_notifier(launch_app_with_notifier):
+    client, store, cfg, fake, n = launch_app_with_notifier
+    jid = client.post("/api/schedule", json={
+        "project_path": DEMO, "prompt": "go",
+        "scheduled_for": 9_000_000_000, "mode": "background",
+    }).json()["id"]
+    before = n.revision
+
+    r = client.delete(f"/api/schedule/{jid}")
+
+    assert r.status_code == 200
+    assert n.revision > before
