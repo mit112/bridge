@@ -57,9 +57,9 @@ from tests.conftest import RealBridgeDirTouched, launch_by_session
 # A path with a space and a quote, because the real measurement was taken from a
 # project directory named `proj dir's "na\me"`.
 CLAUDE = "/opt/fake bin/claude"
-PROJECT = "/Users/mitsheth/dev/proj dir's \"na\\me\""
+PROJECT = "/Users/you/dev/proj dir's \"na\\me\""
 SESSION_ID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
-PROMPT_FILE = "/Users/mitsheth/.bridge/launches/aaaaaaaa.prompt"
+PROMPT_FILE = "/Users/you/.bridge/launches/aaaaaaaa.prompt"
 
 HOSTILE_PROMPT = """Continue the phase.
 
@@ -132,7 +132,7 @@ def test_the_command_shape_is_the_measured_one():
     assert command == (
         f"[ -r '{PROMPT_FILE}' ] || "
         "{ echo 'bridge: prompt file missing' >&2; exit 1; }; "
-        "cd '/Users/mitsheth/dev/proj dir'\\''s \"na\\me\"' && "
+        "cd '/Users/you/dev/proj dir'\\''s \"na\\me\"' && "
         "'/opt/fake bin/claude' "
         f"--session-id {SESSION_ID} "
         "--model 'opus' --effort 'high' -n 'Phase 3 launcher' "

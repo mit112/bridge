@@ -41,7 +41,7 @@ import uuid
 from pathlib import Path
 
 from bridge import spool
-from bridge.config import load
+from bridge.config import ConfigError, load
 from bridge.models import Handoff
 
 TIMEOUT = 2.0
@@ -362,8 +362,13 @@ def build_parser() -> argparse.ArgumentParser:
     # Accepted here so `bridge index` and `bridge serve` work, but handled by
     # bridge.__main__ and imported lazily: those open the database, and this
     # module must not.
+    lazy_help = {
+        "index": "scan Claude Code transcripts into the database",
+        "serve": "start the panel (blocks; Ctrl-C to stop)",
+        "backfill": "import stray HANDOFF.md / NEXT-SESSION.md files",
+    }
     for name in ("index", "serve", "backfill"):
-        p = sub.add_parser(name)
+        p = sub.add_parser(name, help=lazy_help[name])
         p.add_argument("--projects-dir")
         p.add_argument("--db")
         p.add_argument("--spool-dir")
@@ -412,7 +417,17 @@ def main(argv: list[str] | None = None) -> int:
             return _run_setup(args)
         parser.print_usage(sys.stderr)
         return 2
-    return handler(args, load())
+    # `ConfigError` already says exactly what is wrong (which key, which file,
+    # what was found). Letting it propagate turned `BRIDGE_PORT=oops bridge
+    # status` -- a plain typo, and the first thing a new user does after reading
+    # the env-var table -- into a twelve-frame traceback that reads like a crash
+    # in Bridge rather than a mistake in the shell.
+    try:
+        cfg = load()
+    except ConfigError as exc:
+        print(f"bridge: {exc}", file=sys.stderr)
+        return 2
+    return handler(args, cfg)
 
 
 if __name__ == "__main__":

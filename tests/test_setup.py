@@ -10,6 +10,7 @@ rebinding of those constants rather than a HOME env var, which would arrive too
 late to matter.
 """
 
+import os
 import tomllib
 
 import pytest
@@ -307,6 +308,53 @@ def test_launchd_only_reinstall_bootstraps_the_bridge_label(
     assert verbs == ["bootout", "bootstrap"]
     bootstrap = next(c for c in launchctl.calls if c[1] == "bootstrap")
     assert str(setup.LAUNCHD_AGENTS_DIR / setup.LAUNCHD_PLIST_NAME) in bootstrap
+
+
+# ── the label rename ─────────────────────────────────────────────────────────
+
+
+def test_the_launchd_label_carries_no_personal_handle():
+    """It lands in every user's ~/Library/LaunchAgents, so it cannot be one
+    person's reverse-DNS name."""
+    assert setup.LAUNCHD_LABEL == "dev.bridge.panel"
+    assert "mitsheth" not in setup.LAUNCHD_LABEL
+
+
+def test_uninstall_also_clears_an_agent_from_the_previous_label(
+    home, launchctl, monkeypatch
+):
+    """Renaming the label alone would strand the old agent: `--uninstall` looks
+    for the new plist, finds nothing, and reports success while the old one
+    keeps restarting under KeepAlive."""
+    legacy = setup.LAUNCHD_AGENTS_DIR / f"{setup.LEGACY_LAUNCHD_LABELS[0]}.plist"
+    legacy.write_text("<plist/>")
+    _answers(monkeypatch, False, False)
+
+    rc = setup.run_uninstall()
+
+    assert rc == 0
+    assert not legacy.exists()
+    assert ["launchctl", "bootout", f"gui/{os.getuid()}/{setup.LEGACY_LAUNCHD_LABELS[0]}"] \
+        in launchctl.calls
+
+
+def test_installing_boots_out_the_previous_label_first(home, launchctl):
+    """Two agents bootstrapped against one port means the loser crash-restarts
+    forever, so the old label must go before the new one is loaded."""
+    legacy = setup.LAUNCHD_AGENTS_DIR / f"{setup.LEGACY_LAUNCHD_LABELS[0]}.plist"
+    legacy.write_text("<plist/>")
+    setup.LAUNCHD_PLIST_PATH.write_text("<plist/>")
+
+    setup._install_launchd(str(setup.LAUNCHD_PLIST_PATH))
+
+    assert not legacy.exists()
+    booted = [c for c in launchctl.calls if c[:2] == ["launchctl", "bootout"]]
+    bootstrapped = [c for c in launchctl.calls if c[:2] == ["launchctl", "bootstrap"]]
+    legacy_boot = f"gui/{os.getuid()}/{setup.LEGACY_LAUNCHD_LABELS[0]}"
+    assert any(legacy_boot in c for c in booted)
+    # Ordering is the point, not merely that both happened.
+    assert launchctl.calls.index(["launchctl", "bootout", legacy_boot]) \
+        < launchctl.calls.index(bootstrapped[0])
 
 
 # ── --uninstall (the dangerous one) ──────────────────────────────────────────

@@ -14,8 +14,8 @@ SID = "22222222-2222-2222-2222-222222222222"
 
 
 _ILLUSTRATIVE_ROOTS = (
-    Path("/Users/mitsheth/dev"),
-    Path("/Users/mitsheth/Documents"),
+    Path("/Users/you/dev"),
+    Path("/Users/you/Documents"),
 )
 
 
@@ -23,8 +23,8 @@ _ILLUSTRATIVE_ROOTS = (
 def legacy_fixture_cwds_are_not_this_tasks_concern(monkeypatch):
     """Task 1 adds an auto-archive pass that calls `Path.exists()` on every
     project row. Nearly every fixture in this module attributes sessions to
-    illustrative absolute paths under `/Users/mitsheth/dev/` and
-    `/Users/mitsheth/Documents/` (e.g. `/Users/mitsheth/dev/demo`) that were
+    illustrative absolute paths under `/Users/you/dev/` and
+    `/Users/you/Documents/` (e.g. `/Users/you/dev/demo`) that were
     never meant to be real directories, and rewriting every such literal in
     this file to live under `tmp_path` is out of proportion to this task.
 
@@ -54,7 +54,7 @@ def legacy_fixture_cwds_are_not_this_tasks_concern(monkeypatch):
     monkeypatch.setattr(Path, "exists", fake_exists)
 
 
-def transcript_lines(sid=SID, cwd="/Users/mitsheth/dev/demo", title="Did work"):
+def transcript_lines(sid=SID, cwd="/Users/you/dev/demo", title="Did work"):
     return [
         jline(type="user", sessionId=sid, isSidechain=False,
               timestamp="2026-07-30T10:00:00.000Z", cwd=cwd, gitBranch="main",
@@ -70,7 +70,7 @@ def transcript_lines(sid=SID, cwd="/Users/mitsheth/dev/demo", title="Did work"):
 @pytest.fixture
 def env(tmp_path):
     projects = tmp_path / "projects"
-    (projects / "-Users-mitsheth-dev-demo").mkdir(parents=True)
+    (projects / "-Users-you-dev-demo").mkdir(parents=True)
     # `spool_dir` and `launches_dir` are overridden even though indexing writes
     # to neither: conftest's guard only fires on a call, so an un-overridden
     # Config here is a trap for the next test added to this module. `discovery_paths`
@@ -90,7 +90,7 @@ def env(tmp_path):
     store.close()
 
 
-def write(projects, name, lines, dirname="-Users-mitsheth-dev-demo"):
+def write(projects, name, lines, dirname="-Users-you-dev-demo"):
     p = projects / dirname / name
     p.write_text("".join(lines))
     return p
@@ -158,7 +158,7 @@ def test_first_index_creates_project_and_session(env):
     assert stats.sessions_upserted == 1
     projs = store.projects()
     assert len(projs) == 1
-    assert projs[0]["path"] == "/Users/mitsheth/dev/demo"
+    assert projs[0]["path"] == "/Users/you/dev/demo"
     assert projs[0]["name"] == "demo"
     assert store.latest_session(projs[0]["id"])["title"] == "Did work"
 
@@ -230,12 +230,12 @@ def test_malformed_file_does_not_abort_the_run(env):
 
 def test_two_projects_are_separated(env):
     cfg, store, projects = env
-    (projects / "-Users-mitsheth-dev-other").mkdir()
+    (projects / "-Users-you-dev-other").mkdir()
     write(projects, "a.jsonl", transcript_lines())
     write(projects, "b.jsonl",
           transcript_lines(sid="33333333-3333-3333-3333-333333333333",
-                           cwd="/Users/mitsheth/dev/other"),
-          dirname="-Users-mitsheth-dev-other")
+                           cwd="/Users/you/dev/other"),
+          dirname="-Users-you-dev-other")
     reindex(store, cfg)
     assert {p["name"] for p in store.projects()} == {"demo", "other"}
 
@@ -246,19 +246,19 @@ def test_two_projects_are_separated(env):
 # logical project. `aliased_env` models that with one alias, one unrelated
 # project, and one archived path.
 
-OLD = "/Users/mitsheth/Documents/demo"
-NEW = "/Users/mitsheth/dev/demo"
-GONE = "/Users/mitsheth/Documents/deleted-thing"
-OLD_DIR = "-Users-mitsheth-Documents-demo"
-GONE_DIR = "-Users-mitsheth-Documents-deleted-thing"
+OLD = "/Users/you/Documents/demo"
+NEW = "/Users/you/dev/demo"
+GONE = "/Users/you/Documents/deleted-thing"
+OLD_DIR = "-Users-you-Documents-demo"
+GONE_DIR = "-Users-you-Documents-deleted-thing"
 SID_B = "44444444-4444-4444-4444-444444444444"
 
 
 @pytest.fixture
 def aliased_env(tmp_path):
     projects = tmp_path / "projects"
-    for d in ("-Users-mitsheth-dev-demo", OLD_DIR, GONE_DIR,
-              "-Users-mitsheth-dev-other"):
+    for d in ("-Users-you-dev-demo", OLD_DIR, GONE_DIR,
+              "-Users-you-dev-other"):
         (projects / d).mkdir(parents=True)
     cfg = load({
         "claude_projects_dir": projects,
@@ -296,10 +296,10 @@ def test_split_history_across_an_alias_merges_into_one_project(aliased_env):
 
 def test_a_path_with_no_alias_is_attributed_unchanged(aliased_env):
     cfg, store, projects = aliased_env
-    write(projects, "o.jsonl", transcript_lines(cwd="/Users/mitsheth/dev/other"),
-          dirname="-Users-mitsheth-dev-other")
+    write(projects, "o.jsonl", transcript_lines(cwd="/Users/you/dev/other"),
+          dirname="-Users-you-dev-other")
     reindex(store, cfg)
-    assert [p["path"] for p in store.projects()] == ["/Users/mitsheth/dev/other"]
+    assert [p["path"] for p in store.projects()] == ["/Users/you/dev/other"]
 
 
 def test_configured_archive_path_is_created_then_hidden(aliased_env):
@@ -371,7 +371,7 @@ def test_a_newly_configured_archive_path_is_still_seeded_on_a_later_run(aliased_
 #
 # No test here spawns anything: a launch row is constructed directly.
 
-DEMO = "/Users/mitsheth/dev/demo"  # `transcript_lines`' default cwd
+DEMO = "/Users/you/dev/demo"  # `transcript_lines`' default cwd
 # Shares SID's first eight hex characters, which is the whole hazard: the handle
 # `--bg` prints is exactly `session_id[:8]`.
 SID_TWIN = "22222222-9999-9999-9999-999999999999"
@@ -647,12 +647,12 @@ def test_usage_dedup_state_survives_across_index_runs(env):
     cfg, store, projects = env
     entry = jline(type="assistant", sessionId=SID, isSidechain=False,
                   requestId="req_A", timestamp="2026-07-30T10:05:00.000Z",
-                  cwd="/Users/mitsheth/dev/demo",
+                  cwd="/Users/you/dev/demo",
                   message={"role": "assistant", "model": "claude-opus-5",
                            "usage": {"input_tokens": 100, "output_tokens": 50}})
     p = write(projects, "s.jsonl", [
         jline(type="user", sessionId=SID, isSidechain=False,
-              timestamp="2026-07-30T10:00:00.000Z", cwd="/Users/mitsheth/dev/demo",
+              timestamp="2026-07-30T10:00:00.000Z", cwd="/Users/you/dev/demo",
               message={"role": "user", "content": "go"}),
         entry,
     ])

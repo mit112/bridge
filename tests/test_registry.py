@@ -36,7 +36,7 @@ def test_keeps_real_projects():
 def test_display_name_is_last_path_segment():
     assert display_name("/Users/dev/dev/projectY") == "projectY"
     assert display_name("/Users/dev/dev/Job apps") == "Job apps"
-    assert display_name("/Users/dev/dev/projectY/boardwatch") == "boardwatch"
+    assert display_name("/Users/dev/dev/projectY/nested-app") == "nested-app"
 
 
 def test_display_name_survives_trailing_slash():
@@ -69,11 +69,11 @@ def test_container_match_is_exact_not_prefix():
     """Prefix matching on the encoded home would hide every real project.
 
     Also guards the reverse error: an ancestor-based rule would hide projectY
-    because it contains boardwatch.
+    because it contains nested-app.
     """
     for name in [
         "-Users-dev-dev-projectY",
-        "-Users-dev-dev-projectY-boardwatch",
+        "-Users-dev-dev-projectY-nested-app",
         "-Users-dev-dev-Job-apps",
         "-Users-dev-Documents-client-work",
         "-Users-dev-Claude-Projects-regal",

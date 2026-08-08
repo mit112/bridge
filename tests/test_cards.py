@@ -119,8 +119,8 @@ def test_a_queued_handoff_sorts_above_a_dirty_and_stale_project(tmp_path):
                 "spool_dir": tmp_path / "spool", "stale_hours": 1})
     store = Store(cfg.db_path)
 
-    stale_pid = store.upsert_project("/Users/mitsheth/dev/aaa-stale", "aaa-stale")
-    queued_pid = store.upsert_project("/Users/mitsheth/dev/zzz-queued", "zzz-queued")
+    stale_pid = store.upsert_project("/Users/you/dev/aaa-stale", "aaa-stale")
+    queued_pid = store.upsert_project("/Users/you/dev/zzz-queued", "zzz-queued")
     for pid, sid in ((stale_pid, "s-stale"), (queued_pid, "s-queued")):
         store.upsert_session(
             SessionRecord(session_id=sid, transcript_path=f"/t/{sid}",
@@ -128,7 +128,7 @@ def test_a_queued_handoff_sorts_above_a_dirty_and_stale_project(tmp_path):
             pid,
         )
     store.create_handoff(
-        Handoff(id="h1", project_path="/Users/mitsheth/dev/zzz-queued",
+        Handoff(id="h1", project_path="/Users/you/dev/zzz-queued",
                 next_prompt="do the next thing", summary="a summary",
                 created_at=1000),
         queued_pid,
@@ -477,9 +477,9 @@ def test_a_running_project_sorts_above_stale_but_below_a_queued_handoff(tmp_path
     cfg = load({"db_path": tmp_path / "rank.db", "spool_dir": tmp_path / "spool",
                 "stale_hours": 1})
     store = Store(cfg.db_path)
-    paths = {"handoff": "/Users/mitsheth/dev/zzz-handoff",
-             "running": "/Users/mitsheth/dev/mmm-running",
-             "stale": "/Users/mitsheth/dev/aaa-stale"}
+    paths = {"handoff": "/Users/you/dev/zzz-handoff",
+             "running": "/Users/you/dev/mmm-running",
+             "stale": "/Users/you/dev/aaa-stale"}
     pids = {}
     for key, path in paths.items():
         pids[key] = store.upsert_project(path, path.rsplit("/", 1)[-1])

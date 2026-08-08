@@ -13,7 +13,7 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.mitsheth.bridge-panel</string>
+    <string>dev.bridge.panel</string>
 
     <!-- The venv interpreter directly, not `uv run`: `uv run` re-resolves the
          environment on every start, which adds latency to a restart loop and
@@ -21,14 +21,14 @@
          at this repo, so `-m bridge` picks up committed changes on restart. -->
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/mitsheth/dev/bridge/.venv/bin/python</string>
+        <string>/Users/you/dev/bridge/.venv/bin/python</string>
         <string>-m</string>
         <string>bridge</string>
         <string>serve</string>
     </array>
 
     <key>WorkingDirectory</key>
-    <string>/Users/mitsheth/dev/bridge</string>
+    <string>/Users/you/dev/bridge</string>
 
     <!-- launchd hands out a minimal PATH (/usr/bin:/bin:/usr/sbin:/sbin).
          `launcher.resolve_claude` deliberately resolves `claude` through PATH
@@ -37,7 +37,7 @@
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
-        <string>/Users/mitsheth/.local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <string>/Users/you/.local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     </dict>
 
     <!-- Start at login and keep it up: restart on crash, and on a clean exit
@@ -57,9 +57,9 @@
     <!-- Same file `bridge serve` was already being redirected into by hand.
          Both streams: uvicorn logs to stderr, tracebacks land beside them. -->
     <key>StandardOutPath</key>
-    <string>/Users/mitsheth/.bridge/serve.log</string>
+    <string>/Users/you/.bridge/serve.log</string>
 
     <key>StandardErrorPath</key>
-    <string>/Users/mitsheth/.bridge/serve.log</string>
+    <string>/Users/you/.bridge/serve.log</string>
 </dict>
 </plist>

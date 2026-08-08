@@ -8,7 +8,7 @@ def test_parses_normal_session(write_transcript, normal_session):
     r = scan(p)
     rec = r.record
     assert rec.session_id == sid
-    assert rec.project_path == "/Users/mitsheth/dev/demo"
+    assert rec.project_path == "/Users/you/dev/demo"
     assert rec.title == "Do the thing"
     assert rec.last_prompt == "do the thing again"
     assert rec.git_branch == "main"
@@ -174,7 +174,7 @@ def test_incremental_totals_match_full_scan(write_transcript):
     fails here.
     """
     sid = "44444444-4444-4444-4444-444444444444"
-    cwd = "/Users/mitsheth/dev/demo"
+    cwd = "/Users/you/dev/demo"
 
     def user(ts, text):
         return jline(type="user", sessionId=sid, isSidechain=False,
@@ -231,7 +231,7 @@ SID = "22222222-2222-2222-2222-222222222222"
 def _assistant(*, req=None, tin=0, tout=0, sidechain=False, ts="2026-07-30T10:00:01.000Z"):
     kw = dict(
         type="assistant", sessionId=SID, isSidechain=sidechain, timestamp=ts,
-        cwd="/Users/mitsheth/dev/demo",
+        cwd="/Users/you/dev/demo",
         message={"role": "assistant", "model": "claude-opus-5",
                  "usage": {"input_tokens": tin, "output_tokens": tout}},
     )

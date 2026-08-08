@@ -19,7 +19,7 @@ from bridge.refresh import RefreshCoordinator
 from bridge.store import Store
 from bridge.api import create_app
 
-DEMO = "/Users/mitsheth/dev/demo"
+DEMO = "/Users/you/dev/demo"
 
 
 def _tmp_store_cfg(tmp_path):

@@ -223,13 +223,13 @@ def normal_session():
         jline(
             type="user", sessionId=sid, isSidechain=False,
             timestamp="2026-07-30T10:00:00.000Z",
-            cwd="/Users/mitsheth/dev/demo", gitBranch="main",
+            cwd="/Users/you/dev/demo", gitBranch="main",
             message={"role": "user", "content": "do the thing"},
         ),
         jline(
             type="assistant", sessionId=sid, isSidechain=False,
             timestamp="2026-07-30T10:00:05.000Z",
-            cwd="/Users/mitsheth/dev/demo", gitBranch="main", effort="high",
+            cwd="/Users/you/dev/demo", gitBranch="main", effort="high",
             message={
                 "role": "assistant", "model": "claude-opus-5",
                 "usage": {

@@ -8,7 +8,7 @@ from bridge import spool
 from bridge.models import Handoff
 from bridge.store import Store
 
-DEMO = "/Users/mitsheth/dev/demo"
+DEMO = "/Users/you/dev/demo"
 
 
 @pytest.fixture
@@ -146,13 +146,13 @@ def test_drain_replays_in_created_at_order_not_filename_order(store, spool_dir):
 def test_drain_resolves_an_aliased_path_to_the_canonical_project(store, spool_dir):
     """`bridge handoff` run from an old ~/Documents cwd must not re-split the
     history that path aliasing just merged."""
-    store.set_alias("/Users/mitsheth/Documents/projectX", "/Users/mitsheth/dev/projectX")
-    spool.write(h("h1", project_path="/Users/mitsheth/Documents/projectX"), spool_dir)
+    store.set_alias("/Users/you/Documents/projectX", "/Users/you/dev/projectX")
+    spool.write(h("h1", project_path="/Users/you/Documents/projectX"), spool_dir)
 
     spool.drain(store, spool_dir)
 
-    assert store.project_by_path("/Users/mitsheth/Documents/projectX") is None
-    canonical = store.project_by_path("/Users/mitsheth/dev/projectX")
+    assert store.project_by_path("/Users/you/Documents/projectX") is None
+    canonical = store.project_by_path("/Users/you/dev/projectX")
     assert canonical is not None
     assert store.queued_handoff(canonical["id"])["id"] == "h1"
 

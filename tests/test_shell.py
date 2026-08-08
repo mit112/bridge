@@ -132,7 +132,7 @@ def test_every_shell_page_has_exactly_one_h1_and_the_shared_landmarks(tmp_path):
     c = _client(tmp_path)
     cfg = load({"db_path": tmp_path / "b.db", "spool_dir": tmp_path / "spool2"})
     store = Store(cfg.db_path)
-    pid = store.upsert_project("/Users/mitsheth/dev/demo", "demo")
+    pid = store.upsert_project("/Users/you/dev/demo", "demo")
     store.close()
     client = TestClient(create_app(Store(cfg.db_path), cfg))
     for path in (
@@ -231,7 +231,7 @@ def test_sidebar_toggle_renders_on_every_shell_page_with_a_name_and_a_target(tmp
     c = _client(tmp_path)
     cfg = load({"db_path": tmp_path / "tog.db", "spool_dir": tmp_path / "spool-tog"})
     store = Store(cfg.db_path)
-    pid = store.upsert_project("/Users/mitsheth/dev/demo", "demo")
+    pid = store.upsert_project("/Users/you/dev/demo", "demo")
     store.close()
     client = TestClient(create_app(Store(cfg.db_path), cfg))
     for path in (

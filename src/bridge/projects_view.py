@@ -38,7 +38,7 @@ class ProjectGroup:
 # One label per status word, shared by every surface so a project reads the
 # same on Projects, Overview and the detail page. The enum stays what it is
 # (`stale`) -- JS filters, CSS pills and the mutation anchors all key off it --
-# but no user-facing string ever says the raw word. "stale" is the state Mit
+# but no user-facing string ever says the raw word. "stale" is the state users
 # flagged as opaque: it means uncommitted work sitting past `stale_hours`, so it
 # reads "Uncommitted", which says what is actually true.
 _STATUS_LABELS = {

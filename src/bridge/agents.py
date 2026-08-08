@@ -272,14 +272,14 @@ def by_project(
     Resolution order is **exact match -> longest registered-path prefix ->
     the unattributed bucket**, and each step is load-bearing:
 
-    * Exact before prefix, because `dev/projectY/boardwatch` is registered
+    * Exact before prefix, because `dev/projectY/nested-app` is registered
       *and* sits under registered `dev/projectY`; the more specific one is
       right.
     * Longest prefix, so a session started in a subdirectory of a project still
       lands on that project's card.
     * An explicit bucket rather than falling back to the cwd itself. Measured
       against the 30 registered projects: mapping cwd-through-aliases and
-      defaulting to the cwd made `/Users/mitsheth` match nothing and vanish
+      defaulting to the cwd made `$HOME` itself match nothing and vanish
       from the dashboard entirely.
     """
     registered = sorted(registered_paths, key=len, reverse=True)

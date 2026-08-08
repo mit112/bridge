@@ -9,7 +9,7 @@ from bridge import schedspool
 from bridge.models import ScheduledRun
 from bridge.store import Store
 
-DEMO = "/Users/mitsheth/dev/demo"
+DEMO = "/Users/you/dev/demo"
 
 
 @pytest.fixture

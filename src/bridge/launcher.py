@@ -14,7 +14,7 @@ Measured against the real environment before any of this was written:
     expansion is live and a `zsh -c` test would not catch it. The naive inline
     form is a full RCE:
       sent      claude … "INLINE $(echo PWNED) `echo BACKTICK_EXECUTED` ${HOME}"
-      received  b'INLINE PWNED BACKTICK_EXECUTED /Users/mitsheth'
+      received  b'INLINE PWNED BACKTICK_EXECUTED /Users/you'
     So the prompt never crosses either layer: it is written to a file (that is
     `launch`'s job, not this module's) and the command reads it back with
     `"$(/bin/cat '<file>')"`. That round-tripped a 483-byte hostile fixture

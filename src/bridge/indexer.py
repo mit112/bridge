@@ -193,7 +193,7 @@ def _index_one(
 
         if not project_path:
             return  # no resolvable project; nothing to attribute the session to
-        # Exact match only: `~/Documents/projectX` and its `hookrail` child are
+        # Exact match only: `~/Documents/projectX` and its `nested-app` child are
         # separate projects with separate mappings, so no prefix rewriting.
         project_path = aliases.get(project_path, project_path)
         pid = store.upsert_project(project_path, display_name(project_path))

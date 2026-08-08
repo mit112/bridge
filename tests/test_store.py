@@ -7,7 +7,7 @@ from bridge.models import Handoff, Launch, ScheduledRun, SessionRecord
 from bridge.store import Store, to_epoch
 from tests.conftest import launch_by_session
 
-DEMO = "/Users/mitsheth/dev/demo"
+DEMO = "/Users/you/dev/demo"
 
 
 @pytest.fixture
@@ -20,7 +20,7 @@ def store(tmp_path):
 def rec(sid="s1", **kw):
     base = dict(
         session_id=sid, transcript_path=f"/t/{sid}.jsonl",
-        project_path="/Users/mitsheth/dev/demo", title="T",
+        project_path="/Users/you/dev/demo", title="T",
         started_at="2026-07-30T10:00:00.000Z", ended_at="2026-07-30T11:00:00.000Z",
         model="claude-opus-5", effort="high", git_branch="main",
         user_msgs=1, assistant_msgs=2, tokens_in=5, tokens_out=6,
@@ -31,7 +31,7 @@ def rec(sid="s1", **kw):
 
 def handoff(hid="h1", **kw):
     base = dict(
-        id=hid, project_path="/Users/mitsheth/dev/demo",
+        id=hid, project_path="/Users/you/dev/demo",
         next_prompt="pick up where this left off", summary="did some work",
         source_session_id="sess-1", suggested_model="claude-opus-5",
         suggested_effort="high", created_at=1000,
@@ -325,8 +325,8 @@ def test_creates_parent_directory(tmp_path):
 
 
 def test_upsert_project_is_idempotent(store):
-    a = store.upsert_project("/Users/mitsheth/dev/demo", "demo")
-    b = store.upsert_project("/Users/mitsheth/dev/demo", "demo")
+    a = store.upsert_project("/Users/you/dev/demo", "demo")
+    b = store.upsert_project("/Users/you/dev/demo", "demo")
     assert a == b
     assert len(store.projects()) == 1
 
@@ -343,7 +343,7 @@ def test_upsert_session_updates_every_mutable_column(store):
 
     Dropping any single column from the clause must fail this test.
     """
-    pid = store.upsert_project("/Users/mitsheth/dev/demo", "demo")
+    pid = store.upsert_project("/Users/you/dev/demo", "demo")
     store.upsert_session(rec(), pid)
 
     updated = rec(

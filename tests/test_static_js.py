@@ -110,7 +110,7 @@ const controls = {
   '[data-launch-perm="launch-1"]': { value: PERM_VALUE },
   '[data-launch="launch-1"]': {
     getAttribute: (name) =>
-      name === "data-launch-path" ? "/Users/mitsheth/dev/demo" : null,
+      name === "data-launch-path" ? "/Users/you/dev/demo" : null,
   },
 };
 globalThis.document = {
@@ -192,7 +192,7 @@ const controls = {
   '[data-launch-perm="launch-h1"]': { value: "" },
   '[data-launch="launch-h1"]': {
     getAttribute: (name) => ({
-      "data-launch-path": "/Users/mitsheth/dev/demo",
+      "data-launch-path": "/Users/you/dev/demo",
       "data-launch-handoff": "h1",
       "data-launch-prompt": "handoff-h1",
     }[name] ?? null),
@@ -202,7 +202,7 @@ const controls = {
   '[data-launch-perm="launch-h2"]': { value: "bypassPermissions" },
   '[data-launch="launch-h2"]': {
     getAttribute: (name) => ({
-      "data-launch-path": "/Users/mitsheth/dev/demo",
+      "data-launch-path": "/Users/you/dev/demo",
       "data-launch-handoff": "h2",
       "data-launch-prompt": "handoff-h2",
     }[name] ?? null),
@@ -284,7 +284,7 @@ const button = {
   closest: (sel) => (sel === "[data-launch-button]" ? button : null),
 };
 const band = {
-  attrs: { "data-launch": "launch-1", "data-launch-path": "/Users/mitsheth/dev/demo",
+  attrs: { "data-launch": "launch-1", "data-launch-path": "/Users/you/dev/demo",
            "data-launch-prompt": "compose-1" },
   getAttribute(n) { return Object.prototype.hasOwnProperty.call(this.attrs, n) ? this.attrs[n] : null; },
   querySelector: (sel) => (sel === "[data-launch-button]" ? button : null),
@@ -1303,7 +1303,7 @@ for (const name of ["projects", "running", "queued", "scheduled", "today",
 // match for a git/burn/sparkline selector -- the realistic "leaf absent"
 // case, not a missing method.
 const liveWord = node();
-liveWord.attrs["data-live-path"] = "/Users/mitsheth/dev/demo";
+liveWord.attrs["data-live-path"] = "/Users/you/dev/demo";
 const projectCard = node({ "data-project-card": "1" });
 projectCard.querySelector = (sel) => (sel === "[data-live-status]" ? liveWord : null);
 
@@ -2123,7 +2123,7 @@ const button = {
   removeAttribute() {},
   getAttribute(name) {
     if (name === "data-compose-run") return "compose-1";
-    if (name === "data-compose-path") return "/Users/mitsheth/dev/demo";
+    if (name === "data-compose-path") return "/Users/you/dev/demo";
     if (name === "data-compose-launch") return "launch-1";
     return null;
   },
@@ -2155,10 +2155,10 @@ def _run_compose_now(tmp_path, behavior: str) -> dict:
 def test_compose_run_now_uses_the_card_launch_settings(tmp_path):
     got = _run_compose_now(tmp_path, "started")
     assert got["launchOptionsArgs"] == [
-        "launch-1", "/Users/mitsheth/dev/demo",
+        "launch-1", "/Users/you/dev/demo",
     ]
     assert got["sentBody"] == {
-        "project_path": "/Users/mitsheth/dev/demo",
+        "project_path": "/Users/you/dev/demo",
         "prompt": "typed prompt",
         "mode": "terminal",
         "model": "claude-opus-4-8",
@@ -2196,7 +2196,7 @@ const topbarCount = { textContent: "0" };
 const panel = {
   hidden: false,
   getAttribute(name) {
-    if (name === "data-schedule-path") return "/Users/mitsheth/dev/demo";
+    if (name === "data-schedule-path") return "/Users/you/dev/demo";
     if (name === "data-schedule-prompt") return "compose-1";
     if (name === "data-schedule-handoff") return HANDOFF_ID;
     return null;
@@ -2259,7 +2259,7 @@ def test_schedule_submit_posts_seconds_and_a_null_source_for_the_compose_box(tmp
     assert got["sentUrl"] == "/api/schedule"
     assert got["sentMethod"] == "POST"
     body = got["sentBody"]
-    assert body["project_path"] == "/Users/mitsheth/dev/demo"
+    assert body["project_path"] == "/Users/you/dev/demo"
     assert body["prompt"] == "do the thing"
     assert body["mode"] == "background"
     # Seconds, not milliseconds: `new Date().getTime()` is milliseconds, and a
@@ -3181,7 +3181,7 @@ const launchEffort = makeSelect("medium", ["low", "medium", "high", "xhigh"]);
 const scheduleMode = makeSelect("terminal", ["terminal", "background"]);
 const launchPerm = makeSelect("", ["", "acceptEdits", "bypassPermissions"]);
 const launchBand = {
-  getAttribute(name) { return name === "data-launch-path" ? "/Users/mitsheth/dev/demo" : null; },
+  getAttribute(name) { return name === "data-launch-path" ? "/Users/you/dev/demo" : null; },
 };
 
 // settings.js reaches these by querySelector; launch.js's prefill reaches the
@@ -3215,7 +3215,7 @@ const fs = require("fs");
 eval(fs.readFileSync(process.argv[2], "utf8"));  // settings.js
 eval(fs.readFileSync(process.argv[3], "utf8"));  // launch.js
 
-const body = window.bridgeLaunchBody("launch-1", "/Users/mitsheth/dev/demo");
+const body = window.bridgeLaunchBody("launch-1", "/Users/you/dev/demo");
 
 console.log(JSON.stringify({
   settingsModelValue: settingsModel.value,
@@ -3336,7 +3336,7 @@ const singular = {
   '[data-launch-effort="launch-1"]': effort,
   '[data-launch-perm="launch-1"]': perm,
   '[data-launch="launch-1"]': {
-    getAttribute: (name) => (name === "data-launch-path" ? "/Users/mitsheth/dev/demo" : null),
+    getAttribute: (name) => (name === "data-launch-path" ? "/Users/you/dev/demo" : null),
   },
 };
 
@@ -3352,7 +3352,7 @@ globalThis.navigator = { clipboard: { writeText: async () => {} } };
 const fs = require("fs");
 eval(fs.readFileSync(process.argv[2], "utf8"));  // launch.js
 
-const body = window.bridgeLaunchBody("launch-1", "/Users/mitsheth/dev/demo");
+const body = window.bridgeLaunchBody("launch-1", "/Users/you/dev/demo");
 
 console.log(JSON.stringify({
   modelValue: model.value,
@@ -3661,7 +3661,7 @@ const button = {
   closest: (sel) => (sel === "[data-launch-button]" ? button : null),
 };
 const band = {
-  attrs: { "data-launch": "launch-1", "data-launch-path": "/Users/mitsheth/dev/demo",
+  attrs: { "data-launch": "launch-1", "data-launch-path": "/Users/you/dev/demo",
            "data-launch-prompt": "compose-1" },
   getAttribute(n) { return Object.prototype.hasOwnProperty.call(this.attrs, n) ? this.attrs[n] : null; },
   querySelector: (sel) => (sel === "[data-launch-button]" ? button : null),

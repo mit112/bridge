@@ -32,8 +32,15 @@ BRIDGE_DIR = HOME / ".bridge"
 CLAUDE_COMMANDS_DIR = HOME / ".claude" / "commands"
 HANDOFF_SRC = "commands/handoff.md"
 HANDOFF_DEST = CLAUDE_COMMANDS_DIR / "handoff.md"
-LAUNCHD_LABEL = "com.mitsheth.bridge-panel"
+LAUNCHD_LABEL = "dev.bridge.panel"
 LAUNCHD_PLIST_NAME = f"{LAUNCHD_LABEL}.plist"
+
+# Bridge shipped under the author's personal reverse-DNS label before it was
+# public. Renaming the constant alone would strand that agent: it stays loaded
+# under the old label, races the new one for the port, and `--uninstall` reports
+# "nothing to remove" while it keeps restarting. So both paths clear the old
+# labels too. Absent labels boot out non-zero, which is ignored.
+LEGACY_LAUNCHD_LABELS = ("com.mitsheth.bridge-panel",)
 LAUNCHD_PLIST_PATH = BRIDGE_DIR / LAUNCHD_PLIST_NAME
 LAUNCHD_AGENTS_DIR = HOME / "Library" / "LaunchAgents"
 CONFIG_PATH = BRIDGE_DIR / "config.toml"
@@ -73,8 +80,11 @@ def _ask(prompt: str, default: str | None = None) -> str:
     try:
         answer = input(f"  ?  {prompt}{suffix}: ").strip()
     except (EOFError, KeyboardInterrupt):
+        # Non-zero: `bridge setup < /dev/null` hits EOF on the first prompt and
+        # configures nothing, so exiting 0 reports success for an install that
+        # did not happen -- which any scripted or CI invocation then believes.
         print("\n  Setup cancelled.")
-        sys.exit(0)
+        sys.exit(1)
     if not answer and default is not None:
         return default
     return answer
@@ -86,8 +96,11 @@ def _ask_yn(prompt: str, default: bool = True) -> bool:
     try:
         answer = input(f"  ?  {prompt}{suffix}: ").strip().lower()
     except (EOFError, KeyboardInterrupt):
+        # Non-zero: `bridge setup < /dev/null` hits EOF on the first prompt and
+        # configures nothing, so exiting 0 reports success for an install that
+        # did not happen -- which any scripted or CI invocation then believes.
         print("\n  Setup cancelled.")
-        sys.exit(0)
+        sys.exit(1)
     if not answer:
         return default
     return answer in ("y", "yes")
@@ -390,6 +403,9 @@ def _install_launchd(plist_path: str) -> bool:
         return False
 
     uid = os.getuid()
+    # An agent from a previous label would otherwise stay loaded and hold the
+    # port against the one we are about to bootstrap.
+    _remove_legacy_agents()
     # Boot out any already-loaded instance first. `bootstrap` fails with EIO
     # ("Input/output error", error 5) against a label that is already loaded,
     # which is the normal state for `--launchd-only` (regenerating the plist of
@@ -418,12 +434,43 @@ def _install_launchd(plist_path: str) -> bool:
     return True
 
 
+def _remove_legacy_agents() -> bool:
+    """Bootout and delete any agent installed under a previous label.
+
+    Called from install as well as uninstall: installing the new label while the
+    old one is still loaded leaves two panels bootstrapped against one port, and
+    the loser crash-restarts forever under `KeepAlive`.
+    """
+    removed = False
+    uid = os.getuid()
+    for label in LEGACY_LAUNCHD_LABELS:
+        stale = LAUNCHD_AGENTS_DIR / f"{label}.plist"
+        # Gated on the plist existing so the common case -- every install and
+        # uninstall from here on, on machines that never saw the old label --
+        # costs no subprocess at all.
+        if not stale.exists():
+            continue
+        subprocess.run(
+            ["launchctl", "bootout", f"gui/{uid}/{label}"],
+            check=False, capture_output=True, text=True,
+        )
+        try:
+            stale.unlink()
+            _ok(f"Removed the previous LaunchAgent at {stale}")
+            removed = True
+        except OSError as exc:
+            _warn(f"Could not remove {stale}: {exc}")
+    return removed
+
+
 def _uninstall_launchd() -> bool:
     """Bootout and remove the LaunchAgent. Returns True if anything was done."""
+    legacy_removed = _remove_legacy_agents()
     dest = LAUNCHD_AGENTS_DIR / LAUNCHD_PLIST_NAME
     if not dest.exists():
-        _info("No LaunchAgent installed — nothing to remove.")
-        return False
+        if not legacy_removed:
+            _info("No LaunchAgent installed — nothing to remove.")
+        return legacy_removed
 
     # Bootout
     try:

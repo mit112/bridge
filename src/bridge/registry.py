@@ -17,7 +17,7 @@ from pathlib import Path
 # Directory names directly under $HOME that hold projects but are not projects
 # themselves. Matched EXACTLY, never by prefix: the encoded home is a prefix of
 # every project under it, and an ancestor-based rule would wrongly hide real
-# parents like `~/dev/projectY` (which contains `projectY/boardwatch`).
+# parents like `~/dev/projectY` (which contains `projectY/nested-app`).
 CONTAINER_NAMES = ("dev", "Documents")
 
 # Independent of $HOME: Claude Code's own sandbox transcripts, and mounted

@@ -1,8 +1,24 @@
 # Font provenance
 
 Bundled locally per the redesign's "no external font CDN" constraint. Every
-file below was fetched directly from the project's official upstream and is
-unmodified from that source.
+file below was fetched from the project's official upstream (or, where noted, a
+faithful self-host packager of it), pinned by version and SHA-256.
+
+**Modification status**, stated per font because the OFL treats a Modified
+Version differently from a verbatim one:
+
+| Font | Modified? | Reserved Font Name |
+|---|---|---|
+| Atkinson Hyperlegible Next | No — upstream's pre-built static woff2 | none declared |
+| IBM Plex Mono | No — the `complete` (unsplit) woff2, full charset | **"Plex"** |
+| Fraunces | **Yes** — static instances cut from the upstream variable font, latin subset | none declared |
+| Young Serif | Google's `gftools` rebuild of upstream, full charset | none declared |
+
+Only IBM Plex declares a Reserved Font Name, and it is the one font shipped
+byte-for-byte verbatim, so OFL §3's renaming requirement is not triggered by
+anything here. Fraunces is modified but carries no RFN, so it may keep its name.
+Do not add a subsetted or instanced build of an RFN-bearing font to this
+directory without renaming it first.
 
 ## Atkinson Hyperlegible Next
 
@@ -63,7 +79,7 @@ unmodified from that source.
 
   | File | Source | SHA-256 |
   |---|---|---|
-  | `young-serif-regular-400.woff2` | `fonts.gstatic.com/s/youngserif/v2/...woff2` (latin) | `cb3d88bfd03d56f1a73bbd06884f021ec04ca1bf7e50df7f2d10c958822015bf` |
+  | `young-serif-regular-400.woff2` | `fonts.gstatic.com/s/youngserif/v2/...woff2` (full charset: 567 codepoints, incl. Vietnamese — NOT the `latin` subset) | `cb3d88bfd03d56f1a73bbd06884f021ec04ca1bf7e50df7f2d10c958822015bf` |
 
 Fetched 2026-08-02 (Atkinson Hyperlegible Next, IBM Plex Mono); Fraunces
 fetched 2026-08-03; Young Serif fetched 2026-08-05.

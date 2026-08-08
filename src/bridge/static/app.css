@@ -296,7 +296,7 @@ body {
    THIS AT-RULE MUST STAY AT THE TOP LEVEL. Never wrap it in `@media`, however
    tempting the reduced-motion gate below looks. It was wrapped in
    `@media (prefers-reduced-motion: no-preference)` for exactly one commit, and
-   Arc -- Mit's actual browser -- PARSES the nested form (it appears in the
+   Arc -- one real-world Chromium fork -- PARSES the nested form (it appears in the
    CSSOM, correctly, with the media query evaluating true) and then does not
    honour it: `pageswap` reported `event.viewTransition` NULL on every
    navigation. Un-nesting it and changing nothing else made the same probe

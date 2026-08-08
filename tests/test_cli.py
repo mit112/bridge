@@ -18,7 +18,7 @@ import pytest
 from bridge import cli, spool
 from bridge.config import load
 
-DEMO = "/Users/mitsheth/dev/demo"
+DEMO = "/Users/you/dev/demo"
 HOSTILE = (
     'quotes " backticks `whoami` $(echo pwned) ${HOME}\n'
     "newlines and a tab\there\némoji 🌉 <script>\n"

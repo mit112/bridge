@@ -29,10 +29,10 @@ FRAGMENT = {"X-Bridge-Fragment": "1"}
 def c(tmp_path):
     cfg = load({"db_path": tmp_path / "a.db", "spool_dir": tmp_path / "spool"})
     store = Store(cfg.db_path)
-    pid = store.upsert_project("/Users/mitsheth/dev/demo", "demo")
+    pid = store.upsert_project("/Users/you/dev/demo", "demo")
     store.upsert_session(
         SessionRecord(session_id="s1", transcript_path="/t/s1.jsonl",
-                      project_path="/Users/mitsheth/dev/demo",
+                      project_path="/Users/you/dev/demo",
                       title="Did the work", ended_at="2026-07-30T10:00:00.000Z",
                       model="claude-opus-5", effort="high", tokens_in=5,
                       tokens_out=5),

@@ -21,7 +21,7 @@ SID_BG = "eab23eb4-4734-4d73-99f9-f039bb891c51"
 
 # Recorded verbatim from ~/.claude/sessions/53458.json.
 REAL_REGISTRY = {
-    "pid": 53458, "sessionId": SID_A, "cwd": "/Users/mitsheth/dev/bridge",
+    "pid": 53458, "sessionId": SID_A, "cwd": "/Users/you/dev/bridge",
     "startedAt": 1785570300371, "procStart": "Sat Aug  1 07:44:58 2026",
     "version": "2.1.220", "peerProtocol": 1, "kind": "interactive",
     "entrypoint": "cli",
@@ -228,9 +228,9 @@ def test_a_nonsense_pid_is_not_alive(pid):
 # --- attribution -------------------------------------------------------------
 
 REGISTERED = [
-    "/Users/mitsheth/dev/projectY",
-    "/Users/mitsheth/dev/projectY/boardwatch",
-    "/Users/mitsheth/dev/bridge",
+    "/Users/you/dev/projectY",
+    "/Users/you/dev/projectY/nested-app",
+    "/Users/you/dev/bridge",
 ]
 
 
@@ -247,34 +247,34 @@ def group(*sessions, aliases=None):
 
 
 def test_an_exact_cwd_match_wins_over_a_shorter_registered_prefix():
-    """`boardwatch` is registered AND sits under registered `projectY`. The
+    """`nested-app` is registered AND sits under registered `projectY`. The
     more specific one is right; prefix-first would put it on the wrong card."""
-    grouped = group(live("/Users/mitsheth/dev/projectY/boardwatch"))
-    assert list(grouped) == ["/Users/mitsheth/dev/projectY/boardwatch"]
+    grouped = group(live("/Users/you/dev/projectY/nested-app"))
+    assert list(grouped) == ["/Users/you/dev/projectY/nested-app"]
 
 
 def test_a_subdirectory_falls_back_to_its_longest_registered_prefix():
-    grouped = group(live("/Users/mitsheth/dev/bridge/src/bridge"))
-    assert list(grouped) == ["/Users/mitsheth/dev/bridge"]
+    grouped = group(live("/Users/you/dev/bridge/src/bridge"))
+    assert list(grouped) == ["/Users/you/dev/bridge"]
 
 
 def test_the_longest_prefix_wins_not_the_first_one_found():
-    grouped = group(live("/Users/mitsheth/dev/projectY/boardwatch/deep/inside"))
-    assert list(grouped) == ["/Users/mitsheth/dev/projectY/boardwatch"]
+    grouped = group(live("/Users/you/dev/projectY/nested-app/deep/inside"))
+    assert list(grouped) == ["/Users/you/dev/projectY/nested-app"]
 
 
 def test_an_unregistered_cwd_lands_in_the_unattributed_bucket_not_nowhere():
-    """Measured: `/Users/mitsheth` matched none of the 30 registered projects
+    """Measured: `/Users/you` matched none of the 30 registered projects
     and vanished from the dashboard entirely."""
-    grouped = group(live("/Users/mitsheth"))
+    grouped = group(live("/Users/you"))
     assert list(grouped) == [agents.UNATTRIBUTED]
     assert len(grouped[agents.UNATTRIBUTED]) == 1
 
 
 def test_no_live_session_is_ever_dropped():
     grouped = group(
-        live("/Users/mitsheth/dev/bridge", sid=SID_A),
-        live("/Users/mitsheth", sid=SID_B),
+        live("/Users/you/dev/bridge", sid=SID_A),
+        live("/Users/you", sid=SID_B),
         live("/tmp/somewhere", sid=SID_BG),
     )
     assert sum(len(v) for v in grouped.values()) == 3
@@ -282,25 +282,25 @@ def test_no_live_session_is_ever_dropped():
 
 def test_an_aliased_cwd_maps_to_its_canonical_project():
     grouped = group(
-        live("/Users/mitsheth/Documents/projectY"),
-        aliases={"/Users/mitsheth/Documents/projectY": "/Users/mitsheth/dev/projectY"},
+        live("/Users/you/Documents/projectY"),
+        aliases={"/Users/you/Documents/projectY": "/Users/you/dev/projectY"},
     )
-    assert list(grouped) == ["/Users/mitsheth/dev/projectY"]
+    assert list(grouped) == ["/Users/you/dev/projectY"]
 
 
 def test_a_sibling_sharing_a_name_prefix_is_not_matched():
     """`/dev/bridge-old` starts with `/dev/bridge` as a STRING but is a
     different project. Matching on the raw prefix would merge them."""
-    grouped = group(live("/Users/mitsheth/dev/bridge-old"))
+    grouped = group(live("/Users/you/dev/bridge-old"))
     assert list(grouped) == [agents.UNATTRIBUTED]
 
 
 def test_several_sessions_on_one_project_are_most_recent_first():
     grouped = group(
-        live("/Users/mitsheth/dev/bridge", sid=SID_A, started=100),
-        live("/Users/mitsheth/dev/bridge", sid=SID_B, started=900),
+        live("/Users/you/dev/bridge", sid=SID_A, started=100),
+        live("/Users/you/dev/bridge", sid=SID_B, started=900),
     )
-    assert [s.session_id for s in grouped["/Users/mitsheth/dev/bridge"]] == [SID_B, SID_A]
+    assert [s.session_id for s in grouped["/Users/you/dev/bridge"]] == [SID_B, SID_A]
 
 
 def test_the_pid_guard_makes_exactly_one_ps_call_however_many_sessions(tmp_path):

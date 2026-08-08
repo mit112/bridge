@@ -1,5 +1,6 @@
 import json
 import re
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -14,17 +15,36 @@ from bridge.registry import resolve_project
 from bridge.refresh import RefreshCoordinator, RefreshStatus
 from bridge.store import Store, now_epoch
 
-DEMO = "/Users/mitsheth/dev/demo"
+# A REAL directory, not an illustrative absolute path. Reindex auto-archives any
+# project whose path has vanished, so a fictional `/Users/you/dev/demo` drops out
+# of `card_order` the moment a test POSTs `/api/refresh` -- which is what made
+# the snapshot assertion depend on the developer's own ~/.claude corpus being
+# non-empty instead of on this fixture. Session-scoped and left behind on exit;
+# it is a few empty directories under the system temp dir.
+DEMO = str(Path(tempfile.mkdtemp(prefix="bridge-tests-")) / "dev" / "demo")
+Path(DEMO).mkdir(parents=True)
 
 
 @pytest.fixture
 def client(tmp_path):
-    cfg = load({"db_path": tmp_path / "a.db", "spool_dir": tmp_path / "spool"})
+    # `claude_projects_dir` is the one hermeticity seam conftest's autouse guards
+    # do not cover, and `POST /api/refresh` reindexes through it. Left at its
+    # default this fixture reads the developer's REAL ~/.claude/projects: the
+    # snapshot test then passed only because that corpus happens to be non-empty
+    # (and took 62s instead of 4s doing it), while failing outright on a clean
+    # machine or in CI. Empty and temporary is the honest default.
+    projects_dir = tmp_path / "claude-projects"
+    projects_dir.mkdir()
+    # A real directory on disk, because reindex auto-archives any project whose
+    # path has vanished -- which would empty `card_order` and make the snapshot
+    # assertion below vacuous rather than merely wrong.
+    cfg = load({"db_path": tmp_path / "a.db", "spool_dir": tmp_path / "spool",
+                "claude_projects_dir": projects_dir})
     store = Store(cfg.db_path)
-    pid = store.upsert_project("/Users/mitsheth/dev/demo", "demo")
+    pid = store.upsert_project(DEMO, "demo")
     store.upsert_session(
         SessionRecord(session_id="s1", transcript_path="/t/s1.jsonl",
-                      project_path="/Users/mitsheth/dev/demo",
+                      project_path=DEMO,
                       title="Did the work", ended_at="2026-07-30T10:00:00.000Z",
                       model="claude-opus-5", effort="high", tokens_in=5,
                       tokens_out=5),
@@ -117,7 +137,7 @@ def test_project_detail_explains_empty_history_and_the_current_window(client):
     never carries table markup, so each empty state is read off the tab it
     actually belongs to."""
     c, store, pid = client
-    empty_id = store.upsert_project("/Users/mitsheth/dev/empty", "empty")
+    empty_id = store.upsert_project("/Users/you/dev/empty", "empty")
     assert "No handoffs recorded." in c.get(f"/project/{empty_id}?tab=handoffs").text
     assert "No launches recorded." in c.get(f"/project/{empty_id}?tab=launches").text
     assert "No indexed sessions." in c.get(f"/project/{empty_id}?tab=sessions").text
@@ -278,7 +298,7 @@ def test_the_project_page_breaks_down_session_tokens_including_sidechain(client)
     store.upsert_session(
         SessionRecord(
             session_id="s-tok", transcript_path="/t/s-tok.jsonl",
-            project_path="/Users/mitsheth/dev/demo", title="Token session",
+            project_path="/Users/you/dev/demo", title="Token session",
             ended_at="2026-07-31T10:00:00.000Z",
             tokens_in=1200, tokens_out=800,
             tokens_cache_create=5000, tokens_cache_read=9000,
@@ -340,10 +360,10 @@ def test_stale_project_shows_warning_glyph_and_text(tmp_path):
 
     cfg = load({"db_path": tmp_path / "s.db", "spool_dir": tmp_path / "spool", "stale_hours": 1})
     store = Store(cfg.db_path)
-    pid = store.upsert_project("/Users/mitsheth/dev/stalerepo", "stalerepo")
+    pid = store.upsert_project("/Users/you/dev/stalerepo", "stalerepo")
     store.upsert_session(
         SessionRecord(session_id="s9", transcript_path="/t/s9",
-                      project_path="/Users/mitsheth/dev/stalerepo", title="Old work",
+                      project_path="/Users/you/dev/stalerepo", title="Old work",
                       ended_at="2026-07-30T10:00:00.000Z"),
         pid,
     )
@@ -377,10 +397,10 @@ def test_not_a_repo_does_not_render_a_false_warning_on_overview(tmp_path):
 
     cfg = load({"db_path": tmp_path / "n.db", "spool_dir": tmp_path / "spool"})
     store = Store(cfg.db_path)
-    pid = store.upsert_project("/Users/mitsheth/dev/plain", "plain")
+    pid = store.upsert_project("/Users/you/dev/plain", "plain")
     store.upsert_session(
         SessionRecord(session_id="s10", transcript_path="/t/s10",
-                      project_path="/Users/mitsheth/dev/plain", title="Work",
+                      project_path="/Users/you/dev/plain", title="Work",
                       ended_at="2026-07-30T10:00:00.000Z"),
         pid,
     )
@@ -549,13 +569,13 @@ def body(hid="h1", path=DEMO, prompt="carry on from here", **kw):
 def test_post_from_an_aliased_path_attaches_to_the_canonical_project(handoff_app):
     """A handoff from an old ~/Documents cwd must not re-split merged history."""
     c, store, _ = handoff_app
-    store.set_alias("/Users/mitsheth/Documents/projectX", "/Users/mitsheth/dev/projectX")
+    store.set_alias("/Users/you/Documents/projectX", "/Users/you/dev/projectX")
 
-    r = c.post("/api/handoff", json=body(path="/Users/mitsheth/Documents/projectX"))
+    r = c.post("/api/handoff", json=body(path="/Users/you/Documents/projectX"))
 
     assert r.status_code == 201
-    assert store.project_by_path("/Users/mitsheth/Documents/projectX") is None
-    canonical = store.project_by_path("/Users/mitsheth/dev/projectX")
+    assert store.project_by_path("/Users/you/Documents/projectX") is None
+    canonical = store.project_by_path("/Users/you/dev/projectX")
     assert canonical is not None
     assert r.json()["project_id"] == canonical["id"]
     assert c.get(f"/api/handoff/{canonical['id']}").json()["id"] == "h1"
@@ -564,9 +584,9 @@ def test_post_from_an_aliased_path_attaches_to_the_canonical_project(handoff_app
 def test_post_from_a_path_with_no_project_row_creates_one(handoff_app):
     """Capturing a handoff must never 404 because the project is unindexed."""
     c, store, _ = handoff_app
-    r = c.post("/api/handoff", json=body(path="/Users/mitsheth/dev/brand-new"))
+    r = c.post("/api/handoff", json=body(path="/Users/you/dev/brand-new"))
     assert r.status_code == 201
-    row = store.project_by_path("/Users/mitsheth/dev/brand-new")
+    row = store.project_by_path("/Users/you/dev/brand-new")
     assert row is not None
     assert row["name"] == "brand-new"
 
@@ -857,24 +877,24 @@ def test_a_launch_from_an_aliased_path_attaches_to_the_canonical_project(launch_
     its own title default, rather than using the raw, un-resolved path.
     """
     c, store, _, fake = launch_app
-    store.set_alias("/Users/mitsheth/Documents/old-name", "/Users/mitsheth/dev/projectX")
-    c.post("/api/handoff", json=body("h1", path="/Users/mitsheth/dev/projectX", summary=None))
+    store.set_alias("/Users/you/Documents/old-name", "/Users/you/dev/projectX")
+    c.post("/api/handoff", json=body("h1", path="/Users/you/dev/projectX", summary=None))
 
     r = c.post("/api/launch",
-               json={"project_path": "/Users/mitsheth/Documents/old-name",
+               json={"project_path": "/Users/you/Documents/old-name",
                      "handoff_id": "h1"})
 
     assert r.status_code == 200, r.text
     assert r.json()["outcome"] == "started"
     assert r.json()["handoff_id"] == "h1"
-    assert store.project_by_path("/Users/mitsheth/Documents/old-name") is None
-    assert store.project_by_path("/Users/mitsheth/dev/projectX") is not None
+    assert store.project_by_path("/Users/you/Documents/old-name") is None
+    assert store.project_by_path("/Users/you/dev/projectX") is not None
     # `fire()` resolves the alias itself (Task 2), so the spec it hands the
     # launcher already carries the canonical path -- a real terminal launch
     # `cd`s into `spec.project_path` directly, and `cd`-ing into the OLD path
     # here would try to enter a directory that no longer exists.
     spec, handoff_id = fake.calls[0]
-    assert spec.project_path == "/Users/mitsheth/dev/projectX"
+    assert spec.project_path == "/Users/you/dev/projectX"
     assert handoff_id == "h1"
     # And the title falls back to the *canonical* project name, not the raw
     # alias -- `post_launch` must resolve the alias itself for this default.
@@ -1001,7 +1021,7 @@ def test_a_launch_with_nothing_queued_and_no_prompt_is_a_clear_error(launch_app)
 
     # Same answer for a project that was never indexed, and the refusal does not
     # bring its row into existence on the way out.
-    unknown = "/Users/mitsheth/dev/never-indexed"
+    unknown = "/Users/you/dev/never-indexed"
     assert c.post("/api/launch", json={"project_path": unknown}).status_code == 422
     assert store.project_by_path(unknown) is None
 
@@ -1090,7 +1110,7 @@ def test_fire_resolves_alias_and_passes_the_snapshot_to_launch_fn(client, tmp_pa
 
     _, store, _ = client
     cfg = load({"db_path": tmp_path / "fire.db", "spool_dir": tmp_path / "spool"})
-    store.set_alias("/old/path", "/Users/mitsheth/dev/demo")
+    store.set_alias("/old/path", "/Users/you/dev/demo")
     calls = []
 
     def fake_launch(store, cfg, spec, handoff_id=None, **kwargs):
@@ -1111,7 +1131,7 @@ def test_fire_resolves_alias_and_passes_the_snapshot_to_launch_fn(client, tmp_pa
     )
 
     assert result.outcome == "started"
-    assert calls[0].project_path == "/Users/mitsheth/dev/demo"  # alias resolved
+    assert calls[0].project_path == "/Users/you/dev/demo"  # alias resolved
     assert calls[0].mode == "terminal"
     assert calls[0].permission_mode == "acceptEdits"
 
@@ -1199,7 +1219,7 @@ def test_with_no_suggestion_the_first_catalog_entry_is_selected(launch_app):
     later reorder of the catalog would change what launches with no warning.
     """
     c, store, _, _ = launch_app
-    pid = store.upsert_project("/Users/mitsheth/dev/nohandoff", "nohandoff")
+    pid = store.upsert_project("/Users/you/dev/nohandoff", "nohandoff")
 
     html = c.get(f"/project/{pid}?tab=current").text
 
@@ -1232,7 +1252,7 @@ def test_two_cards_produce_no_duplicate_element_id(launch_app):
 def test_a_card_with_no_queued_handoff_still_renders_a_launch_band(launch_app):
     """Nothing queued is not the same as nothing to launch."""
     c, store, _, _ = launch_app
-    pid = store.upsert_project("/Users/mitsheth/dev/quiet", "quiet")
+    pid = store.upsert_project("/Users/you/dev/quiet", "quiet")
 
     html = c.get(f"/project/{pid}?tab=current").text
 
@@ -1408,7 +1428,7 @@ def test_a_stale_git_probe_renders_the_last_good_state_and_its_age(tmp_path):
 
     cfg = load({"db_path": tmp_path / "g.db", "spool_dir": tmp_path / "spool"})
     store = Store(cfg.db_path)
-    pid = store.upsert_project("/Users/mitsheth/dev/cached", "cached")
+    pid = store.upsert_project("/Users/you/dev/cached", "cached")
     store.upsert_session(
         SessionRecord(session_id="s-cached", transcript_path="/t/s-cached",
                       title="Work", ended_at="2026-07-30T10:00:00.000Z"),
@@ -2387,10 +2407,10 @@ def test_a_session_outside_any_project_is_not_dropped_from_the_stream(
     them: the stream skipped the bucket and `build_cards` only ever looks up
     exact project paths."""
     c, _, _ = client
-    _live_elsewhere(monkeypatch, "/Users/mitsheth/scratch")
+    _live_elsewhere(monkeypatch, "/Users/you/scratch")
 
     frames = c.get("/events?max_ticks=1&interval=0").text
-    assert "/Users/mitsheth/scratch" in frames, (
+    assert "/Users/you/scratch" in frames, (
         "the session vanished from the live stream entirely"
     )
 
@@ -2439,12 +2459,12 @@ def test_two_sessions_in_the_same_directory_report_the_newest(client, monkeypatc
     snapshot's `unattributed` list, which must still report exactly one entry
     for the directory, not one per session sharing it."""
     c, _, _ = client
-    _live_elsewhere(monkeypatch, "/Users/mitsheth/scratch", "/Users/mitsheth/scratch")
+    _live_elsewhere(monkeypatch, "/Users/you/scratch", "/Users/you/scratch")
 
     with c.stream("GET", "/events?max_ticks=1&interval=0") as r:
         payload = _frames("".join(r.iter_text()))[0][1]
 
-    matches = [u for u in payload["unattributed"] if u["path"] == "/Users/mitsheth/scratch"]
+    matches = [u for u in payload["unattributed"] if u["path"] == "/Users/you/scratch"]
     assert len(matches) == 1
 
 
@@ -2456,12 +2476,12 @@ def test_a_session_outside_any_project_is_shown_with_its_directory(
     `unattributed` list -- and the topbar's running count, which already
     included these sessions -- must still name the directory."""
     c, _, _ = client
-    _live_elsewhere(monkeypatch, "/Users/mitsheth/scratch")
+    _live_elsewhere(monkeypatch, "/Users/you/scratch")
 
     with c.stream("GET", "/events?max_ticks=1&interval=0") as r:
         payload = _frames("".join(r.iter_text()))[0][1]
 
-    assert any(u["path"] == "/Users/mitsheth/scratch" for u in payload["unattributed"])
+    assert any(u["path"] == "/Users/you/scratch" for u in payload["unattributed"])
     assert re.search(r"<dt>running</dt><dd[^>]*>1</dd>", c.get("/").text)
 
 
@@ -2572,7 +2592,7 @@ def test_a_failing_sensor_renders_the_dashboard_instead_of_500ing(client, monkey
 
 def test_schedule_create_list_and_cancel(client):
     c, store, _ = client
-    r = c.post("/api/schedule", json={"project_path": "/Users/mitsheth/dev/demo",
+    r = c.post("/api/schedule", json={"project_path": "/Users/you/dev/demo",
         "prompt": "do it", "scheduled_for": 1000, "mode": "background"})
     assert r.status_code == 201
     jid = r.json()["id"]
@@ -2583,7 +2603,7 @@ def test_schedule_create_list_and_cancel(client):
 
 def test_schedule_edit_is_pending_only(client):
     c, store, _ = client
-    jid = c.post("/api/schedule", json={"project_path": "/Users/mitsheth/dev/demo",
+    jid = c.post("/api/schedule", json={"project_path": "/Users/you/dev/demo",
         "prompt": "x", "scheduled_for": 1000, "mode": "background"}).json()["id"]
     assert c.patch(f"/api/schedule/{jid}", json={"prompt": "y"}).status_code == 200
     store.claim_one_due(now=2000)                      # now 'launching'
@@ -3281,10 +3301,10 @@ def test_detail_page_shows_session_meta_activity_when_present(tmp_path):
     cfg = load({"db_path": tmp_path / "a.db", "spool_dir": tmp_path / "spool",
                 "session_meta_dir": tmp_path / "meta"})
     store = Store(cfg.db_path)
-    pid = store.upsert_project("/Users/mitsheth/dev/demo", "demo")
+    pid = store.upsert_project("/Users/you/dev/demo", "demo")
     store.upsert_session(
         SessionRecord(session_id="s1", transcript_path="/t/s1.jsonl",
-                      project_path="/Users/mitsheth/dev/demo", title="Worked",
+                      project_path="/Users/you/dev/demo", title="Worked",
                       ended_at="2026-07-30T10:00:00.000Z", tokens_in=5, tokens_out=5),
         pid)
     _write_meta(cfg, "s1", files_modified=3, lines_added=120, lines_removed=40,
@@ -3306,10 +3326,10 @@ def test_detail_page_omits_token_fields_from_meta(tmp_path):
     cfg = load({"db_path": tmp_path / "a.db", "spool_dir": tmp_path / "spool",
                 "session_meta_dir": tmp_path / "meta"})
     store = Store(cfg.db_path)
-    pid = store.upsert_project("/Users/mitsheth/dev/demo", "demo")
+    pid = store.upsert_project("/Users/you/dev/demo", "demo")
     store.upsert_session(
         SessionRecord(session_id="s1", transcript_path="/t/s1.jsonl",
-                      project_path="/Users/mitsheth/dev/demo", title="Worked",
+                      project_path="/Users/you/dev/demo", title="Worked",
                       ended_at="2026-07-30T10:00:00.000Z", tokens_in=5, tokens_out=5),
         pid)
     _write_meta(cfg, "s1", input_tokens=99999, output_tokens=88888, files_modified=1)
@@ -3324,10 +3344,10 @@ def test_detail_page_is_unchanged_when_meta_dir_is_empty(tmp_path):
     cfg = load({"db_path": tmp_path / "a.db", "spool_dir": tmp_path / "spool",
                 "session_meta_dir": tmp_path / "meta"})  # never created
     store = Store(cfg.db_path)
-    pid = store.upsert_project("/Users/mitsheth/dev/demo", "demo")
+    pid = store.upsert_project("/Users/you/dev/demo", "demo")
     store.upsert_session(
         SessionRecord(session_id="s1", transcript_path="/t/s1.jsonl",
-                      project_path="/Users/mitsheth/dev/demo", title="Worked",
+                      project_path="/Users/you/dev/demo", title="Worked",
                       ended_at="2026-07-30T10:00:00.000Z", tokens_in=5, tokens_out=5),
         pid)
 
@@ -3342,10 +3362,10 @@ def test_detail_page_survives_malformed_meta(tmp_path):
     cfg = load({"db_path": tmp_path / "a.db", "spool_dir": tmp_path / "spool",
                 "session_meta_dir": tmp_path / "meta"})
     store = Store(cfg.db_path)
-    pid = store.upsert_project("/Users/mitsheth/dev/demo", "demo")
+    pid = store.upsert_project("/Users/you/dev/demo", "demo")
     store.upsert_session(
         SessionRecord(session_id="s1", transcript_path="/t/s1.jsonl",
-                      project_path="/Users/mitsheth/dev/demo", title="Worked",
+                      project_path="/Users/you/dev/demo", title="Worked",
                       ended_at="2026-07-30T10:00:00.000Z", tokens_in=5, tokens_out=5),
         pid)
     (tmp_path / "meta").mkdir(parents=True)
@@ -3362,10 +3382,10 @@ def test_detail_page_hides_zero_activity_meta(tmp_path):
     cfg = load({"db_path": tmp_path / "a.db", "spool_dir": tmp_path / "spool",
                 "session_meta_dir": tmp_path / "meta"})
     store = Store(cfg.db_path)
-    pid = store.upsert_project("/Users/mitsheth/dev/demo", "demo")
+    pid = store.upsert_project("/Users/you/dev/demo", "demo")
     store.upsert_session(
         SessionRecord(session_id="s1", transcript_path="/t/s1.jsonl",
-                      project_path="/Users/mitsheth/dev/demo", title="Worked",
+                      project_path="/Users/you/dev/demo", title="Worked",
                       ended_at="2026-07-30T10:00:00.000Z", tokens_in=5, tokens_out=5),
         pid)
     _write_meta(cfg, "s1")  # session_id only, all facts zero

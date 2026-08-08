@@ -9,12 +9,12 @@ from bridge.__main__ import _shutdown_scheduler, main
 from bridge.models import ScheduledRun
 from bridge.store import Store
 
-DEMO = "/Users/mitsheth/dev/demo"
+DEMO = "/Users/you/dev/demo"
 
 
 def test_index_subcommand_runs_and_reports(tmp_path, capsys):
     projects = tmp_path / "projects"
-    (projects / "-Users-mitsheth-dev-demo").mkdir(parents=True)
+    (projects / "-Users-you-dev-demo").mkdir(parents=True)
     code = main(["index", "--projects-dir", str(projects),
                  "--db", str(tmp_path / "b.db"),
                  "--spool-dir", str(tmp_path / "spool")])
