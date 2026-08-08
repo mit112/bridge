@@ -1,9 +1,9 @@
 [
   {
     "name": "stop debouncing the wire payload, so every busy->idle flap reaches the client the render is suppressing",
-    "file": "src/bridge/api.py",
-    "old": "        state = dataclasses_replace(\n            state, sessions=debouncer.apply(state.sessions, now_epoch())\n        )",
-    "new": "        pass",
+    "file": "src/bridge/dashboard.py",
+    "old": "        if self.debouncer is not None:\n            state = replace(state, sessions=self.debouncer.apply(state.sessions, now))",
+    "new": "        if False:\n            state = replace(state, sessions=self.debouncer.apply(state.sessions, now))",
     "tests": [
       "tests/test_api.py::test_a_single_sample_busy_to_idle_flap_never_reaches_the_wire",
       "tests/test_api.py::test_the_unattributed_block_holds_the_same_status_the_cards_do"
@@ -12,9 +12,9 @@
   },
   {
     "name": "debounce against a fresh instance per call, so the hold has nothing to remember and never fires",
-    "file": "src/bridge/api.py",
-    "old": "            state, sessions=debouncer.apply(state.sessions, now_epoch())",
-    "new": "            state, sessions=LivenessDebouncer().apply(state.sessions, now_epoch())",
+    "file": "src/bridge/dashboard.py",
+    "old": "            state = replace(state, sessions=self.debouncer.apply(state.sessions, now))",
+    "new": "            state = replace(state, sessions=type(self.debouncer)().apply(state.sessions, now))",
     "tests": [
       "tests/test_api.py::test_a_single_sample_busy_to_idle_flap_never_reaches_the_wire",
       "tests/test_api.py::test_the_unattributed_block_holds_the_same_status_the_cards_do"
@@ -23,9 +23,9 @@
   },
   {
     "name": "debounce with a frozen clock, so a session held busy is never released to idle",
-    "file": "src/bridge/api.py",
-    "old": "            state, sessions=debouncer.apply(state.sessions, now_epoch())",
-    "new": "            state, sessions=debouncer.apply(state.sessions, 0)",
+    "file": "src/bridge/dashboard.py",
+    "old": "            state = replace(state, sessions=self.debouncer.apply(state.sessions, now))",
+    "new": "            state = replace(state, sessions=self.debouncer.apply(state.sessions, 0))",
     "tests": [
       "tests/test_api.py::test_the_hold_releases_so_idle_is_delayed_and_not_suppressed"
     ],

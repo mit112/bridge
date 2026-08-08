@@ -20,20 +20,20 @@
     "expect_count": 1
   },
   {
-    "name": "drop the tombstone, so a card keeps a live band for a session that has ended until the page is reloaded",
-    "file": "src/bridge/api.py",
-    "old": "        removed = [p for p in before[\"live\"] if p not in after[\"live\"]]",
-    "new": "        removed = []",
+    "name": "claim a gone session is still available, so its card never shows that it ended",
+    "file": "src/bridge/dashboard.py",
+    "old": "            \"available\": live is not None,",
+    "new": "            \"available\": True,",
     "tests": [
       "tests/test_api.py::test_a_delta_carries_a_tombstone_when_a_session_ends"
     ],
     "expect_count": 1
   },
   {
-    "name": "emit a delta on every tick even when nothing changed, so a quiet server floods every connected tab",
+    "name": "emit an update on every tick even when nothing changed, so a quiet server floods every connected tab",
     "file": "src/bridge/api.py",
-    "old": "        if not changed and not removed and before[\"index\"] == after[\"index\"] \\\n                and before[\"unavailable\"] == after[\"unavailable\"]:\n            return None  # emit only on change",
-    "new": "        if False:\n            return None  # emit only on change",
+    "old": "                        if current_live_signature != previous_live_signature:",
+    "new": "                        if True:",
     "tests": [
       "tests/test_api.py::test_an_unchanged_tick_emits_nothing_after_the_snapshot"
     ],
@@ -72,29 +72,19 @@
   },
   {
     "name": "drop unattributed sessions from the wire again, losing every session with no project row",
-    "file": "src/bridge/api.py",
-    "old": "            if path == agents.UNATTRIBUTED:",
-    "new": "            if True:",
+    "file": "src/bridge/dashboard.py",
+    "old": "        if session.cwd not in paths and session.cwd not in seen:",
+    "new": "        if False:",
     "tests": [
       "tests/test_api.py::test_the_wire_payload_keys_unattributed_sessions_by_their_own_cwd"
     ],
     "expect_count": 1
   },
   {
-    "name": "leak the grouping sentinel onto the wire as if it were a directory",
-    "file": "src/bridge/api.py",
-    "old": "                for s in sessions:\n                    if s.cwd in live:\n                        continue\n                    live[s.cwd] = {\"status\": s.status,\n                                   \"started_at\": s.started_at}\n                    unattributed.append(s.cwd)\n                continue",
-    "new": "                live[path] = {\"status\": sessions[0].status,\n                              \"started_at\": sessions[0].started_at}\n                unattributed.append(path)\n                continue",
-    "tests": [
-      "tests/test_api.py::test_the_wire_payload_keys_unattributed_sessions_by_their_own_cwd"
-    ],
-    "expect_count": 1
-  },
-  {
-    "name": "report the oldest session in a directory rather than the newest",
-    "file": "src/bridge/api.py",
-    "old": "                    if s.cwd in live:\n                        continue",
-    "new": "                    if False:\n                        continue",
+    "name": "report every session in a directory rather than one entry per directory",
+    "file": "src/bridge/dashboard.py",
+    "old": "        if session.cwd not in paths and session.cwd not in seen:",
+    "new": "        if session.cwd not in paths:",
     "tests": [
       "tests/test_api.py::test_two_sessions_in_the_same_directory_report_the_newest"
     ],
@@ -102,9 +92,9 @@
   },
   {
     "name": "never surface the unattributed directories, so the page cannot render their bands",
-    "file": "src/bridge/api.py",
-    "old": "            \"unattributed\": unattributed,\n            \"unavailable\": state.status == \"unavailable\",",
-    "new": "            \"unattributed\": [],\n            \"unavailable\": state.status == \"unavailable\",",
+    "file": "src/bridge/dashboard.py",
+    "old": "            \"unattributed\": _unattributed(live_state, self.store),",
+    "new": "            \"unattributed\": [],",
     "tests": [
       "tests/test_api.py::test_a_session_outside_any_project_is_shown_with_its_directory"
     ],
