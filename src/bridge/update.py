@@ -79,9 +79,9 @@ def installed_sha() -> str | None:
             commit = json.loads(raw).get("vcs_info", {}).get("commit_id", "")
         except (ValueError, AttributeError):
             commit = ""
-        if _SHA_RE.match(commit or ""):
+        if isinstance(commit, str) and _SHA_RE.match(commit):
             return commit
     sha = getattr(_build, "COMMIT_SHA", "unknown")
-    if _SHA_RE.match(sha or ""):
+    if isinstance(sha, str) and _SHA_RE.match(sha):
         return sha
     return None

@@ -26,3 +26,16 @@ def test_unknown_when_no_source(monkeypatch):
     monkeypatch.setattr(U, "_read_direct_url", lambda: None)
     monkeypatch.setattr(U._build, "COMMIT_SHA", "unknown")
     assert U.installed_sha() is None
+
+
+def test_non_string_commit_id_returns_none(monkeypatch):
+    payload = json.dumps({"url": U.REPO_URL,
+                          "vcs_info": {"vcs": "git", "commit_id": 12345}})
+    monkeypatch.setattr(U, "_read_direct_url", lambda: payload)
+    assert U.installed_sha() is None
+
+
+def test_non_string_build_sentinel_returns_none(monkeypatch):
+    monkeypatch.setattr(U, "_read_direct_url", lambda: None)
+    monkeypatch.setattr(U._build, "COMMIT_SHA", 12345)
+    assert U.installed_sha() is None
