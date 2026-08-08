@@ -542,16 +542,15 @@ git commit -m "feat: resolve remote SHA and classify update state (fail closed)"
 
 ---
 
-### Task 4: Transaction dataclasses + lockfile + persistent state file
+### Task 4: Update-transaction lockfile + persistent state file
 
 **Files:**
 - Modify: `src/bridge/update.py`
 - Test: `tests/test_update_transaction.py`
 
 **Interfaces:**
+- Consumes: `UpdateState`, `UpdateResult` (already defined in `update.py` by Task 1 — do NOT redefine).
 - Produces:
-  - `@dataclass(frozen=True) UpdateState` fields `state, installed_sha, latest_sha, checked_at, error` (types per contract).
-  - `@dataclass(frozen=True) UpdateResult` fields `ok, previous_sha, attempted_sha, method, started_at, ended_at, exit_status, log_path, error, rolled_back` (types per contract).
   - `_lock_path() -> Path`, `_acquire_lock() -> int | None` (fd, or None if held), `_release_lock(fd: int) -> None`.
   - `write_update_state(state: UpdateState) -> Path`, `read_update_state() -> UpdateState | None` (persist to `~/.bridge/update/state.json`).
   - `_now_iso() -> str`.
@@ -597,37 +596,14 @@ def test_now_iso_is_utc():
 Run: `uv run pytest tests/test_update_transaction.py -v`
 Expected: FAIL — `AttributeError: ... '_acquire_lock'`.
 
-- [ ] **Step 3: Write the minimal implementation (append to `update.py`; add imports `dataclasses`, `fcntl`, `json`, `datetime`)**
+- [ ] **Step 3: Write the minimal implementation (append to `update.py`. `UpdateState`/`UpdateResult` already exist from Task 1 — do NOT redefine. `json`/`os`/`Path`/`Literal` are already imported; add only `import dataclasses`, `import fcntl`, `from datetime import datetime, timezone`.)**
 
 ```python
-import dataclasses
+# UpdateState / UpdateResult already exist from Task 1 -- do NOT redefine them.
+# json, os, Path, Literal are already imported at the top of update.py (Task 1).
+import dataclasses  # for dataclasses.asdict
 import fcntl
-import json
-from dataclasses import dataclass
 from datetime import datetime, timezone
-
-
-@dataclass(frozen=True)
-class UpdateState:
-    state: Literal["current", "behind", "diverged", "unknown", "stale"]
-    installed_sha: str | None
-    latest_sha: str | None
-    checked_at: str | None
-    error: str | None
-
-
-@dataclass(frozen=True)
-class UpdateResult:
-    ok: bool
-    previous_sha: str | None
-    attempted_sha: str
-    method: InstallMethod
-    started_at: str
-    ended_at: str | None
-    exit_status: int | None
-    log_path: str
-    error: str | None
-    rolled_back: bool
 
 
 def _now_iso() -> str:
