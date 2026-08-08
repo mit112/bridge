@@ -138,3 +138,73 @@ def install_method() -> InstallMethod:
         if _is_within(exe, cellar):
             return "brew"
     return "dev" if installed_sha() is None else "unknown"
+
+
+def resolve_remote_sha(url: str = REPO_URL, ref: str = REPO_REF,
+                       timeout: float = 8.0) -> str | None:
+    """The remote SHA for `ref` via `git ls-remote` -- no API rate limit.
+
+    Returns None on any failure (timeout, network error, unexpected output):
+    the caller keeps its last known result as stale and never infers an update."""
+    git = shutil.which("git")
+    if git is None:
+        return None
+    try:
+        proc = subprocess.run(
+            [git, "ls-remote", url, ref],
+            capture_output=True, text=True, check=False, timeout=timeout,
+        )
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        log.warning("git ls-remote failed: %s", exc)
+        return None
+    if proc.returncode != 0 or not proc.stdout.strip():
+        log.warning("git ls-remote returned %d: %s", proc.returncode,
+                    proc.stderr.strip())
+        return None
+    sha = proc.stdout.split()[0].strip()
+    return sha if len(sha) == 40 else None
+
+
+def _update_cache_repo() -> Path:
+    """A bare object cache used only to answer ancestry questions offline."""
+    return Path.home() / ".bridge" / "update" / "repo.git"
+
+
+def _is_ancestor(installed: str, remote: str) -> bool | None:
+    """True if `installed` is an ancestor of `remote` (remote is a fast-forward
+    descendant). None when it cannot be decided (objects absent / git error) --
+    which the classifier treats as fail-closed "unknown"."""
+    git = shutil.which("git")
+    repo = _update_cache_repo()
+    if git is None or not repo.is_dir():
+        return None
+    try:
+        proc = subprocess.run(
+            [git, "-C", str(repo), "merge-base", "--is-ancestor", installed, remote],
+            capture_output=True, text=True, check=False, timeout=8,
+        )
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+    if proc.returncode == 0:
+        return True
+    if proc.returncode == 1:
+        return False
+    return None  # 128 == a SHA the cache does not have; indeterminate
+
+
+def classify(installed: str | None, remote: str | None, *,
+             is_ancestor=_is_ancestor) -> Classification:
+    """current / behind / diverged / unknown. Nudge only on `behind`.
+
+    `behind` requires the remote to be a fast-forward descendant of the
+    installed SHA; anything unknowable is `unknown`, never `behind`."""
+    if installed is None or remote is None:
+        return "unknown"
+    if installed == remote:
+        return "current"
+    verdict = is_ancestor(installed, remote)
+    if verdict is True:
+        return "behind"
+    if verdict is False:
+        return "diverged"
+    return "unknown"
