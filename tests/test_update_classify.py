@@ -30,6 +30,18 @@ def test_resolve_remote_sha_none_on_timeout(monkeypatch):
     assert U.resolve_remote_sha() is None
 
 
+def test_resolve_remote_sha_none_on_non_hex_token(monkeypatch):
+    # A 40-char token that isn't hex must not be accepted as a SHA.
+    def fake_run(cmd, **kw):
+        class P:
+            returncode = 0
+            stdout = "z" * 40 + "\trefs/heads/main\n"
+            stderr = ""
+        return P()
+    monkeypatch.setattr(U.subprocess, "run", fake_run)
+    assert U.resolve_remote_sha() is None
+
+
 def test_classify_current_when_equal():
     assert U.classify("a" * 40, "a" * 40) == "current"
 

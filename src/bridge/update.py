@@ -162,7 +162,7 @@ def resolve_remote_sha(url: str = REPO_URL, ref: str = REPO_REF,
                     proc.stderr.strip())
         return None
     sha = proc.stdout.split()[0].strip()
-    return sha if len(sha) == 40 else None
+    return sha if _SHA_RE.match(sha) else None
 
 
 def _update_cache_repo() -> Path:
