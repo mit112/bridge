@@ -180,13 +180,14 @@ def run_db_command(argv: list[str] | None = None) -> int:
         )
     finally:
         watcher.stop()
-        _shutdown_scheduler(stop, t, store, refresh_thread)
+        _shutdown_scheduler(stop, t, store, refresh_thread, watcher=watcher)
     return 0
 
 
 def _shutdown_scheduler(
     stop: threading.Event, t: threading.Thread, store: Store,
     refresh_thread: threading.Thread | None = None,
+    watcher: FileWatcher | None = None,
     join_timeout: float = 30.0,
 ) -> None:
     """Stop the scheduler thread, then close the store -- but only once the
@@ -198,12 +199,23 @@ def _shutdown_scheduler(
     the thread is still alive after `join_timeout` -- a hung launch -- skip the
     close entirely: the daemon dies with the process, and WAL durability does
     not require an explicit `close()`.
+
+    The watcher's own `stop()` (join + timeout) is expected to have already
+    been called by the caller before this runs -- it is not repeated here.
+    But a watcher-triggered `run_once()` reindex can still be mid-flight if
+    that join timed out, so its liveness joins the same guard: `store.close()`
+    must wait on the watcher too, or a reindex still touching the store races
+    the close.
     """
     stop.set()
     t.join(timeout=join_timeout)
     if refresh_thread is not None:
         refresh_thread.join(timeout=join_timeout)
-    if not t.is_alive() and (refresh_thread is None or not refresh_thread.is_alive()):
+    if (
+        not t.is_alive()
+        and (refresh_thread is None or not refresh_thread.is_alive())
+        and (watcher is None or not watcher.is_alive())
+    ):
         store.close()
 
 

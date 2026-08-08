@@ -22,14 +22,12 @@ class FileWatcher:
         self, root: Path, on_change: Callable[[], None],
         poll_s: float = 0.5, quiet_s: float = 0.2,
         clock: Callable[[], float] = time.monotonic,
-        sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self._root = Path(root)
         self._on_change = on_change
         self._poll_s = poll_s
         self._quiet_s = quiet_s
         self._clock = clock
-        self._sleep = sleep
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
