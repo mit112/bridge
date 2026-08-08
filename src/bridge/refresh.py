@@ -44,11 +44,13 @@ class RefreshCoordinator:
         cfg: Config,
         reindex_fn: Callable[[Store, Config], IndexStats] = reindex,
         interval_s: float = 15.0,
+        on_change: "Callable[[], None] | None" = None,
     ) -> None:
         self.store = store
         self.cfg = cfg
         self.reindex_fn = reindex_fn
         self.interval_s = interval_s
+        self._on_change = on_change
         self._run_lock = threading.Lock()
         self._status_lock = threading.Lock()
         latest = store.latest_index_run()
@@ -76,6 +78,7 @@ class RefreshCoordinator:
                         error=message,
                     )
                 log.exception("periodic or explicit Bridge refresh failed")
+                self._fire_on_change()
                 return RefreshResult(False, None, message, self.status_snapshot())
 
             latest = self.store.latest_index_run()
@@ -88,12 +91,21 @@ class RefreshCoordinator:
                     attempted_at=attempted_at,
                     error=None,
                 )
+            self._fire_on_change()
             return RefreshResult(True, stats, None, self.status_snapshot())
 
     def run_periodic(self, stop_event: threading.Event) -> None:
         self.run_once()
         while not stop_event.wait(self.interval_s):
             self.run_once()
+
+    def _fire_on_change(self) -> None:
+        if self._on_change is None:
+            return
+        try:
+            self._on_change()
+        except Exception:  # noqa: BLE001 - a notifier bump must not kill refresh
+            log.exception("refresh on_change callback failed")
 
 
 def _short_error(exc: Exception) -> str:
