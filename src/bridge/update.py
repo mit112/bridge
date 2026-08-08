@@ -8,6 +8,8 @@ that the Homebrew formula stamps."""
 
 from __future__ import annotations
 
+import dataclasses
+import fcntl
 import json
 import logging
 import os
@@ -16,6 +18,7 @@ import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 
@@ -208,3 +211,59 @@ def classify(installed: str | None, remote: str | None, *,
     if verdict is False:
         return "diverged"
     return "unknown"
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _update_dir() -> Path:
+    d = Path.home() / ".bridge" / "update"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _lock_path() -> Path:
+    return _update_dir() / "update.lock"
+
+
+def _acquire_lock() -> int | None:
+    """A non-blocking exclusive flock. Returns the fd on success, None if held.
+
+    A concurrent update is refused rather than queued: two installers racing
+    the same executable is exactly the corruption the transaction prevents."""
+    fd = os.open(str(_lock_path()), os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        os.close(fd)
+        return None
+    return fd
+
+
+def _release_lock(fd: int) -> None:
+    try:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
+
+
+def _state_path() -> Path:
+    return _update_dir() / "state.json"
+
+
+def write_update_state(state: UpdateState) -> Path:
+    path = _state_path()
+    path.write_text(json.dumps(dataclasses.asdict(state)), encoding="utf-8")
+    return path
+
+
+def read_update_state() -> UpdateState | None:
+    path = _state_path()
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return UpdateState(**data)
+    except (OSError, ValueError, TypeError):
+        return None
