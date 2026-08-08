@@ -224,6 +224,77 @@ def test_a_newer_bump_during_an_in_flight_fetch_is_not_dropped(tmp_path):
         "so a subsequent refresh still fetches instead of no-op'ing"
     )
 
+def test_project_page_refreshes_on_its_own_cards_live_status_change(tmp_path):
+    got = _run("""
+        (async () => {
+        setPath("/project/12");
+        const body = shellBody();
+        const inc = document.createElement("div"); inc.setAttribute("class", "shell__body");
+        inc.append(document.createElement("p")); window.__parsed = { body: inc };
+        window.bridgePage.enter();
+        // First frame establishes the live-signal baseline -- no refresh yet.
+        window.bridgeLiveRefresh._onFrame({ generation: 1, cards: { "12": { live: { status: "ok" } } } });
+        window.bridgeLiveRefresh._refreshNow();
+        const beforeChange = globalThis.__calls.fetch.length;
+        // Same generation, but this project's own live status changed.
+        window.bridgeLiveRefresh._onFrame({ generation: 1, cards: { "12": { live: { status: "needs_input" } } } });
+        window.bridgeLiveRefresh._refreshNow();
+        await new Promise((resolve) => setImmediate(resolve));
+        report({ beforeChange, fetches: globalThis.__calls.fetch.length });
+        })();
+    """, tmp_path)
+    assert got["beforeChange"] == 0, "the baseline-establishing frame must not itself trigger a refresh"
+    assert got["fetches"] == 1
+
+def test_project_page_ignores_another_projects_live_status_change(tmp_path):
+    got = _run("""
+        setPath("/project/12");
+        shellBody();
+        window.bridgePage.enter();
+        window.bridgeLiveRefresh._onFrame({ generation: 1, cards: { "12": { live: { status: "ok" } } } });
+        window.bridgeLiveRefresh._refreshNow();   // baseline frame -- no fetch
+        // A DIFFERENT project's live status changes; project 12's own status
+        // is unchanged. This must not trigger a refresh on /project/12.
+        window.bridgeLiveRefresh._onFrame({
+            generation: 1,
+            cards: { "12": { live: { status: "ok" } }, "99": { live: { status: "needs_input" } } }
+        });
+        window.bridgeLiveRefresh._refreshNow();
+        report({ fetches: globalThis.__calls.fetch.length });
+    """, tmp_path)
+    assert got["fetches"] == 0, "only this project's OWN card changing may trigger a refresh"
+
+def test_schedule_refreshes_on_topbar_running_change(tmp_path):
+    got = _run("""
+        (async () => {
+        setPath("/schedule");
+        const body = shellBody();
+        const inc = document.createElement("div"); inc.setAttribute("class", "shell__body");
+        inc.append(document.createElement("p")); window.__parsed = { body: inc };
+        window.bridgePage.enter();
+        window.bridgeLiveRefresh._onFrame({ generation: 1, topbar: { running: 0 } });
+        window.bridgeLiveRefresh._refreshNow();
+        const beforeChange = globalThis.__calls.fetch.length;
+        window.bridgeLiveRefresh._onFrame({ generation: 1, topbar: { running: 1 } });
+        window.bridgeLiveRefresh._refreshNow();
+        await new Promise((resolve) => setImmediate(resolve));
+        report({ beforeChange, fetches: globalThis.__calls.fetch.length });
+        })();
+    """, tmp_path)
+    assert got["beforeChange"] == 0
+    assert got["fetches"] == 1
+
+def test_first_frame_after_enter_does_not_spuriously_refresh(tmp_path):
+    got = _run("""
+        setPath("/project/12");
+        shellBody();
+        window.bridgePage.enter();
+        window.bridgeLiveRefresh._onFrame({ generation: 1, cards: { "12": { live: { status: "ok" } } } });
+        window.bridgeLiveRefresh._refreshNow();
+        report({ fetches: globalThis.__calls.fetch.length });
+    """, tmp_path)
+    assert got["fetches"] == 0, "the very first frame for a view must only adopt a baseline"
+
 def test_a_debounced_burst_schedules_only_one_refresh(tmp_path):
     got = _run("""
         setPath("/schedule");
