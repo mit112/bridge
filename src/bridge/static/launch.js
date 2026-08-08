@@ -149,10 +149,74 @@ document.addEventListener("input", (event) => {
   const field = event.target.closest("[data-compose-prompt]");
   if (!field) return;
   const band = document.querySelector(`[data-launch-prompt="${field.id}"]`);
-  if (!band) return;
-  const button = band.querySelector("[data-launch-button]");
-  if (button) button.disabled = field.value.trim() === "";
+  if (band) {
+    const button = band.querySelector("[data-launch-button]");
+    if (button) button.disabled = field.value.trim() === "";
+  }
+  saveComposeDraft(field);
 });
+
+// The compose textarea has no server-side record (unlike the handoff prompt,
+// which `savePrompt` above flushes to the server on `onLeave`), so a
+// navigation swap destroys it with nothing to restore it from. `sessionStorage`
+// is the right store for that draft: it survives in-tab navigations and
+// reloads, and clears when the tab closes -- the correct lifetime for an
+// ephemeral new-session prompt nobody asked Bridge to remember forever.
+// Guarded the same way `prefillLaunchDefaults` guards `localStorage`, so a
+// blocked or full `sessionStorage` is a silent no-op rather than a broken
+// input handler.
+function saveComposeDraft(field) {
+  let store;
+  try {
+    store = window.sessionStorage;
+  } catch (error) {
+    return;
+  }
+  if (!store) return;
+
+  const key = "bridge.compose." + field.id;
+  try {
+    if (field.value.trim() === "") store.removeItem(key);
+    else store.setItem(key, field.value);
+  } catch (error) {
+    // Blocked or full storage: the draft simply is not persisted this time.
+  }
+}
+
+// Restores a compose draft after a router swap re-renders the field empty.
+// Only fires for a field that is CURRENTLY empty -- the server-rendered
+// default always wins over a stale draft if the field already carries text
+// (e.g. Task 5's prefill), and this never overwrites something the user is
+// mid-edit on. Re-applies the launch button's enable rule so a restored
+// non-empty draft does not leave the primary action looking disabled.
+function restoreComposeDrafts() {
+  if (typeof document === "undefined" || !document.querySelectorAll) return;
+  let store;
+  try {
+    store = window.sessionStorage;
+  } catch (error) {
+    return;
+  }
+  if (!store) return;
+
+  document.querySelectorAll("[data-compose-prompt]").forEach((field) => {
+    if (field.value !== "") return;
+    let draft;
+    try {
+      draft = store.getItem("bridge.compose." + field.id);
+    } catch (error) {
+      return;
+    }
+    if (!draft) return;
+
+    field.value = draft;
+    const band = document.querySelector(`[data-launch-prompt="${field.id}"]`);
+    if (band) {
+      const button = band.querySelector("[data-launch-button]");
+      if (button) button.disabled = field.value.trim() === "";
+    }
+  });
+}
 
 // Dismiss a queued handoff from the workspace's Current tab. Reuses the same
 // PATCH the handoff prompt already saves through — only the body differs —
@@ -267,5 +331,9 @@ if (window.bridgePage) {
     Array.from(document.querySelectorAll("[data-prompt-handoff]")).map(savePrompt),
   ));
   window.bridgePage.onEnter(prefillLaunchDefaults);
+  window.bridgePage.onEnter(restoreComposeDrafts);
 }
-if (!window.bridgePage) prefillLaunchDefaults();
+if (!window.bridgePage) {
+  prefillLaunchDefaults();
+  restoreComposeDrafts();
+}

@@ -204,6 +204,13 @@ function makeDocument(root) {
     _m: new Map(),
     getItem(k) { return this._m.has(k) ? this._m.get(k) : null; },
     setItem(k, v) { this._m.set(k, String(v)); },
+    removeItem(k) { this._m.delete(k); },
+  };
+  globalThis.sessionStorage = {
+    _m: new Map(),
+    getItem(k) { return this._m.has(k) ? this._m.get(k) : null; },
+    setItem(k, v) { this._m.set(k, String(v)); },
+    removeItem(k) { this._m.delete(k); },
   };
   // Counting stubs -- the duplicate-hazard tests assert on these.
   globalThis.__calls = { fetch: [], eventSource: [], interval: 0 };
