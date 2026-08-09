@@ -320,10 +320,33 @@ def cmd_update(args, cfg) -> int:
     Prints to stderr like `handoff`/`launch`: nothing parses this stdout."""
     from bridge import update
 
+    # The one-shot `dev.bridge.updater` LaunchAgent invokes
+    # `bridge update --sha <sha> --via-launchagent`. That flag selects the
+    # panel-side flow (`run_update_via_launchagent`): reinstall, re-bootstrap the
+    # panel plist from the new interpreter path so launchd relaunches the NEW
+    # code, and write the reconnect-state file the banner polls. Plain
+    # `run_update` below reinstalls but never restarts, so a managed panel would
+    # keep serving the old code -- which is the whole reason this mode is
+    # separate. Terminal `bridge update` (no flag) stays in-process on purpose:
+    # it is not the live panel process, it is not the one-click critical path,
+    # and the running LaunchAgent (if any) is restarted only by the async
+    # endpoint or a manual relaunch.
+    if getattr(args, "via_launchagent", False):
+        if not getattr(args, "sha", None):
+            print("bridge update: --via-launchagent requires --sha", file=sys.stderr)
+            return 2
+        result = update.run_update_via_launchagent(args.sha)
+        if result.ok:
+            print(f"bridge: updated to {args.sha[:12]} (log: {result.log_path})",
+                  file=sys.stderr)
+            return 0
+        print(f"bridge update: FAILED: {result.error} (log: {result.log_path})",
+              file=sys.stderr)
+        return 1
+
     installed = update.installed_sha()
-    # The one-shot LaunchAgent updater invokes `bridge update --sha <sha>` with
-    # the exact commit already resolved: honor it directly and skip both the
-    # panel query and the network resolve, but still refuse a no-op below.
+    # Honor a pinned `--sha` directly and skip both the panel query and the
+    # network resolve, but still refuse a no-op below.
     target = getattr(args, "sha", None)
     # Prefer the SHA the panel already surfaced so the CLI and button install the
     # SAME commit; fall back to a fresh resolve when the panel is down.
@@ -424,6 +447,11 @@ def build_parser() -> argparse.ArgumentParser:
     up.add_argument("--project")
     up.add_argument("--sha", help="install this exact commit (used by the "
                                   "one-shot LaunchAgent updater)")
+    # Hidden: the one-shot updater LaunchAgent passes this to select the
+    # panel-side flow (install + re-bootstrap the panel plist + write the
+    # reconnect-state file) instead of a plain in-process reinstall.
+    up.add_argument("--via-launchagent", action="store_true",
+                    help=argparse.SUPPRESS)
 
     d = sub.add_parser("diagnose",
                        help="print a read-only diagnostics snapshot")

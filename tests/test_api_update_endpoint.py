@@ -27,6 +27,12 @@ def _client(tmp_path, monkeypatch):
     monkeypatch.setattr(ck, "snapshot", lambda: U.UpdateState(
         state="behind", installed_sha="a" * 40, latest_sha="b" * 40,
         checked_at="t", error=None))
+    # Default to the UNMANAGED (manual `bridge serve`) path so the in-process
+    # `run_update` behaviour every guard/accept test below asserts is
+    # deterministic -- otherwise this would read the developer's own real
+    # install method and real ~/Library/LaunchAgents panel plist. The managed
+    # tests flip this seam back to True explicitly.
+    monkeypatch.setattr(U, "is_managed_launchagent", lambda: False)
     app = create_app(store, cfg, update_checker=ck)
     return TestClient(app), store, U.read_or_create_token()
 
@@ -121,6 +127,67 @@ def test_accepts_valid_request(tmp_path, monkeypatch):
     assert r.status_code == 200
     assert r.json()["ok"] is True
     assert r.json()["attempted_sha"] == "b" * 40
+    assert calls == ["b" * 40]
+    store.close()
+
+
+def test_managed_launchagent_installs_async_and_returns_accepted(tmp_path, monkeypatch):
+    """Under a managed panel LaunchAgent the endpoint must NOT run in-process
+    `run_update` (which reinstalls the package but leaves THIS panel process on
+    the old code): it spawns the detached one-shot updater via
+    `bootstrap_updater` and answers 202 immediately, letting the banner's
+    reconnect read the update-state file once the panel restarts."""
+    import bridge.setup as S
+
+    c, store, tok = _client(tmp_path, monkeypatch)
+    monkeypatch.setattr(U, "is_managed_launchagent", lambda: True)
+    boot_calls = []
+    monkeypatch.setattr(S, "bootstrap_updater",
+                        lambda sha: (boot_calls.append(sha), True)[1])
+
+    def must_not_run(sha):
+        raise AssertionError("managed path must not run in-process run_update")
+
+    monkeypatch.setattr(U, "run_update", must_not_run)
+    r = c.post("/api/update", json={"target_sha": "b" * 40},
+               headers={"Authorization": f"Bearer {tok}",
+                        "Sec-Fetch-Site": "same-origin"})
+    assert r.status_code == 202
+    assert r.json()["accepted"] is True
+    assert boot_calls == ["b" * 40]
+    store.close()
+
+
+def test_managed_launchagent_bootstrap_failure_reports_an_error(tmp_path, monkeypatch):
+    """A detached updater that fails to bootstrap must surface as an error the
+    banner can show, not a silent 202 that leaves the user waiting forever."""
+    import bridge.setup as S
+
+    c, store, tok = _client(tmp_path, monkeypatch)
+    monkeypatch.setattr(U, "is_managed_launchagent", lambda: True)
+    monkeypatch.setattr(S, "bootstrap_updater", lambda sha: False)
+    r = c.post("/api/update", json={"target_sha": "b" * 40},
+               headers={"Authorization": f"Bearer {tok}",
+                        "Sec-Fetch-Site": "same-origin"})
+    assert r.status_code == 500
+    assert r.json()["ok"] is False
+    store.close()
+
+
+def test_unmanaged_serve_keeps_the_in_process_run_update(tmp_path, monkeypatch):
+    """A manual `bridge serve` has no LaunchAgent to relaunch it, so it must
+    keep the synchronous in-process install and return the UpdateResult JSON."""
+    c, store, tok = _client(tmp_path, monkeypatch)  # is_managed defaulted False
+    calls = []
+    monkeypatch.setattr(U, "run_update", lambda sha: (calls.append(sha), U.UpdateResult(
+        ok=True, previous_sha="a" * 40, attempted_sha=sha, method="uv",
+        started_at="t", ended_at="t", exit_status=0, log_path="/l",
+        error=None, rolled_back=False))[1])
+    r = c.post("/api/update", json={"target_sha": "b" * 40},
+               headers={"Authorization": f"Bearer {tok}",
+                        "Sec-Fetch-Site": "same-origin"})
+    assert r.status_code == 200
+    assert r.json()["ok"] is True
     assert calls == ["b" * 40]
     store.close()
 

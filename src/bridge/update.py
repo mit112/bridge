@@ -440,29 +440,65 @@ def _rebootstrap_panel() -> bool:
     A uv/brew upgrade can move the interpreter the plist pins by absolute path
     (setup.py:292/:330), so the plist must be regenerated from the NEW path
     before the panel restarts, or launchd relaunches a binary that no longer
-    exists."""
+    exists.
+
+    `assume_yes=True` is load-bearing: this runs inside a launchd one-shot job
+    with no tty, and the interactive `run_launchd_only` prompt would `sys.exit()`
+    on EOF -- a `SystemExit` that a bare `except Exception` cannot catch."""
     from bridge.setup import run_launchd_only
-    try:
-        return run_launchd_only() == 0
-    except Exception:  # noqa: BLE001 - restart failure must not crash the flow
-        log.exception("panel re-bootstrap failed")
+    return run_launchd_only(assume_yes=True) == 0
+
+
+def is_managed_launchagent() -> bool:
+    """True when this panel runs under its own installed LaunchAgent.
+
+    Only then is the async one-shot updater usable: a detached job can install
+    the new package AND restart the panel, so `POST /api/update` can return
+    immediately and let the reconnect resolve the outcome. A manual `bridge
+    serve` (dev/unknown, or no panel plist) has no agent to relaunch it, so the
+    endpoint must update in-process instead or it would leave the panel on old
+    code with nothing to restart it.
+
+    A monkeypatchable seam for the endpoint's test; reads `install_method()` and
+    the panel plist path at call time so both stay overridable."""
+    if install_method() not in ("uv", "brew"):
         return False
+    from bridge.setup import LAUNCHD_AGENTS_DIR, LAUNCHD_PLIST_NAME
+    return (LAUNCHD_AGENTS_DIR / LAUNCHD_PLIST_NAME).exists()
 
 
 def run_update_via_launchagent(target_sha: str) -> UpdateResult:
     """The panel-side flow: install, re-bootstrap the panel plist, and write the
     reconnect state file so the panel can tell "updated" from "crashed" across
-    the SSE reconnect that the restart forces."""
+    the SSE reconnect that the restart forces.
+
+    Invoked by the one-shot `dev.bridge.updater` LaunchAgent (`bridge update
+    --sha <sha> --via-launchagent`), never by the panel process itself."""
     result = run_update(target_sha)
-    if result.ok:
-        _rebootstrap_panel()
-        write_update_state(UpdateState(
-            state="current", installed_sha=target_sha, latest_sha=target_sha,
-            checked_at=_now_iso(), error=None))
-    else:
+    if not result.ok:
         write_update_state(UpdateState(
             state="stale", installed_sha=installed_sha(), latest_sha=target_sha,
             checked_at=_now_iso(), error=result.error))
+        return result
+    # The install landed. Now re-bootstrap the panel plist from the new
+    # interpreter path and let launchd relaunch it. The restart MUST NOT be able
+    # to skip the state write below: `_rebootstrap_panel` can raise -- including
+    # `SystemExit`, which is a BaseException, not an Exception -- and if that
+    # escaped, the panel would reconnect to a state file that still said the old
+    # SHA and never learn the update succeeded. Catch BaseException, record the
+    # failure, and write state either way.
+    restart_error = None
+    try:
+        if not _rebootstrap_panel():
+            restart_error = "panel re-bootstrap failed"
+    except BaseException as exc:  # noqa: BLE001 - SystemExit must not skip state
+        log.exception("panel re-bootstrap raised")
+        restart_error = f"panel re-bootstrap raised: {type(exc).__name__}: {exc}"
+    write_update_state(UpdateState(
+        state="current", installed_sha=target_sha, latest_sha=target_sha,
+        checked_at=_now_iso(), error=restart_error))
+    if restart_error is not None:
+        result = dataclasses.replace(result, error=restart_error)
     return result
 
 

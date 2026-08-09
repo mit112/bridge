@@ -277,6 +277,29 @@ def test_launchd_only_regenerates_the_plist_with_the_configured_port(
     assert launchctl.calls == []  # declined → launchctl never touched
 
 
+def test_launchd_only_assume_yes_reinstalls_without_prompting(
+    home, launchctl, monkeypatch
+):
+    """The one-shot updater re-bootstraps the panel plist headless. `assume_yes`
+    must skip the interactive `_ask_yn` (which `sys.exit()`s on EOF in a launchd
+    job) and reinstall regardless."""
+    setup.CONFIG_PATH.write_text("port = 8787\n")
+    monkeypatch.setenv("BRIDGE_CONFIG", str(setup.CONFIG_PATH))
+    monkeypatch.setattr(setup, "_resolve_claude_path", lambda: None)
+
+    def no_prompt(*a, **k):
+        raise AssertionError("_ask_yn must not be called with assume_yes=True")
+
+    monkeypatch.setattr(setup, "_ask_yn", no_prompt)
+
+    rc = setup.run_launchd_only(assume_yes=True)
+
+    assert rc == 0
+    assert (setup.LAUNCHD_AGENTS_DIR / setup.LAUNCHD_PLIST_NAME).exists()
+    verbs = [c[1] for c in launchctl.calls if c[1] in ("bootout", "bootstrap")]
+    assert verbs == ["bootout", "bootstrap"]
+
+
 def test_launchd_only_rejects_an_invalid_bridge_port(home, launchctl, monkeypatch):
     """A typo in BRIDGE_PORT fails with a clear ConfigError before any write,
     matching `config.load` rather than the raw ValueError `int()` used to raise."""

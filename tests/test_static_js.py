@@ -3957,12 +3957,15 @@ def _run_update_banner(
     copy=False,
     post_http_ok=True,
     post_body=None,
+    post_status=None,
 ):
     if post_body is None:
         post_body = {"ok": True}
+    if post_status is None:
+        post_status = 200 if post_http_ok else 409
     post_response_js = "{ ok: %s, status: %d, json: async () => (%s) }" % (
         "true" if post_http_ok else "false",
-        200 if post_http_ok else 409,
+        post_status,
         json.dumps(post_body),
     )
     script = (
@@ -4142,3 +4145,44 @@ def test_a_successful_update_announces_success_without_hiding_the_banner(tmp_pat
     )
     assert "Updating" in got["status"]
     assert got["hiddenAfterApply"] is False
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_an_accepted_async_response_shows_updating_and_keeps_the_button_disabled(tmp_path):
+    """The managed-LaunchAgent path answers 202 `{accepted: true}`: a detached
+    one-shot job installs and RESTARTS the panel, so the SSE stream drops and
+    this page reconnects. There is no synchronous result to mark success or
+    failure -- so the banner shows an "updating…/reconnect" state and the button
+    stays disabled, and it must NOT be mistaken for a failure (the old code fell
+    through to the error branch on any response lacking `data.ok`)."""
+    got = _run_update_banner(
+        tmp_path,
+        diag_update={"state": "behind", "installed_sha": INSTALLED,
+                     "latest_sha": SHA_A, "checked_at": "now", "error": None},
+        apply=True,
+        post_http_ok=True,
+        post_status=202,
+        post_body={"accepted": True, "target_sha": SHA_A},
+    )
+    assert "reconnect" in got["status"].lower()
+    assert "⚠" not in got["status"], "an accepted async update must not read as a failure"
+    assert got["applyDisabled"] is True, "the panel is restarting; the button stays disabled"
+    assert got["hiddenAfterApply"] is False
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_an_accepted_body_without_a_202_status_is_still_treated_as_async(tmp_path):
+    """Detection keys on EITHER the 202 status OR an `{accepted: true}` body, so
+    a 200-carrying accepted shape is still handled as the async path, never as a
+    synchronous success/failure."""
+    got = _run_update_banner(
+        tmp_path,
+        diag_update={"state": "behind", "installed_sha": INSTALLED,
+                     "latest_sha": SHA_A, "checked_at": "now", "error": None},
+        apply=True,
+        post_http_ok=True,
+        post_status=200,
+        post_body={"accepted": True},
+    )
+    assert "reconnect" in got["status"].lower()
+    assert got["applyDisabled"] is True

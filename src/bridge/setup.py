@@ -400,6 +400,7 @@ def generate_updater_plist(python_path: str, target_sha: str) -> str:
             <string>update</string>
             <string>--sha</string>
             <string>{esc(target_sha)}</string>
+            <string>--via-launchagent</string>
         </array>
         <key>RunAtLoad</key>
         <true/>
@@ -770,8 +771,14 @@ def run_setup() -> int:
     return 0
 
 
-def run_launchd_only() -> int:
-    """Regenerate and reinstall just the LaunchAgent plist."""
+def run_launchd_only(assume_yes: bool = False) -> int:
+    """Regenerate and reinstall just the LaunchAgent plist.
+
+    `assume_yes=True` skips the interactive reinstall prompt. The one-shot
+    self-updater re-bootstraps the panel plist from a launchd job, where there
+    is no tty: `_ask_yn` would hit EOF and `sys.exit(1)`, killing the update
+    flow before the reconnect-state file is written. The headless caller passes
+    `assume_yes=True` so the reinstall always runs and never prompts."""
     # Port precedence matches `config.load`: BRIDGE_PORT (validated) wins, then
     # the port config.toml recorded, then the default. Routing the env var
     # through `_env_port` means a typo fails with a clear ConfigError here too,
@@ -793,7 +800,7 @@ def run_launchd_only() -> int:
 
     _ok(f"Wrote {LAUNCHD_PLIST_PATH}")
 
-    if _ask_yn("Reinstall the LaunchAgent now?", default=True):
+    if assume_yes or _ask_yn("Reinstall the LaunchAgent now?", default=True):
         if _install_launchd(str(LAUNCHD_PLIST_PATH)):
             _ok("LaunchAgent reinstalled and running.")
         else:

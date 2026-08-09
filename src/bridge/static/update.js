@@ -104,6 +104,17 @@
       applyButton.setAttribute("aria-busy", "true");
       announce("Updating…");
 
+      // A managed-LaunchAgent install is ASYNCHRONOUS: the server answers 202
+      // `{accepted: true}` and a detached one-shot job installs the new build
+      // AND restarts the panel out from under this page, so the SSE stream
+      // drops and the page reconnects. There is no synchronous result to show
+      // — the reconnect's /api/diagnostics update-state read resolves the
+      // outcome — so we leave the banner in an "updating" state and keep the
+      // button disabled, rather than reporting a success/failure the server
+      // never sent. The unmanaged (`bridge serve`) path still returns a
+      // synchronous UpdateResult and is handled exactly as before.
+      var stayDisabled = false;
+
       fetch("/api/update", {
         method: "POST",
         headers: {
@@ -114,10 +125,15 @@
       })
         .then(function (response) {
           return response.json().catch(function () { return {}; }).then(function (data) {
-            return { httpOk: response.ok, data: data };
+            return { httpOk: response.ok, status: response.status, data: data };
           });
         })
         .then(function (result) {
+          if (result.status === 202 || (result.data && result.data.accepted === true)) {
+            stayDisabled = true;
+            announce("Updating… the panel is restarting; this page will reconnect.");
+            return;
+          }
           if (result.httpOk && result.data && result.data.ok) {
             announce("✓ Updating — the panel will restart shortly");
             return;
@@ -131,6 +147,7 @@
           announce("⚠ Update request failed. Run `bridge update` to retry.");
         })
         .finally(function () {
+          if (stayDisabled) return;
           applyButton.disabled = false;
           applyButton.removeAttribute("aria-busy");
         });

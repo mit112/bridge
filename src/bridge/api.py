@@ -28,7 +28,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, field_validator, model_validator
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from bridge import __version__, agents, hooks, launcher, schedspool, spool, update
+from bridge import __version__, agents, hooks, launcher, schedspool, setup, spool, update
 from bridge.cards import (
     FIVE_HOURS,
     GitProbeCache,
@@ -1470,6 +1470,25 @@ def create_app(
         if snap.state != "behind" or payload.target_sha != snap.latest_sha:
             raise HTTPException(status_code=409,
                                 detail="target SHA is not the currently offered update")
+        # 4) Under a managed panel LaunchAgent, install ASYNCHRONOUSLY. An
+        #    in-process `run_update` reinstalls the package but leaves THIS
+        #    process running the old code until something restarts it -- so the
+        #    panel would keep serving the superseded build. `bootstrap_updater`
+        #    spawns the detached one-shot job that installs AND restarts the
+        #    panel; we answer 202 immediately and the banner's reconnect reads
+        #    the update-state file once the panel comes back. A manual `bridge
+        #    serve` has no agent to relaunch it, so it keeps the synchronous
+        #    in-process path and returns the UpdateResult JSON as before.
+        if update.is_managed_launchagent():
+            if not setup.bootstrap_updater(payload.target_sha):
+                return JSONResponse(
+                    {"ok": False,
+                     "error": "could not start the background updater; "
+                              "run `bridge update` to retry"},
+                    status_code=500)
+            return JSONResponse(
+                {"accepted": True, "target_sha": payload.target_sha},
+                status_code=202)
         return asdict(update.run_update(payload.target_sha))
 
     return app
