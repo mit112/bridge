@@ -8,6 +8,7 @@ are both thin clients of `POST /api/launch`, and neither imports `launcher`.
 import dataclasses
 import json
 import logging
+import secrets
 import threading
 import time
 from collections.abc import Callable
@@ -297,6 +298,24 @@ class ProjectPatch(BaseModel):
         if self.status is None and self.pinned is None:
             raise ValueError("supply status, pinned, or both")
         return self
+
+
+class UpdateIn(BaseModel):
+    """`POST /api/update`'s body: the exact SHA to install.
+
+    Never a branch name or `@main` -- the route below cross-checks this
+    against the checker's own currently-surfaced `latest_sha`, so a request
+    can only ever pin the concrete commit the panel already offered.
+    """
+
+    target_sha: str
+
+    @field_validator("target_sha")
+    @classmethod
+    def _forty_hex(cls, v: str) -> str:
+        if len(v) != 40 or any(c not in "0123456789abcdef" for c in v):
+            raise ValueError("target_sha must be a 40-char lowercase hex SHA")
+        return v
 
 
 def fire(
@@ -1416,6 +1435,42 @@ def create_app(
         result = dict(_fire_claimed_job(store, cfg, row, launch_fn))
         app.state.notifier.bump()
         return result
+
+    # --- self-update ----------------------------------------------------------
+    #
+    # A local-only maintenance action, guarded by three checks stacked on top
+    # of `_same_origin_writes_only` above (which already enforces the `Origin`
+    # leg for every unsafe method): a per-install bearer token, `Sec-Fetch-Site`,
+    # and an exact match against the SHA the checker itself is currently
+    # offering. Together they are what makes this safe to expose as a same-page
+    # button: no cross-site page can read the token or forge the header, and no
+    # request -- however it got the token -- can install anything but the
+    # concrete commit already surfaced as `behind`.
+
+    @app.post("/api/update")
+    def api_update(request: Request, payload: UpdateIn):
+        # 1) Per-install bearer token. `compare_digest` avoids a timing oracle.
+        expected = update.read_or_create_token()
+        auth = request.headers.get("authorization", "")
+        presented = auth[7:] if auth.lower().startswith("bearer ") else ""
+        if not presented or not secrets.compare_digest(presented, expected):
+            log.warning("refused /api/update: bad or missing token")
+            raise HTTPException(status_code=403, detail="bad update token")
+        # 2) Sec-Fetch-Site: a browser sets this and a page cannot forge it.
+        #    Absent (a server-side client like the CLI) stays allowed; a
+        #    cross-site/same-site value is refused. (Origin is already checked
+        #    by `_same_origin_writes_only` for every unsafe method.)
+        site = request.headers.get("sec-fetch-site")
+        if site is not None and site not in ("same-origin", "none"):
+            log.warning("refused /api/update: Sec-Fetch-Site=%r", site)
+            raise HTTPException(status_code=403, detail="cross-site update refused")
+        # 3) Install ONLY the exact SHA the check surfaced -- never a re-resolved
+        #    @main. A mismatch means the panel's offer and the request disagree.
+        snap = request.app.state.update_checker.snapshot()
+        if snap.state != "behind" or payload.target_sha != snap.latest_sha:
+            raise HTTPException(status_code=409,
+                                detail="target SHA is not the currently offered update")
+        return asdict(update.run_update(payload.target_sha))
 
     return app
 
