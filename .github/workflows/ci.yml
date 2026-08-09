@@ -39,3 +39,39 @@ jobs:
         run: |
           mkdir -p "$HOME"
           uv run pytest
+
+  # Reports (does not gate — see note below) whether the tap formula's resource
+  # block still matches what tools/brew_resources.py generates from uv.lock.
+  # NOT a required check: it checks out the tap repo, so gating main PRs on it
+  # would couple them to tap availability. Only `test` is required.
+  brew-resources-drift:
+    name: brew-resources-drift
+    runs-on: macos-latest
+    steps:
+      - name: Check out the main repo
+        uses: actions/checkout@v4
+      - name: Check out the tap
+        uses: actions/checkout@v4
+        with:
+          repository: mit112/homebrew-bridge
+          path: _tap
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.13"
+      - name: Regenerate resources from uv.lock
+        run: uv run python tools/brew_resources.py uv.lock > _generated_resources.rb
+      - name: Extract committed resource block from the tap
+        run: |
+          awk '/# BEGIN GENERATED RESOURCES/{f=1;next} /# END GENERATED RESOURCES/{f=0} f' \
+            _tap/Formula/bridge.rb \
+            | sed '/^[[:space:]]*#/d' \
+            | sed '/^[[:space:]]*$/d' > _committed_resources.rb
+      - name: Fail on drift
+        run: |
+          sed '/^[[:space:]]*$/d' _generated_resources.rb > _gen_clean.rb
+          if ! diff -u _committed_resources.rb _gen_clean.rb; then
+            echo "::error::Formula resources drifted from uv.lock. Run tools/brew_resources.py and re-splice into the tap." >&2
+            exit 1
+          fi
+          echo "Resources match uv.lock."
