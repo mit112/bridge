@@ -6,6 +6,7 @@
   <meta name="description" content="Local control panel for Claude Code project state, handoffs, and launches.">
   <meta name="theme-color" content="#f5efe3" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#1b1714" media="(prefers-color-scheme: dark)">
+  <meta name="bridge-update-token" content="{{ update_token() }}">
   <title>{% block title %}Bridge{% endblock %}</title>
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
   {# Synchronous and inline on purpose -- FOUC guard. Reads the three client

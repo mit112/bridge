@@ -15,6 +15,7 @@ import logging
 import os
 import random
 import re
+import secrets
 import shutil
 import subprocess
 import sys
@@ -250,6 +251,32 @@ def _update_dir() -> Path:
 
 def _lock_path() -> Path:
     return _update_dir() / "update.lock"
+
+
+def _token_path() -> Path:
+    return _update_dir() / "token"
+
+
+def read_or_create_token() -> str:
+    """A per-install bearer token, created 0600 on first read.
+
+    This -- not the loopback Host check -- is what stops CSRF against the update
+    endpoint: a cross-site page cannot read this file, so it cannot mint the
+    header. The panel injects it into its own same-origin page only."""
+    path = _token_path()
+    if path.exists():
+        try:
+            existing = path.read_text(encoding="utf-8").strip()
+            if existing:
+                return existing
+        except OSError:
+            pass
+    token = secrets.token_urlsafe(32)
+    fd = os.open(str(path), os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(token)
+    os.chmod(path, 0o600)
+    return token
 
 
 def _acquire_lock() -> int | None:

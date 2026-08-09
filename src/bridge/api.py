@@ -635,6 +635,7 @@ def create_app(
         }
 
     templates.env.globals["shell_freshness"] = _shell_freshness
+    templates.env.globals["update_token"] = update.read_or_create_token
 
     @app.exception_handler(StarletteHTTPException)
     async def _not_found(request: Request, exc: StarletteHTTPException):
@@ -1498,3 +1499,4 @@ def register_template_filters(env) -> None:
     env.globals["shell_freshness"] = lambda: {
         "server": "available", "index_at": None, "index_age_seconds": None,
     }
+    env.globals["update_token"] = lambda: ""
