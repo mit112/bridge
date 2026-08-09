@@ -4,7 +4,7 @@
 
 Please report security issues privately rather than opening a public issue.
 
-security contact: <TODO: maintainer email>
+security contact: sheth.mit@northeastern.edu
 
 Include what you found, how to reproduce it, and the impact you'd expect. A
 response should follow within a few days.
