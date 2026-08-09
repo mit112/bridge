@@ -415,3 +415,31 @@ def test_uninstall_launchd_boots_out_the_bridge_label(home, launchctl):
     boots = [c for c in launchctl.calls if c[:2] == ["launchctl", "bootout"]]
     assert len(boots) == 1
     assert f"gui/" in boots[0][2] and setup.LAUNCHD_LABEL in boots[0][2]
+
+
+# ── one-shot updater LaunchAgent ─────────────────────────────────────────────
+
+
+def test_bootstrap_updater_writes_a_one_shot_plist_and_bootstraps_it(
+    home, launchctl, monkeypatch
+):
+    """The updater is bootstrapped under its OWN label so `kickstart -k` of the
+    panel job cannot kill it mid-install. Proven against the stubbed launchctl
+    and the temp LaunchAgents dir — no real bootout/bootstrap ever runs."""
+    monkeypatch.setattr(setup.sys, "executable", "/venv/bin/python")
+
+    assert setup.bootstrap_updater("c" * 40) is True
+
+    dest = setup.LAUNCHD_AGENTS_DIR / setup.UPDATER_PLIST_NAME
+    assert dest.exists()
+    # Distinct label: not a child of the panel job.
+    assert setup.UPDATER_LABEL != setup.LAUNCHD_LABEL
+    assert setup.UPDATER_LABEL in dest.read_text()
+
+    verbs = [c[1] for c in launchctl.calls if c[1] in ("bootout", "bootstrap")]
+    assert verbs == ["bootout", "bootstrap"]
+    bootstrap = next(c for c in launchctl.calls if c[1] == "bootstrap")
+    assert str(dest) in bootstrap
+    # Every launchctl call targets the updater label, never the panel label.
+    for c in launchctl.calls:
+        assert setup.LAUNCHD_LABEL not in " ".join(c)

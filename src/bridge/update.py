@@ -434,6 +434,38 @@ def run_update(target_sha: str) -> UpdateResult:
         _release_lock(fd)
 
 
+def _rebootstrap_panel() -> bool:
+    """Re-bootstrap the panel plist from the (possibly moved) sys.executable.
+
+    A uv/brew upgrade can move the interpreter the plist pins by absolute path
+    (setup.py:292/:330), so the plist must be regenerated from the NEW path
+    before the panel restarts, or launchd relaunches a binary that no longer
+    exists."""
+    from bridge.setup import run_launchd_only
+    try:
+        return run_launchd_only() == 0
+    except Exception:  # noqa: BLE001 - restart failure must not crash the flow
+        log.exception("panel re-bootstrap failed")
+        return False
+
+
+def run_update_via_launchagent(target_sha: str) -> UpdateResult:
+    """The panel-side flow: install, re-bootstrap the panel plist, and write the
+    reconnect state file so the panel can tell "updated" from "crashed" across
+    the SSE reconnect that the restart forces."""
+    result = run_update(target_sha)
+    if result.ok:
+        _rebootstrap_panel()
+        write_update_state(UpdateState(
+            state="current", installed_sha=target_sha, latest_sha=target_sha,
+            checked_at=_now_iso(), error=None))
+    else:
+        write_update_state(UpdateState(
+            state="stale", installed_sha=installed_sha(), latest_sha=target_sha,
+            checked_at=_now_iso(), error=result.error))
+    return result
+
+
 class UpdateChecker:
     """A bounded worker that polls the remote SHA on a ~30-min cache.
 

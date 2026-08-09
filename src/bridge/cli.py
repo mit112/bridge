@@ -321,17 +321,21 @@ def cmd_update(args, cfg) -> int:
     from bridge import update
 
     installed = update.installed_sha()
+    # The one-shot LaunchAgent updater invokes `bridge update --sha <sha>` with
+    # the exact commit already resolved: honor it directly and skip both the
+    # panel query and the network resolve, but still refuse a no-op below.
+    target = getattr(args, "sha", None)
     # Prefer the SHA the panel already surfaced so the CLI and button install the
     # SAME commit; fall back to a fresh resolve when the panel is down.
-    target = None
-    try:
-        status, body = _request("GET", f"{_base(cfg)}/api/diagnostics")
-        if 200 <= status < 300 and isinstance(body, dict):
-            upd = body.get("update") or {}
-            if upd.get("state") == "behind" and upd.get("latest_sha"):
-                target = upd["latest_sha"]
-    except Exception:  # noqa: BLE001 - panel down is fine; resolve directly
-        pass
+    if target is None:
+        try:
+            status, body = _request("GET", f"{_base(cfg)}/api/diagnostics")
+            if 200 <= status < 300 and isinstance(body, dict):
+                upd = body.get("update") or {}
+                if upd.get("state") == "behind" and upd.get("latest_sha"):
+                    target = upd["latest_sha"]
+        except Exception:  # noqa: BLE001 - panel down is fine; resolve directly
+            pass
     if target is None:
         target = update.resolve_remote_sha()
     if target is None:
@@ -418,6 +422,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     up = sub.add_parser("update", help="update Bridge to the latest main HEAD")
     up.add_argument("--project")
+    up.add_argument("--sha", help="install this exact commit (used by the "
+                                  "one-shot LaunchAgent updater)")
 
     d = sub.add_parser("diagnose",
                        help="print a read-only diagnostics snapshot")

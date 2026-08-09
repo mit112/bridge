@@ -35,6 +35,12 @@ HANDOFF_DEST = CLAUDE_COMMANDS_DIR / "handoff.md"
 LAUNCHD_LABEL = "dev.bridge.panel"
 LAUNCHD_PLIST_NAME = f"{LAUNCHD_LABEL}.plist"
 
+# The one-shot self-updater runs under its OWN label, deliberately NOT a child
+# of the panel job: the panel restart (`kickstart -k dev.bridge.panel`) would
+# otherwise kill the updater mid-install.
+UPDATER_LABEL = "dev.bridge.updater"
+UPDATER_PLIST_NAME = f"{UPDATER_LABEL}.plist"
+
 # Bridge shipped under the author's personal reverse-DNS label before it was
 # public. Renaming the constant alone would strand that agent: it stays loaded
 # under the old label, races the new one for the port, and `--uninstall` reports
@@ -368,6 +374,59 @@ def _generate_plist(python_path: str, port: int, claude_dir: str | None) -> str:
         <string>{esc(log_path)}</string>
     </dict>
     </plist>""")
+
+
+def generate_updater_plist(python_path: str, target_sha: str) -> str:
+    """A ONE-SHOT LaunchAgent that runs `bridge update` for an exact SHA.
+
+    Distinct label and no KeepAlive: it is deliberately NOT a child of the panel
+    job, because `kickstart -k dev.bridge.panel` during the restart would kill
+    the updater mid-flight if it were. RunAtLoad fires it once on bootstrap; it
+    exits and stays exited."""
+    esc = _xml_escape
+    log_path = str(BRIDGE_DIR / "update.log")
+    return textwrap.dedent(f"""\
+    <?xml version="1.0" encoding="UTF-8"?>
+    <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+    <plist version="1.0">
+    <dict>
+        <key>Label</key>
+        <string>{UPDATER_LABEL}</string>
+        <key>ProgramArguments</key>
+        <array>
+            <string>{esc(python_path)}</string>
+            <string>-m</string>
+            <string>bridge</string>
+            <string>update</string>
+            <string>--sha</string>
+            <string>{esc(target_sha)}</string>
+        </array>
+        <key>RunAtLoad</key>
+        <true/>
+        <key>StandardOutPath</key>
+        <string>{esc(log_path)}</string>
+        <key>StandardErrorPath</key>
+        <string>{esc(log_path)}</string>
+    </dict>
+    </plist>""")
+
+
+def bootstrap_updater(target_sha: str) -> bool:
+    """Write and bootstrap the one-shot updater job."""
+    dest = LAUNCHD_AGENTS_DIR / UPDATER_PLIST_NAME
+    uid = os.getuid()
+    try:
+        LAUNCHD_AGENTS_DIR.mkdir(parents=True, exist_ok=True)
+        dest.write_text(generate_updater_plist(sys.executable, target_sha),
+                        encoding="utf-8")
+    except OSError:
+        return False
+    # Best-effort bootout of a prior run, then bootstrap fresh.
+    subprocess.run(["launchctl", "bootout", f"gui/{uid}/{UPDATER_LABEL}"],
+                   check=False, capture_output=True, text=True)
+    proc = subprocess.run(["launchctl", "bootstrap", f"gui/{uid}", str(dest)],
+                          check=False, capture_output=True, text=True)
+    return proc.returncode == 0
 
 
 def _wait_until_unloaded(uid: int, timeout: float = 5.0) -> None:
