@@ -393,7 +393,10 @@ def cmd_diagnose(args, cfg) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="bridge")
+    parser = argparse.ArgumentParser(
+        prog="bridge",
+        description="Bridge: a local control panel and CLI for Claude Code projects.",
+    )
     # `--version` carries the build SHA and install method so a bug report
     # names the exact commit. Imported lazily here (not at module top) so the
     # handoff/next fast path never pays for `bridge.update`'s imports;

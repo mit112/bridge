@@ -5,7 +5,7 @@ description = "A local control panel for Claude Code projects — see each proje
 readme = "README.md"
 requires-python = ">=3.13"
 authors = [{ name = "Mit Sheth" }]
-urls = { repository = "https://github.com/mit112/bridge" }
+urls = { repository = "https://github.com/mit112/bridge", issues = "https://github.com/mit112/bridge/issues", documentation = "https://github.com/mit112/bridge/blob/main/docs/ARCHITECTURE.md" }
 license = { text = "MIT" }
 keywords = ["claude-code", "claude", "developer-tools", "productivity"]
 classifiers = [

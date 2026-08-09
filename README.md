@@ -1,7 +1,18 @@
 # Bridge
 
-A local control panel for Claude Code projects — see each project's state, keep the
-next-session prompt with it, and launch the session from the card.
+[![CI](https://github.com/mit112/bridge/actions/workflows/ci.yml/badge.svg)](https://github.com/mit112/bridge/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Python 3.13](https://img.shields.io/badge/python-3.13-blue.svg)](https://www.python.org/downloads/release/python-3130/)
+
+<!-- TODO: capture hero screenshot of the panel -->
+![Bridge panel showing project cards with git status, handoff prompts, and live session state](docs/images/bridge-panel.png)
+
+Running several Claude Code sessions across several project directories loses
+the thread fast: which repo is mid-session, which one has a next step queued,
+which one has uncommitted changes sitting stale. Bridge is a local dashboard
+that answers those questions at a glance and gives every project a place to
+keep its next-session prompt, so picking up a session is a click instead of a
+memory exercise.
 
 **macOS only.** Bridge uses `osascript` to spawn Terminal windows and runs as a
 LaunchAgent. There is no Linux or Windows support.
@@ -22,6 +33,19 @@ bridge index
 bridge open
 ```
 
+### Homebrew (HEAD-only, tap setup in progress)
+
+```bash
+brew tap mit112/bridge
+brew install --HEAD bridge
+```
+
+Bridge has no tagged releases, so the formula only supports `--HEAD` — it
+builds from `main`, same as the `uv tool install` path above. `bridge update`
+detects a Homebrew install and runs `brew upgrade --fetch-HEAD mit112/bridge/bridge`
+for you instead of the `uv` path. **The `mit112/bridge` tap repository is still
+being set up**; until it's published, use the `uv tool install` method above.
+
 `bridge setup` walks you through everything: it finds your project directories,
 picks a port, optionally installs the `/handoff` slash command, and optionally
 sets up a LaunchAgent so the panel stays running.
@@ -36,6 +60,45 @@ sets up a LaunchAgent so the panel stays running.
 - **Launch bar** — pick model, effort, and permission mode per launch
 - **Live updates** — SSE-pushed liveness, git state, and diagnostics
 - **Scheduled runs** — set a time and Bridge launches the session for you
+- **Self-updating** — the panel tells you when it's behind `main`; one click
+  or `bridge update` installs it
+
+## Staying up to date
+
+Bridge tracks `main`. It checks for updates by asking GitHub for the latest
+commit with `git ls-remote` — no GitHub token is collected or stored, and no
+data about you is sent. When a newer commit is available the panel shows an
+"update available" banner (`<from-sha> → <to-sha>`); click **Update now**, or
+run:
+
+```bash
+bridge update
+```
+
+Either path installs the **exact** commit the check surfaced — never a
+floating ref. What "installs" means depends on how Bridge is running:
+
+- **`uv tool install`**: `bridge update` reinstalls that exact SHA and
+  verifies a freshly launched process reports it, rolling back to the
+  previous SHA on mismatch.
+- **Homebrew (`--HEAD`)**: `bridge update` runs
+  `brew upgrade --fetch-HEAD mit112/bridge/bridge`; there's no rollback, so a
+  mismatch prints the manual recovery command instead.
+- **Managed LaunchAgent** (installed via `bridge setup`): a one-shot updater
+  job does the install and then restarts the panel itself, so the panel comes
+  back on the new code without you doing anything.
+- **Plain `bridge serve`** (no LaunchAgent): the install happens, but nothing
+  restarts the running process for you — restart it by hand (`Ctrl-C`, then
+  `bridge serve` again) to pick up the new code.
+
+To disable update checks entirely, add to `~/.bridge/config.toml`:
+
+```toml
+[update]
+enabled = false
+```
+
+`bridge setup` prints this same note during first-time setup.
 
 ## Prerequisites
 

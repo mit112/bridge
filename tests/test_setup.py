@@ -466,3 +466,16 @@ def test_bootstrap_updater_writes_a_one_shot_plist_and_bootstraps_it(
     # Every launchctl call targets the updater label, never the panel label.
     for c in launchctl.calls:
         assert setup.LAUNCHD_LABEL not in " ".join(c)
+
+
+# ── update-check privacy note ────────────────────────────────────────────────
+
+
+def test_setup_prints_update_privacy_note(monkeypatch, capsys):
+    # Drive only the privacy-note helper, not the full interactive wizard.
+    setup._print_update_privacy_note()
+    out = capsys.readouterr().out.lower()
+    assert "github" in out
+    assert "update" in out
+    assert "enabled = false" in out
+    assert "no" in out and "token" in out  # no token stored

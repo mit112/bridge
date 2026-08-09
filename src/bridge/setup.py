@@ -690,6 +690,22 @@ def _generate_config(discovery_paths: list[str], port: int) -> str:
     return "\n".join(lines)
 
 
+def _print_update_privacy_note() -> None:
+    """State the one network call Bridge makes and how to turn it off."""
+    _banner("Update checks")
+    print(textwrap.dedent(f"""\
+      Bridge checks for updates by asking GitHub for the latest commit on
+      `main` (`git ls-remote`). It stores NO GitHub token and sends no data
+      about you. Updates install the exact commit surfaced -- never a floating
+      ref -- and always offer `bridge update` as a copy-able fallback.
+
+      To turn update checks off, add to {CONFIG_PATH}:
+
+        [update]
+        enabled = false"""))
+    print()
+
+
 def _step_config(discovery_paths: list[str], port: int) -> bool:
     """Write the config file. Returns True on success."""
     _banner("Config")
@@ -743,6 +759,9 @@ def run_setup() -> int:
 
     # 3. Write config
     _step_config(discovery_paths, port)
+
+    # 3b. Privacy note: the one network call Bridge makes, and the opt-out.
+    _print_update_privacy_note()
 
     # 4. LaunchAgent (generates plist with live paths)
     python_path = sys.executable
