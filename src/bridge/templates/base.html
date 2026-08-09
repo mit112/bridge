@@ -100,6 +100,42 @@
 <body>
   {% from "_shell.html" import app_nav %}
   <a class="skip-link" href="#main">Skip to content</a>
+  {# Persistent shell chrome, not page content: sits OUTSIDE `.shell`/`#main`,
+     so it is never touched by a router.js content swap. Server-rendered
+     `hidden`; update.js (Task 11) is the only thing that ever reveals it, and
+     only once `GET /api/diagnostics`'s `update.state` is "behind". The
+     "bridge update" fallback line ships unconditionally -- inside the hidden
+     markup -- so it is on the page (and in `view-source`) even before any
+     update is offered; the CLI command itself works independently of this
+     panel or its JS. #}
+  <div id="update-banner" class="update-banner" hidden role="status" aria-live="polite">
+    <span class="update-banner__text">
+      A newer Bridge is available (<code id="update-banner__from"></code> →
+      <code id="update-banner__to"></code>).
+    </span>
+    {# NOT `.btn--primary`: that class is reserved for a page's ONE primary
+       action (tests/test_workspace.py asserts `html.count("btn--primary") ==
+       1` for the launch/continue button), and this banner is shell chrome
+       present on every page, so a second `.btn--primary` here would both
+       break that count and misstate which action the page wants you to take. #}
+    <button type="button" class="btn" id="update-banner__apply">Update now</button>
+    <span class="update-banner__status" role="status" aria-live="polite" data-update-status></span>
+    <span class="update-banner__fallback">
+      or run <code id="update-banner__cmd">bridge update</code>
+      {# A dedicated id, not `[data-copy-target]`: that attribute is the
+         handoff "Copy prompt" affordance, and several tests assert its total
+         ABSENCE from a card/page with no queued handoff
+         (tests/test_api.py::test_a_card_with_no_handoff_shows_no_empty_affordance).
+         update.js still reuses copy.js's `window.bridgeCopy` helper for the
+         actual clipboard-write-with-fallback behaviour -- only the delegated
+         listener and its attribute are skipped. #}
+      <button type="button" class="btn btn--icon" id="update-banner__copy"
+              aria-label="Copy bridge update command" title="Copy command">⧉</button>
+      <span id="update-banner__copy-status" role="status" aria-live="polite"></span>
+    </span>
+    <button type="button" class="btn btn--icon" id="update-banner__dismiss"
+            aria-label="Dismiss update notice">×</button>
+  </div>
   <div class="shell">
     <aside class="sidebar">
       <div class="sidebar__head">
@@ -190,5 +226,10 @@
      navigation -- a page whose JS arrived that way would simply be inert.
      Scoped to `data-settings-*` elements, so it is a no-op everywhere else. #}
   <script src="/static/settings.js" defer></script>
+  {# Shell-level, like shell.js -- not a per-page script, so it registers no
+     `bridgePage.onEnter` hook and is not in test_shell_contract.py's
+     PAGE_SCRIPTS list. `#update-banner` lives outside `#main`, so it is never
+     detached by a content swap and needs no per-view re-initialization. #}
+  <script src="/static/update.js" defer></script>
 </body>
 </html>

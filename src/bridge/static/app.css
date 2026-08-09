@@ -2512,3 +2512,30 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
 @media (prefers-reduced-motion: reduce) {
   .live-changed { animation: none; }
 }
+
+/* --- Task 11: update banner -------------------------------------------------
+   Server-rendered `hidden`; update.js reveals it only when the checker
+   reports `state: "behind"`. Sits above `.shell`, not inside `#main`, so it
+   is chrome, not page content -- the same reason it uses `--handoff-*`
+   (an informational notice, the terracotta "something to look at" tint that
+   `.handoff` already carries) rather than `--risk-*`, which this repo
+   reserves for something actually wrong. */
+.update-banner {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-6);
+  background: var(--handoff-bg);
+  border-bottom: 1px solid var(--handoff-border);
+}
+.update-banner__text { flex: 1 1 auto; min-width: 16rem; }
+.update-banner code { font-family: var(--font-mono); font-size: .85em; }
+.update-banner__status { font-size: var(--text-sm); color: var(--handoff-fg); min-height: 1.2em; }
+.update-banner__fallback {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-sm);
+  color: var(--muted);
+}

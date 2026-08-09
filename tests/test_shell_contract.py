@@ -240,3 +240,20 @@ def test_router_exposes_the_fragment_parser_for_reuse():
         "router.js must expose its fragment parser as window.bridgeFragment "
         "so the live-refresh controller can reuse it"
     )
+
+
+def test_update_banner_scaffold_and_copy_command_ship_in_base():
+    """The banner's scaffold is server-rendered (hidden) on every page load,
+    not injected by JS -- so it is present in the raw HTML even before
+    update.js ever runs, exactly like `test_settings_js_is_loaded_from_base`
+    checks a literal `<script src>` tag rather than a filename anywhere in the
+    file. Mirrors this module's own read-the-template convention rather than
+    the `client`-fixture, request-driven style used elsewhere in the suite
+    (e.g. tests/test_update_token.py) -- this file asserts against source,
+    never against a live app.
+    """
+    html = (TEMPLATES / "base.html").read_text()
+    assert 'id="update-banner"' in html            # present but hidden until behind
+    assert "bridge update" in html                  # copy-able fallback command
+    assert 'name="bridge-update-token"' in html     # token available to the JS
+    assert '<script src="/static/update.js"' in html

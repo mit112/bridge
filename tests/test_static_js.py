@@ -3816,3 +3816,329 @@ def test_restore_never_clobbers_text_the_user_is_already_mid_typing(tmp_path):
     window.bridgePage.enter();
     """, preload={"bridge.compose.compose-1": "a stale draft from before"})
     assert got["fieldValue"] == "the user is still typing this"
+
+
+# --- Task 11: the update banner ----------------------------------------------
+#
+# `update.js` polls `GET /api/diagnostics` once at load (setInterval is
+# stubbed to a no-op here, since only ONE tick's worth of behaviour is under
+# test) and shows `#update-banner` only when `update.state === "behind"`.
+# Dismissal is stored in `localStorage` keyed by the OFFERED sha, and the
+# "Update now" button POSTs the exact sha to `/api/update` with the per-install
+# bearer token. This proves the LOGIC (which sha is dismissed, what the POST
+# carries, whether the banner shows/hides) rather than pixels -- the DOM shim
+# has no layout to inspect anyway.
+#
+# Two `setImmediate` ticks do the waiting: the first lets the initial
+# `fetch("/api/diagnostics")` microtask chain (stubbed to a resolved promise,
+# so no real I/O delay) settle and `render()` run; the second lets whatever
+# the harness fires inside the first tick (a dismiss or apply click, each its
+# own promise chain) settle before the result is printed. Node flushes every
+# pending microtask before the next macrotask, so nesting `setImmediate` this
+# way is sufficient without any real timers.
+
+UPDATE_JS = Path(__file__).resolve().parent.parent / "src" / "bridge" / "static" / "update.js"
+
+UPDATE_HARNESS = """
+globalThis.window = globalThis;
+
+const storage = Object.assign({}, PRELOAD);
+globalThis.localStorage = {
+  getItem: (k) => (Object.prototype.hasOwnProperty.call(storage, k) ? storage[k] : null),
+  setItem: (k, v) => { storage[k] = String(v); },
+  removeItem: (k) => { delete storage[k]; },
+};
+
+let dismissHandler = null;
+let applyHandler = null;
+
+const statusEl = { textContent: "" };
+const banner = {
+  hidden: true,
+  dataset: {},
+  querySelector(sel) { return sel === "[data-update-status]" ? statusEl : null; },
+};
+const applyButton = {
+  disabled: false,
+  attrs: {},
+  addEventListener(type, fn) { if (type === "click") applyHandler = fn; },
+  setAttribute(n, v) { this.attrs[n] = v; },
+  removeAttribute(n) { delete this.attrs[n]; },
+};
+const dismissButton = {
+  addEventListener(type, fn) { if (type === "click") dismissHandler = fn; },
+};
+const fromEl = { textContent: "" };
+const toEl = { textContent: "" };
+const tokenMeta = { content: TOKEN };
+
+let copyHandler = null;
+const copyButton = {
+  addEventListener(type, fn) { if (type === "click") copyHandler = fn; },
+};
+const copyStatusEl = { textContent: "" };
+const cmdEl = { textContent: "bridge update" };
+const bridgeCopyCalls = [];
+window.bridgeCopy = (text) => {
+  bridgeCopyCalls.push(text);
+  return Promise.resolve("✓ Copied to clipboard");
+};
+
+const els = {
+  "update-banner": banner,
+  "update-banner__apply": applyButton,
+  "update-banner__dismiss": dismissButton,
+  "update-banner__from": fromEl,
+  "update-banner__to": toEl,
+  "update-banner__copy": copyButton,
+  "update-banner__copy-status": copyStatusEl,
+  "update-banner__cmd": cmdEl,
+};
+globalThis.document = {
+  getElementById: (id) => els[id] ?? null,
+  querySelector: (sel) => (sel === 'meta[name="bridge-update-token"]' ? tokenMeta : null),
+};
+
+globalThis.confirm = () => CONFIRM_RESULT;
+window.confirm = globalThis.confirm;
+
+const updateCalls = [];
+globalThis.fetch = (url, init) => {
+  if (url === "/api/diagnostics") {
+    return Promise.resolve({ ok: true, json: async () => ({ update: DIAG_UPDATE }) });
+  }
+  if (url === "/api/update") {
+    updateCalls.push({ url, headers: init.headers, body: JSON.parse(init.body) });
+    return Promise.resolve(POST_RESPONSE);
+  }
+  return Promise.reject(new Error("unexpected fetch: " + url));
+};
+
+globalThis.setInterval = () => 0;
+console.error = () => {};
+
+const fs = require("fs");
+eval(fs.readFileSync(process.argv[2], "utf8"));
+
+setImmediate(() => {
+  const afterPoll = { hidden: banner.hidden, from: fromEl.textContent, to: toEl.textContent };
+
+  if (DISMISS) dismissHandler({});
+  const afterDismiss = { hidden: banner.hidden };
+
+  if (APPLY) applyHandler({});
+  if (COPY) copyHandler({});
+
+  setImmediate(() => {
+    console.log(JSON.stringify({
+      afterPoll,
+      afterDismiss,
+      updateCalls,
+      status: statusEl.textContent,
+      hiddenAfterApply: banner.hidden,
+      applyDisabled: applyButton.disabled,
+      bridgeCopyCalls,
+      copyStatus: copyStatusEl.textContent,
+    }));
+  });
+});
+"""
+
+
+def _run_update_banner(
+    tmp_path,
+    *,
+    diag_update,
+    preload=None,
+    token="install-token-123",
+    confirm_result=True,
+    dismiss=False,
+    apply=False,
+    copy=False,
+    post_http_ok=True,
+    post_body=None,
+):
+    if post_body is None:
+        post_body = {"ok": True}
+    post_response_js = "{ ok: %s, status: %d, json: async () => (%s) }" % (
+        "true" if post_http_ok else "false",
+        200 if post_http_ok else 409,
+        json.dumps(post_body),
+    )
+    script = (
+        UPDATE_HARNESS
+        .replace("DIAG_UPDATE", json.dumps(diag_update))
+        .replace("PRELOAD", json.dumps(preload or {}))
+        .replace("TOKEN", json.dumps(token))
+        .replace("CONFIRM_RESULT", "true" if confirm_result else "false")
+        .replace("DISMISS", "true" if dismiss else "false")
+        .replace("APPLY", "true" if apply else "false")
+        .replace("COPY", "true" if copy else "false")
+        .replace("POST_RESPONSE", post_response_js)
+    )
+    harness = tmp_path / "update_harness.js"
+    harness.write_text(script)
+    proc = subprocess.run([_node(), str(harness), str(UPDATE_JS)], capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout)
+
+
+SHA_A = "1111111111111111111111111111111111111111"
+SHA_B = "2222222222222222222222222222222222222222"
+INSTALLED = "abcdefabcdefabcdefabcdefabcdefabcdefabcd"
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_update_js_keys_dismissal_by_sha():
+    """Static companion to the behavioural tests below -- keeps the literal
+    tokens the brief calls out grep-able even if the harness logic changes."""
+    js = UPDATE_JS.read_text()
+    assert "bridge:update-dismissed:" in js
+    assert "latest_sha" in js
+    assert "/api/update" in js
+    assert "Authorization" in js and "Bearer" in js
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_banner_stays_hidden_when_there_is_nothing_to_offer(tmp_path):
+    got = _run_update_banner(tmp_path, diag_update=None)
+    assert got["afterPoll"]["hidden"] is True
+
+    got = _run_update_banner(
+        tmp_path,
+        diag_update={"state": "current", "installed_sha": INSTALLED,
+                     "latest_sha": None, "checked_at": None, "error": None},
+    )
+    assert got["afterPoll"]["hidden"] is True
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_banner_shows_the_truncated_shas_only_when_state_is_behind(tmp_path):
+    got = _run_update_banner(
+        tmp_path,
+        diag_update={"state": "behind", "installed_sha": INSTALLED,
+                     "latest_sha": SHA_A, "checked_at": "now", "error": None},
+    )
+    assert got["afterPoll"]["hidden"] is False
+    assert got["afterPoll"]["from"] == INSTALLED[:12]
+    assert got["afterPoll"]["to"] == SHA_A[:12]
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_dismissing_one_sha_hides_the_banner_for_that_offer(tmp_path):
+    got = _run_update_banner(
+        tmp_path,
+        diag_update={"state": "behind", "installed_sha": INSTALLED,
+                     "latest_sha": SHA_A, "checked_at": "now", "error": None},
+        dismiss=True,
+    )
+    assert got["afterPoll"]["hidden"] is False, "banner must be visible before it can be dismissed"
+    assert got["afterDismiss"]["hidden"] is True
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_a_dismissal_recorded_for_sha_a_never_suppresses_sha_b(tmp_path):
+    """The exact regression this task exists to prevent: a stale
+    `bridge:update-dismissed:<sha>` entry from a PRIOR offer must not silence
+    a later, different commit the checker now reports as `behind`."""
+    dismissed_key = "bridge:update-dismissed:" + SHA_A
+
+    # A fresh load that still offers the SAME sha A stays suppressed...
+    got_same = _run_update_banner(
+        tmp_path,
+        diag_update={"state": "behind", "installed_sha": INSTALLED,
+                     "latest_sha": SHA_A, "checked_at": "now", "error": None},
+        preload={dismissed_key: "1"},
+    )
+    assert got_same["afterPoll"]["hidden"] is True
+
+    # ...but a fresh load offering a DIFFERENT sha B must show, even though
+    # sha A's dismissal is still sitting in localStorage.
+    got_other = _run_update_banner(
+        tmp_path,
+        diag_update={"state": "behind", "installed_sha": INSTALLED,
+                     "latest_sha": SHA_B, "checked_at": "now", "error": None},
+        preload={dismissed_key: "1"},
+    )
+    assert got_other["afterPoll"]["hidden"] is False
+    assert got_other["afterPoll"]["to"] == SHA_B[:12]
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_update_now_posts_the_offered_sha_with_the_bearer_token(tmp_path):
+    got = _run_update_banner(
+        tmp_path,
+        diag_update={"state": "behind", "installed_sha": INSTALLED,
+                     "latest_sha": SHA_A, "checked_at": "now", "error": None},
+        token="the-install-token",
+        apply=True,
+    )
+    assert len(got["updateCalls"]) == 1
+    call = got["updateCalls"][0]
+    assert call["url"] == "/api/update"
+    assert call["headers"]["Authorization"] == "Bearer the-install-token"
+    assert call["body"] == {"target_sha": SHA_A}
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_copy_fallback_uses_the_shared_bridge_copy_helper_not_a_new_clipboard_path(tmp_path):
+    """The `bridge update` command is copy-able independently of whether the
+    one-click button ever works -- and reuses `window.bridgeCopy` (copy.js)
+    rather than a second clipboard implementation, so it gets the exact same
+    select-and-tell fallback "Copy prompt" already relies on."""
+    got = _run_update_banner(
+        tmp_path,
+        diag_update={"state": "behind", "installed_sha": INSTALLED,
+                     "latest_sha": SHA_A, "checked_at": "now", "error": None},
+        copy=True,
+    )
+    assert got["bridgeCopyCalls"] == ["bridge update"]
+    assert got["copyStatus"] == "✓ Copied to clipboard"
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_declining_the_confirmation_sends_no_request(tmp_path):
+    got = _run_update_banner(
+        tmp_path,
+        diag_update={"state": "behind", "installed_sha": INSTALLED,
+                     "latest_sha": SHA_A, "checked_at": "now", "error": None},
+        apply=True,
+        confirm_result=False,
+    )
+    assert got["updateCalls"] == []
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_a_failed_update_stays_on_screen_and_retryable_with_its_error_visible(tmp_path):
+    """A failed apply must not dismiss itself -- the button stays usable for a
+    retry, and the failure (plus the `bridge update` fallback) is on screen
+    rather than in a transient alert only the clicking user ever saw."""
+    got = _run_update_banner(
+        tmp_path,
+        diag_update={"state": "behind", "installed_sha": INSTALLED,
+                     "latest_sha": SHA_A, "checked_at": "now", "error": None},
+        apply=True,
+        post_http_ok=True,
+        post_body={"ok": False, "error": "git fetch failed"},
+    )
+    assert got["hiddenAfterApply"] is False, "a failed update must stay retryable, not hide itself"
+    assert "git fetch failed" in got["status"]
+    assert "bridge update" in got["status"]
+    assert got["applyDisabled"] is False, "the button must re-enable so the user can retry"
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_a_successful_update_announces_success_without_hiding_the_banner(tmp_path):
+    """The panel is about to restart -- there is no follow-up snapshot that
+    will ever tell this page the update landed, so the banner is left showing
+    the in-progress message rather than silently vanishing."""
+    got = _run_update_banner(
+        tmp_path,
+        diag_update={"state": "behind", "installed_sha": INSTALLED,
+                     "latest_sha": SHA_A, "checked_at": "now", "error": None},
+        apply=True,
+        post_http_ok=True,
+        post_body={"ok": True},
+    )
+    assert "Updating" in got["status"]
+    assert got["hiddenAfterApply"] is False
