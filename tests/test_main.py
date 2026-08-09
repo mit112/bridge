@@ -304,3 +304,57 @@ def test_serve_starts_the_in_process_refresh_worker(serve_cfg, monkeypatch):
     assert main(["serve"]) == 0
     assert len(calls) == 2
     assert isinstance(calls[1], threading.Event)
+
+
+def test_serve_starts_the_update_checker_on_its_own_thread(serve_cfg, monkeypatch):
+    """The checker must run on a thread separate from the 15s refresh loop --
+    a hung `git ls-remote` must never stall indexing or shutdown. Confirmed
+    here by checking the update thread's `run_periodic` is a *different*
+    bound method than the refresh coordinator's."""
+    from bridge import __main__ as entry
+
+    seen = {}
+    real_thread = entry.threading.Thread
+
+    def spy(*a, **kw):
+        target = kw.get("target")
+        owner = getattr(target, "__self__", None)
+        if owner is not None and type(owner).__name__ == "UpdateChecker":
+            seen["update_checker"] = owner
+            seen["stop_event"] = kw.get("args", ())[0] if kw.get("args") else None
+        return real_thread(*a, **kw)
+
+    monkeypatch.setattr(entry.threading, "Thread", spy)
+    assert main(["serve"]) == 0
+    assert "update_checker" in seen, "UpdateChecker.run_periodic must run on its own thread"
+    assert isinstance(seen["stop_event"], threading.Event)
+
+
+def test_serve_respects_update_check_disabled(tmp_path, monkeypatch):
+    """`Config.update_check_enabled=False` must construct a disabled checker
+    -- no network call is ever made by the worker thread."""
+    from dataclasses import replace
+
+    from bridge import __main__ as entry
+    from bridge.config import load
+
+    launches = tmp_path / "launches"
+    launches.mkdir()
+    cfg = load({"db_path": tmp_path / "s.db", "spool_dir": tmp_path / "spool",
+                "launches_dir": launches,
+                "claude_projects_dir": tmp_path / "projects"})
+    disabled_cfg = replace(cfg, update_check_enabled=False)
+    monkeypatch.setattr(entry, "load", lambda overrides: disabled_cfg)
+    monkeypatch.setattr("uvicorn.run", lambda app, **kw: None)
+
+    seen = {}
+    real_init = entry.UpdateChecker.__init__
+
+    def spy_init(self, *a, **kw):
+        seen["enabled"] = kw.get("enabled")
+        real_init(self, *a, **kw)
+
+    monkeypatch.setattr(entry.UpdateChecker, "__init__", spy_init)
+
+    assert main(["serve"]) == 0
+    assert seen["enabled"] is False

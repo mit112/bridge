@@ -27,7 +27,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, field_validator, model_validator
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from bridge import __version__, agents, hooks, launcher, schedspool, spool
+from bridge import __version__, agents, hooks, launcher, schedspool, spool, update
 from bridge.cards import (
     FIVE_HOURS,
     GitProbeCache,
@@ -514,6 +514,7 @@ def create_app(
     store: Store, cfg: Config, launch_fn: LaunchFn = launcher.launch,
     refresh_coordinator: RefreshCoordinator | None = None,
     notifier: ChangeNotifier | None = None,
+    update_checker: update.UpdateChecker | None = None,
 ) -> FastAPI:
     app = FastAPI(title="Bridge")
 
@@ -590,6 +591,12 @@ def create_app(
     if notifier is None:
         notifier = ChangeNotifier()
     app.state.notifier = notifier
+
+    if update_checker is None:
+        # A disabled checker never touches the network, so route tests and a
+        # panel built directly both get a valid `update` object for free.
+        update_checker = update.UpdateChecker(enabled=cfg.update_check_enabled)
+    app.state.update_checker = update_checker
 
     # Drain before serving. Under the manual-`bridge serve` uptime model this is
     # the main way handoffs arrive, so it runs on every boot.
@@ -838,6 +845,7 @@ def create_app(
             "live_source": live.source,
             "claude_version": live.version,
             "queued_handoffs": store.queued_handoff_count(),
+            "update": asdict(update_checker.snapshot()),
         }
 
     def _attention_items(diag: dict) -> list[dict]:

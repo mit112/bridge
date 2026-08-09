@@ -19,6 +19,7 @@ from bridge.indexer import reindex
 from bridge.notify import ChangeNotifier
 from bridge.refresh import RefreshCoordinator
 from bridge.store import SCHEDULED_RUN_RETENTION_DAYS, Store, now_epoch
+from bridge.update import UpdateChecker
 from bridge.watcher import FileWatcher
 
 log = logging.getLogger(__name__)
@@ -173,14 +174,31 @@ def run_db_command(argv: list[str] | None = None) -> int:
     )
     t.start()
 
+    # On its OWN thread, separate from the 15s refresh loop: `git ls-remote`
+    # can hang on a bad network, and that must never stall indexing or
+    # shutdown -- see `UpdateChecker`'s docstring.
+    update_checker = UpdateChecker(enabled=cfg.update_check_enabled)
+    update_thread = threading.Thread(
+        target=update_checker.run_periodic, args=(stop,), daemon=True
+    )
+    update_thread.start()
+
     try:
         uvicorn.run(
             create_app(store, cfg, refresh_coordinator=refresh_coordinator,
-                       notifier=notifier),
+                       notifier=notifier, update_checker=update_checker),
             host="127.0.0.1", port=cfg.port,
         )
     finally:
         watcher.stop()
+        # `update_thread` shares `stop` with the scheduler/refresh threads, but
+        # `_shutdown_scheduler` (which sets it) hasn't run yet -- set it here
+        # too so this join can actually observe the signal instead of just
+        # blocking for the full timeout. A bounded join keeps shutdown from
+        # waiting on a mid-flight `git ls-remote`; the thread is a daemon, so
+        # the process still exits even if this times out.
+        stop.set()
+        update_thread.join(timeout=5.0)
         _shutdown_scheduler(stop, t, store, refresh_thread, watcher=watcher)
     return 0
 
