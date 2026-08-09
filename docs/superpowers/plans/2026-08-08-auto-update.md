@@ -1062,6 +1062,72 @@ git commit -m "feat: bridge update subcommand and SHA/method in version+status"
 - Produces:
   - `class UpdateChecker` with `__init__(self, *, enabled: bool, interval_s: float = 1800.0, resolve_fn=resolve_remote_sha)`, `check_once() -> UpdateState`, `snapshot() -> UpdateState`, `run_periodic(stop_event: threading.Event) -> None`.
   - `Config.update_check_enabled: bool` (default `True`).
+  - `_ensure_cache_repo(timeout: float = 8.0) -> Path | None` — best-effort `git init --bare` + `git fetch <REPO_URL> main` into `~/.bridge/update/repo.git`; returns the repo path if usable else `None`, never raises. **`_is_ancestor` (Task 3) is rewired to call it** so the `behind` ancestry check actually has objects to reason over. Without this the cache repo is never populated and `classify` can never return `behind` — the nudge would be dead in production (caught in Task 3 review).
+
+**Wire the ancestry cache repo FIRST (Steps A1–A3), then build the checker (Steps 1–5).**
+
+- [ ] **Step A1: Failing test for the fail-closed guard**
+
+```python
+# add to tests/test_update_checker.py
+def test_ensure_cache_repo_none_without_git(monkeypatch):
+    monkeypatch.setattr(U.shutil, "which", lambda _: None)
+    assert U._ensure_cache_repo() is None
+```
+
+Run: `uv run pytest tests/test_update_checker.py::test_ensure_cache_repo_none_without_git -v`
+Expected: FAIL — `AttributeError: ... '_ensure_cache_repo'`.
+
+- [ ] **Step A2: Add `_ensure_cache_repo` and route `_is_ancestor` through it (edit `src/bridge/update.py`)**
+
+Add this function next to `_is_ancestor`:
+
+```python
+def _ensure_cache_repo(timeout: float = 8.0) -> Path | None:
+    """Best-effort: create the bare ancestry cache and fetch `main` into it so
+    `_is_ancestor` has objects to reason over. Returns the repo path if usable,
+    else None. Never raises -- a failed fetch just leaves ancestry indeterminate,
+    which classify treats as fail-closed `unknown`. Runs only on the bounded
+    update-check worker, so a slow fetch never stalls the refresh loop."""
+    git = shutil.which("git")
+    if git is None:
+        return None
+    repo = _update_cache_repo()
+    try:
+        if not (repo / "HEAD").exists():
+            repo.mkdir(parents=True, exist_ok=True)
+            subprocess.run([git, "init", "--quiet", "--bare", str(repo)],
+                           capture_output=True, text=True, check=False, timeout=timeout)
+        subprocess.run([git, "-C", str(repo), "fetch", "--quiet", REPO_URL,
+                        "+refs/heads/main:refs/heads/main"],
+                       capture_output=True, text=True, check=False, timeout=timeout)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+    return repo if (repo / "HEAD").exists() else None
+```
+
+Then change `_is_ancestor`'s guard to populate before checking — replace:
+
+```python
+    git = shutil.which("git")
+    repo = _update_cache_repo()
+    if git is None or not repo.is_dir():
+        return None
+```
+
+with:
+
+```python
+    git = shutil.which("git")
+    repo = _ensure_cache_repo()
+    if git is None or repo is None:
+        return None
+```
+
+- [ ] **Step A3: Run the new test + the full update suite (no regression)**
+
+Run: `uv run pytest tests/test_update_checker.py::test_ensure_cache_repo_none_without_git tests/test_update*.py -v`
+Expected: the new test passes; the Task 3 classify tests still inject `is_ancestor=` (never hit the network) and the checker tests monkeypatch `classify` (never hit it either), so the whole suite stays green with no network access.
 
 - [ ] **Step 1: Write the failing test**
 
