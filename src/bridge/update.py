@@ -353,13 +353,26 @@ def run_update(target_sha: str) -> UpdateResult:
         if _verify_fresh_pid(target_sha):
             return result(True, code, None, previous=previous)
         # Mismatch: the freshly installed process does not report target_sha.
-        if method == "uv" and previous is not None:
+        if method == "uv":
+            if previous is None:
+                return result(False, code,
+                              "post-install SHA mismatch and no previous SHA to "
+                              "roll back to; reinstall manually: uv tool install "
+                              "--force --reinstall git+https://github.com/mit112/"
+                              "bridge@<a known good sha>",
+                              previous=previous)
             rb = _run_installer(_install_cmd("uv", previous),
                                 _install_env("uv"), log_path)
-            return result(False, code,
-                          f"post-install SHA mismatch; rolled back to {previous[:12]} "
-                          f"(rollback exit {rb})",
-                          rolled_back=(rb == 0), previous=previous)
+            if rb == 0:
+                msg = (f"post-install SHA mismatch; rolled back to "
+                      f"{previous[:12]}")
+            else:
+                msg = (f"post-install SHA mismatch; rollback attempt FAILED "
+                      f"(rollback exit {rb}); still on the broken install -- "
+                      f"reinstall manually: uv tool install --force --reinstall "
+                      f"git+https://github.com/mit112/bridge@{previous}")
+            return result(False, code, msg, rolled_back=(rb == 0),
+                          previous=previous)
         return result(False, code,
                       "post-install SHA mismatch; brew rollback is unsupported -- "
                       "recover with: brew uninstall bridge && brew install --HEAD "

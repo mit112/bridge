@@ -51,11 +51,50 @@ def test_run_update_refuses_dev(monkeypatch, tmp_path):
 
 
 def test_run_update_rejects_concurrent(monkeypatch, tmp_path):
-    _stub(monkeypatch, tmp_path)
+    calls = _stub(monkeypatch, tmp_path)
     fd = U._acquire_lock()
     try:
         res = U.run_update("b" * 40)
         assert res.ok is False
         assert "in progress" in (res.error or "").lower()
+        assert calls == []          # installer must never run on the held-lock path
     finally:
         U._release_lock(fd)
+
+
+def test_run_update_uv_no_previous_sha_message_not_brew(monkeypatch, tmp_path):
+    monkeypatch.setattr(U, "_update_dir", lambda: tmp_path)
+    monkeypatch.setattr(U, "install_method", lambda: "uv")
+    monkeypatch.setattr(U, "installed_sha", lambda: None)
+    calls = []
+    def fake_installer(cmd, env, log_path):
+        calls.append(cmd)
+        return 0
+    monkeypatch.setattr(U, "_run_installer", fake_installer)
+    monkeypatch.setattr(U, "_verify_fresh_pid", lambda sha: False)
+    res = U.run_update("b" * 40)
+    assert res.ok is False
+    assert res.rolled_back is False
+    assert res.previous_sha is None
+    assert "brew" not in (res.error or "").lower()
+    assert "uv" in (res.error or "").lower()
+    assert len(calls) == 1  # no rollback attempted -- nothing to roll back to
+
+
+def test_run_update_uv_rollback_failure_message(monkeypatch, tmp_path):
+    monkeypatch.setattr(U, "_update_dir", lambda: tmp_path)
+    monkeypatch.setattr(U, "install_method", lambda: "uv")
+    monkeypatch.setattr(U, "installed_sha", lambda: "a" * 40)
+    calls = []
+    def fake_installer(cmd, env, log_path):
+        calls.append(cmd)
+        # first call installs the target (succeeds); second call is the
+        # rollback reinstall of the previous SHA, which fails.
+        return 0 if len(calls) == 1 else 7
+    monkeypatch.setattr(U, "_run_installer", fake_installer)
+    monkeypatch.setattr(U, "_verify_fresh_pid", lambda sha: False)
+    res = U.run_update("b" * 40)
+    assert res.ok is False
+    assert res.rolled_back is False        # the rollback attempt itself failed
+    assert "7" in (res.error or "")
+    assert "fail" in (res.error or "").lower()
