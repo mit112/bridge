@@ -108,7 +108,9 @@
      markup -- so it is on the page (and in `view-source`) even before any
      update is offered; the CLI command itself works independently of this
      panel or its JS. #}
-  <div id="update-banner" class="update-banner" hidden role="status" aria-live="polite">
+  {# No live region on this wrapper: the inner status spans below are the live
+     regions, and a nested `aria-live` here would double-announce every update. #}
+  <div id="update-banner" class="update-banner" hidden>
     <span class="update-banner__text">
       A newer Bridge is available (<code id="update-banner__from"></code> →
       <code id="update-banner__to"></code>).

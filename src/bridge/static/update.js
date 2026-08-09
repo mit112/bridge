@@ -135,7 +135,7 @@
             return;
           }
           if (result.httpOk && result.data && result.data.ok) {
-            announce("✓ Updating — the panel will restart shortly");
+            announce("✓ Update installed — restart the panel to apply.");
             return;
           }
           var message = (result.data && result.data.error) || "unknown error";

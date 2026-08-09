@@ -4132,9 +4132,11 @@ def test_a_failed_update_stays_on_screen_and_retryable_with_its_error_visible(tm
 
 @pytest.mark.skipif(_node() is None, reason="node is not installed")
 def test_a_successful_update_announces_success_without_hiding_the_banner(tmp_path):
-    """The panel is about to restart -- there is no follow-up snapshot that
-    will ever tell this page the update landed, so the banner is left showing
-    the in-progress message rather than silently vanishing."""
+    """This synchronous-success branch is the UNMANAGED (`bridge serve`) path:
+    the install landed but this in-process panel does NOT auto-restart, so the
+    copy must tell the user to restart it -- not the false "the panel will
+    restart shortly". The banner stays visible carrying that instruction rather
+    than silently vanishing."""
     got = _run_update_banner(
         tmp_path,
         diag_update={"state": "behind", "installed_sha": INSTALLED,
@@ -4143,7 +4145,9 @@ def test_a_successful_update_announces_success_without_hiding_the_banner(tmp_pat
         post_http_ok=True,
         post_body={"ok": True},
     )
-    assert "Updating" in got["status"]
+    assert "Update installed" in got["status"]
+    assert "restart the panel" in got["status"]
+    assert "restart shortly" not in got["status"]
     assert got["hiddenAfterApply"] is False
 
 

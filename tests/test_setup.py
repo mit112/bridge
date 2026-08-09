@@ -223,6 +223,25 @@ def test_generate_plist_without_claude_still_produces_valid_path(home):
     assert "/usr/bin" in xml
 
 
+def test_updater_plist_carries_the_same_launchd_path_as_the_panel(home):
+    """launchd hands out a minimal PATH; the detached one-shot updater invokes
+    `uv`/`brew`/`bridge` by bare name, so it needs the same EnvironmentVariables
+    PATH block the panel plist gets or the install can't find its tools.
+    Compared against `_generate_plist`'s PATH so the two can't silently diverge
+    again (the bug this test exists to prevent)."""
+    import plistlib
+
+    updater = plistlib.loads(
+        setup.generate_updater_plist("/venv/bin/python", "b" * 40).encode())
+    panel = plistlib.loads(
+        setup._generate_plist("/venv/bin/python", 8787, None).encode())
+
+    assert "EnvironmentVariables" in updater
+    assert "PATH" in updater["EnvironmentVariables"]
+    assert (updater["EnvironmentVariables"]["PATH"]
+            == panel["EnvironmentVariables"]["PATH"])
+
+
 # ── config generation ────────────────────────────────────────────────────────
 
 

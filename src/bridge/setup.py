@@ -295,15 +295,14 @@ def _step_port(configured_port: int | None = None) -> int:
 # ── Step: LaunchAgent ───────────────────────────────────────────────────────
 
 
-def _generate_plist(python_path: str, port: int, claude_dir: str | None) -> str:
-    """Generate the LaunchAgent plist XML with live-resolved paths.
+def _launchd_path(claude_dir: str | None) -> str:
+    """The PATH a Bridge launchd job needs, since launchd hands out a minimal one.
 
-    Args:
-        python_path: Absolute path to the Python interpreter that runs bridge.
-        port: The port the server will listen on.
-        claude_dir: Directory containing the `claude` binary, or None.
+    The panel spawns `claude`; the one-shot updater invokes `uv`/`brew`/`bridge`
+    by bare name -- both need the user's real bin dirs spelled out. Shared by the
+    two plist generators so their PATH can never silently drift apart.
+    `claude_dir` is prepended when known (only the panel needs it).
     """
-    # Build PATH: include claude's directory plus standard system dirs.
     path_parts = []
     if claude_dir:
         path_parts.append(claude_dir)
@@ -319,7 +318,19 @@ def _generate_plist(python_path: str, port: int, claude_dir: str | None) -> str:
     ]:
         if Path(d).is_dir() and d not in path_parts:
             path_parts.append(d)
-    path_str = ":".join(path_parts)
+    return ":".join(path_parts)
+
+
+def _generate_plist(python_path: str, port: int, claude_dir: str | None) -> str:
+    """Generate the LaunchAgent plist XML with live-resolved paths.
+
+    Args:
+        python_path: Absolute path to the Python interpreter that runs bridge.
+        port: The port the server will listen on.
+        claude_dir: Directory containing the `claude` binary, or None.
+    """
+    # Build PATH: include claude's directory plus standard system dirs.
+    path_str = _launchd_path(claude_dir)
 
     # Escape XML special chars in paths
     log_path = str(BRIDGE_DIR / "serve.log")
@@ -385,6 +396,10 @@ def generate_updater_plist(python_path: str, target_sha: str) -> str:
     exits and stays exited."""
     esc = _xml_escape
     log_path = str(BRIDGE_DIR / "update.log")
+    # launchd hands out a minimal PATH, so a detached updater invoking `uv`,
+    # `brew`, and `bridge` by bare name would find none of them. Same PATH block
+    # (and construction) as the panel plist, so the two cannot drift apart.
+    path_str = _launchd_path(None)
     return textwrap.dedent(f"""\
     <?xml version="1.0" encoding="UTF-8"?>
     <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -402,6 +417,11 @@ def generate_updater_plist(python_path: str, target_sha: str) -> str:
             <string>{esc(target_sha)}</string>
             <string>--via-launchagent</string>
         </array>
+        <key>EnvironmentVariables</key>
+        <dict>
+            <key>PATH</key>
+            <string>{esc(path_str)}</string>
+        </dict>
         <key>RunAtLoad</key>
         <true/>
         <key>StandardOutPath</key>

@@ -65,6 +65,33 @@ def test_via_launchagent_writes_state_even_when_rebootstrap_raises(monkeypatch, 
     assert res.error and "re-bootstrap" in res.error
 
 
+def test_via_launchagent_writes_state_when_the_installer_binary_is_absent(
+        monkeypatch, tmp_path):
+    """End-to-end of both blockers: a missing `uv`/`brew` makes the installer
+    raise FileNotFoundError, but run_update catches it and returns ok=False, so
+    the launchagent flow still writes the reconnect state (banner resolves to
+    "stale" instead of hanging on "Updating…") and never re-bootstraps the panel
+    on a failed install."""
+    monkeypatch.setattr(U, "_update_dir", lambda: tmp_path)
+    monkeypatch.setattr(U, "install_method", lambda: "uv")
+    monkeypatch.setattr(U, "installed_sha", lambda: "a" * 40)
+
+    def boom(cmd, env, log_path):
+        raise FileNotFoundError(2, "No such file or directory", "uv")
+
+    monkeypatch.setattr(U, "_run_installer", boom)
+
+    def must_not_restart():
+        raise AssertionError("must not re-bootstrap the panel on a failed install")
+
+    monkeypatch.setattr(U, "_rebootstrap_panel", must_not_restart)
+    res = U.run_update_via_launchagent("b" * 40)  # must not raise, must not hang
+    assert res.ok is False
+    st = U.read_update_state()
+    assert st is not None
+    assert st.state == "stale"
+
+
 def test_rebootstrap_panel_calls_launchd_only_non_interactively(monkeypatch):
     """The one-shot updater runs headless: `run_launchd_only` must not reach an
     interactive `_ask_yn` (which `sys.exit()`s on EOF in a launchd job), so the

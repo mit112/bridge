@@ -192,6 +192,27 @@ def test_unmanaged_serve_keeps_the_in_process_run_update(tmp_path, monkeypatch):
     store.close()
 
 
+def test_unmanaged_installer_binary_absent_returns_ok_false_not_500(
+        tmp_path, monkeypatch):
+    """`run_update` is the transaction boundary: if `uv`/`brew` is absent the
+    installer raises FileNotFoundError, which must surface as a clean
+    UpdateResult JSON with ok=false -- not escape the route as a 500 traceback.
+    (TestClient re-raises server exceptions, so a leaked error fails this test.)"""
+    c, store, tok = _client(tmp_path, monkeypatch)  # unmanaged by default
+    monkeypatch.setattr(U, "install_method", lambda: "uv")
+
+    def boom(cmd, env, log_path):
+        raise FileNotFoundError(2, "No such file or directory", "uv")
+
+    monkeypatch.setattr(U, "_run_installer", boom)
+    r = c.post("/api/update", json={"target_sha": "b" * 40},
+               headers={"Authorization": f"Bearer {tok}",
+                        "Sec-Fetch-Site": "same-origin"})
+    assert r.status_code == 200
+    assert r.json()["ok"] is False
+    store.close()
+
+
 def test_accepts_when_sec_fetch_site_absent(tmp_path, monkeypatch):
     # A server-side client (CLI, curl) sends no Sec-Fetch-Site at all -- that
     # must stay allowed, same as the existing Origin middleware's contract.

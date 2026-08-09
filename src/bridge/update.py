@@ -397,8 +397,16 @@ def run_update(target_sha: str) -> UpdateResult:
 
     previous = installed_sha()
     try:
-        code = _run_installer(_install_cmd(method, target_sha),
-                              _install_env(method), log_path)
+        try:
+            code = _run_installer(_install_cmd(method, target_sha),
+                                  _install_env(method), log_path)
+        except OSError as exc:
+            # `uv`/`brew` absent -> FileNotFoundError (an OSError). run_update is
+            # the transaction boundary and must ALWAYS return a result, never
+            # raise: the launchagent flow still writes reconnect state and the
+            # endpoint still returns clean ok=false JSON instead of a 500.
+            return result(False, None, f"installer could not be run: {exc}",
+                          previous=previous)
         if code != 0:
             return result(False, code, f"installer exited {code}",
                           previous=previous)

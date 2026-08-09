@@ -81,6 +81,28 @@ def test_run_update_uv_no_previous_sha_message_not_brew(monkeypatch, tmp_path):
     assert len(calls) == 1  # no rollback attempted -- nothing to roll back to
 
 
+def test_run_update_returns_failed_result_when_installer_binary_is_absent(
+        monkeypatch, tmp_path):
+    """`uv`/`brew` absent makes `subprocess.run` raise FileNotFoundError (an
+    OSError). run_update is the transaction boundary: it must catch it and
+    return ok=False, never let it propagate -- or the launchagent flow skips its
+    reconnect-state write and the endpoint 500s instead of returning JSON."""
+    monkeypatch.setattr(U, "_update_dir", lambda: tmp_path)
+    monkeypatch.setattr(U, "install_method", lambda: "uv")
+    monkeypatch.setattr(U, "installed_sha", lambda: "a" * 40)
+
+    def boom(cmd, env, log_path):
+        raise FileNotFoundError(2, "No such file or directory", "uv")
+
+    monkeypatch.setattr(U, "_run_installer", boom)
+    res = U.run_update("b" * 40)  # must NOT raise
+    assert res.ok is False
+    assert res.error and "uv" in res.error
+    # The lock must have been released -- a second attempt is not refused.
+    res2 = U.run_update("b" * 40)
+    assert res2.ok is False
+
+
 def test_run_update_uv_rollback_failure_message(monkeypatch, tmp_path):
     monkeypatch.setattr(U, "_update_dir", lambda: tmp_path)
     monkeypatch.setattr(U, "install_method", lambda: "uv")
