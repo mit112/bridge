@@ -288,7 +288,10 @@ def cmd_status(args, cfg) -> int:
     except Exception:  # noqa: BLE001
         status, body, panel = None, None, "down"
 
+    from bridge import update
+    _sha = update.installed_sha()
     print(f"version: {__version__}")
+    print(f"build:   {(_sha[:12] if _sha else 'dev')} ({update.install_method()})")
     print(f"project: {project}")
     print(f"panel:   {panel} ({_base(cfg)})")
     print(f"spooled: {pending} awaiting drain")
@@ -311,6 +314,47 @@ def cmd_open(args, cfg) -> int:
     return 0
 
 
+def cmd_update(args, cfg) -> int:
+    """Resolve the SHA the check surfaced (or the remote HEAD) and install it.
+
+    Prints to stderr like `handoff`/`launch`: nothing parses this stdout."""
+    from bridge import update
+
+    installed = update.installed_sha()
+    # Prefer the SHA the panel already surfaced so the CLI and button install the
+    # SAME commit; fall back to a fresh resolve when the panel is down.
+    target = None
+    try:
+        status, body = _request("GET", f"{_base(cfg)}/api/diagnostics")
+        if 200 <= status < 300 and isinstance(body, dict):
+            upd = body.get("update") or {}
+            if upd.get("state") == "behind" and upd.get("latest_sha"):
+                target = upd["latest_sha"]
+    except Exception:  # noqa: BLE001 - panel down is fine; resolve directly
+        pass
+    if target is None:
+        target = update.resolve_remote_sha()
+    if target is None:
+        print("bridge update: could not determine the latest commit "
+              "(network error?); nothing was changed", file=sys.stderr)
+        return 1
+    if target == installed:
+        print(f"bridge update: already up to date ({target[:12]})",
+              file=sys.stderr)
+        return 0
+
+    print(f"bridge update: {(installed or 'dev')[:12]} -> {target[:12]} ...",
+          file=sys.stderr)
+    result = update.run_update(target)
+    if result.ok:
+        print(f"bridge: updated to {target[:12]} (log: {result.log_path})",
+              file=sys.stderr)
+        return 0
+    print(f"bridge update: FAILED: {result.error} (log: {result.log_path})",
+          file=sys.stderr)
+    return 1
+
+
 def cmd_diagnose(args, cfg) -> int:
     """A read-only snapshot for a bug report: versions, resolved config, the
     LaunchAgent's state and the tail of the serve log. Imported lazily so the
@@ -323,8 +367,16 @@ def cmd_diagnose(args, cfg) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="bridge")
+    # `--version` carries the build SHA and install method so a bug report
+    # names the exact commit. Imported lazily here (not at module top) so the
+    # handoff/next fast path never pays for `bridge.update`'s imports;
+    # argparse needs the finished version string at parse-build time, so it
+    # cannot wait until an action callback.
+    from bridge import update as _u
+    _sha = _u.installed_sha()
+    _short = _sha[:12] if _sha else "dev"
     parser.add_argument("--version", action="version",
-                        version=f"bridge {__version__}")
+                        version=f"bridge {__version__} ({_short} {_u.install_method()})")
     sub = parser.add_subparsers(dest="cmd")
 
     h = sub.add_parser("handoff", help="record a next-session prompt")
@@ -364,6 +416,9 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("status", help="show panel and handoff state")
     s.add_argument("--project")
 
+    up = sub.add_parser("update", help="update Bridge to the latest main HEAD")
+    up.add_argument("--project")
+
     d = sub.add_parser("diagnose",
                        help="print a read-only diagnostics snapshot")
     d.add_argument("--lines", type=int, default=40,
@@ -401,6 +456,7 @@ HANDLERS = {
     "launch": cmd_launch,
     "next": cmd_next,
     "status": cmd_status,
+    "update": cmd_update,
     "diagnose": cmd_diagnose,
     "open": cmd_open,
 }
