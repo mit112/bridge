@@ -66,7 +66,7 @@ def testclient_addresses_the_panel_over_loopback(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def never_touch_the_real_bridge_dir(monkeypatch):
+def never_touch_the_real_bridge_dir(tmp_path, monkeypatch):
     """Refuse any spool or launcher operation against the user's real `~/.bridge`.
 
     `create_app` drains the spool on boot, and a drain MOVES files out of it. A
@@ -80,8 +80,18 @@ def never_touch_the_real_bridge_dir(monkeypatch):
     guard covers the launcher's directory-taking entry points. Both modules are
     guarded by one fixture on purpose: a second autouse guard would be one more
     thing to forget to extend.
+
+    `bridge.update` joins the same guard for the same reason, just with a
+    different shape of default: `create_app` builds a default `UpdateChecker`
+    whenever a test omits `update_checker=`, and that checker's `__init__`
+    reads `~/.bridge/update/state.json` through `_update_dir()` on every
+    construction -- no directory argument for the `guarded()` wrapper above to
+    inspect, since `_update_dir()` takes none. Redirected directly instead,
+    the same way `guarded_claude_settings_path` and
+    `never_read_the_real_session_registry` below redirect their own
+    no-argument reads.
     """
-    from bridge import launcher, schedspool, spool
+    from bridge import launcher, schedspool, spool, update
 
     def guarded(module_name, name, orig, override):
         def wrapper(*args, **kwargs):
@@ -125,6 +135,36 @@ def never_touch_the_real_bridge_dir(monkeypatch):
             launcher, name,
             guarded("launcher", name, getattr(launcher, name), "launches_dir"),
         )
+
+    # `_update_dir()` is a bare global lookup at every call site
+    # (`_lock_path`, `_state_path`), so redirecting the module attribute here
+    # reaches all of them -- unlike `resolve_fn` below, nothing has already
+    # bound the pre-patch function object.
+    update_dir = tmp_path / "bridge-update"
+    update_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(update, "_update_dir", lambda: update_dir)
+
+    # `UpdateChecker.__init__(self, *, ..., resolve_fn=resolve_remote_sha)`
+    # binds that default to the real function OBJECT at class-definition
+    # time, once, at import. Monkeypatching the module attribute
+    # `update.resolve_remote_sha` (as the individual `bridge update` CLI
+    # tests already do for `cmd_update`'s own direct call) would never reach
+    # this bound default -- every checker built without an explicit
+    # `resolve_fn=` kwarg, including `create_app`'s default and `serve`'s
+    # enabled worker thread, would still shell out to a real `git ls-remote`
+    # against GitHub. Wrapping `__init__` to fill in a network-free stand-in
+    # only when the caller omitted `resolve_fn` closes that gap without
+    # disturbing any test that passes its own. `None` is the fail-closed
+    # answer `resolve_remote_sha` itself gives on any failure, so a checker
+    # built this way settles on "stale"/"unknown", never a false "behind".
+    real_update_checker_init = update.UpdateChecker.__init__
+
+    def hermetic_update_checker_init(self, *args, **kwargs):
+        kwargs.setdefault("resolve_fn", lambda **_: None)
+        real_update_checker_init(self, *args, **kwargs)
+
+    monkeypatch.setattr(update.UpdateChecker, "__init__",
+                        hermetic_update_checker_init)
 
 
 @pytest.fixture(autouse=True)
