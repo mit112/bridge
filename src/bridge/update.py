@@ -172,7 +172,7 @@ def resolve_remote_sha(url: str = REPO_URL, ref: str = REPO_REF,
 
 def _update_cache_repo() -> Path:
     """A bare object cache used only to answer ancestry questions offline."""
-    return Path.home() / ".bridge" / "update" / "repo.git"
+    return _update_dir() / "repo.git"
 
 
 def _ensure_cache_repo(timeout: float = 8.0) -> Path | None:
