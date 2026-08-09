@@ -267,3 +267,103 @@ def read_update_state() -> UpdateState | None:
         return UpdateState(**data)
     except (OSError, ValueError, TypeError):
         return None
+
+
+def _install_cmd(method: InstallMethod, sha: str) -> list[str]:
+    base = REPO_URL[:-4] if REPO_URL.endswith(".git") else REPO_URL  # strip .git
+    if method == "uv":
+        return ["uv", "tool", "install", "--force", "--reinstall",
+                f"git+{base}@{sha}"]
+    if method == "brew":
+        return ["brew", "upgrade", "--fetch-HEAD", "mit112/bridge/bridge"]
+    raise ValueError(f"no install command for method {method!r}")
+
+
+def _install_env(method: InstallMethod) -> dict[str, str]:
+    env = dict(os.environ)
+    if method == "brew":
+        env["HOMEBREW_NO_AUTO_UPDATE"] = "1"
+        env["HOMEBREW_NO_INSTALL_CLEANUP"] = "1"
+    return env
+
+
+def _run_installer(cmd: list[str], env: dict[str, str], log_path: Path) -> int:
+    """Run the installer non-interactively, appending stdout+stderr to the log."""
+    with open(log_path, "a", encoding="utf-8") as fh:
+        fh.write(f"\n$ {' '.join(cmd)}\n")
+        fh.flush()
+        proc = subprocess.run(cmd, env=env, stdout=fh, stderr=subprocess.STDOUT,
+                              stdin=subprocess.DEVNULL, check=False)
+    return proc.returncode
+
+
+def _verify_fresh_pid(expected_sha: str) -> bool:
+    """Run a FRESH `bridge --version` and confirm it reports `expected_sha`.
+
+    A fresh process is the point: a still-running old panel would report the old
+    SHA, so we spawn the installed console script rather than reading our own
+    imported `_build`."""
+    exe = shutil.which("bridge")
+    if exe is None:
+        return False
+    try:
+        proc = subprocess.run([exe, "--version"], capture_output=True,
+                              text=True, check=False, timeout=10)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return False
+    return proc.returncode == 0 and (
+        expected_sha in proc.stdout or expected_sha[:12] in proc.stdout
+    )
+
+
+def run_update(target_sha: str) -> UpdateResult:
+    """Install `target_sha` as a lockfile-guarded transaction.
+
+    Records previous/attempted SHA, method, times, exit, log path; verifies a
+    fresh PID reports the target SHA; rolls back (uv) or prints recovery (brew)
+    on mismatch."""
+    method = install_method()
+    started = _now_iso()
+    log_path = _update_dir() / "update.log"
+
+    def result(ok, exit_status, error, ended=None, rolled_back=False,
+               previous=None):
+        return UpdateResult(
+            ok=ok, previous_sha=previous, attempted_sha=target_sha, method=method,
+            started_at=started, ended_at=ended or _now_iso(),
+            exit_status=exit_status, log_path=str(log_path), error=error,
+            rolled_back=rolled_back,
+        )
+
+    if method in ("dev", "unknown"):
+        return result(False, None,
+                      f"cannot update a {method} install; use git/pip directly")
+
+    fd = _acquire_lock()
+    if fd is None:
+        return result(False, None, "an update is already in progress")
+
+    previous = installed_sha()
+    try:
+        code = _run_installer(_install_cmd(method, target_sha),
+                              _install_env(method), log_path)
+        if code != 0:
+            return result(False, code, f"installer exited {code}",
+                          previous=previous)
+        if _verify_fresh_pid(target_sha):
+            return result(True, code, None, previous=previous)
+        # Mismatch: the freshly installed process does not report target_sha.
+        if method == "uv" and previous is not None:
+            rb = _run_installer(_install_cmd("uv", previous),
+                                _install_env("uv"), log_path)
+            return result(False, code,
+                          f"post-install SHA mismatch; rolled back to {previous[:12]} "
+                          f"(rollback exit {rb})",
+                          rolled_back=(rb == 0), previous=previous)
+        return result(False, code,
+                      "post-install SHA mismatch; brew rollback is unsupported -- "
+                      "recover with: brew uninstall bridge && brew install --HEAD "
+                      "mit112/bridge/bridge",
+                      previous=previous)
+    finally:
+        _release_lock(fd)
