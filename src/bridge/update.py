@@ -13,10 +13,12 @@ import fcntl
 import json
 import logging
 import os
+import random
 import re
 import shutil
 import subprocess
 import sys
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -173,13 +175,36 @@ def _update_cache_repo() -> Path:
     return Path.home() / ".bridge" / "update" / "repo.git"
 
 
+def _ensure_cache_repo(timeout: float = 8.0) -> Path | None:
+    """Best-effort: create the bare ancestry cache and fetch `main` into it so
+    `_is_ancestor` has objects to reason over. Returns the repo path if usable,
+    else None. Never raises -- a failed fetch just leaves ancestry indeterminate,
+    which classify treats as fail-closed `unknown`. Runs only on the bounded
+    update-check worker, so a slow fetch never stalls the refresh loop."""
+    git = shutil.which("git")
+    if git is None:
+        return None
+    repo = _update_cache_repo()
+    try:
+        if not (repo / "HEAD").exists():
+            repo.mkdir(parents=True, exist_ok=True)
+            subprocess.run([git, "init", "--quiet", "--bare", str(repo)],
+                           capture_output=True, text=True, check=False, timeout=timeout)
+        subprocess.run([git, "-C", str(repo), "fetch", "--quiet", REPO_URL,
+                        "+refs/heads/main:refs/heads/main"],
+                       capture_output=True, text=True, check=False, timeout=timeout)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+    return repo if (repo / "HEAD").exists() else None
+
+
 def _is_ancestor(installed: str, remote: str) -> bool | None:
     """True if `installed` is an ancestor of `remote` (remote is a fast-forward
     descendant). None when it cannot be decided (objects absent / git error) --
     which the classifier treats as fail-closed "unknown"."""
     git = shutil.which("git")
-    repo = _update_cache_repo()
-    if git is None or not repo.is_dir():
+    repo = _ensure_cache_repo()
+    if git is None or repo is None:
         return None
     try:
         proc = subprocess.run(
@@ -380,3 +405,69 @@ def run_update(target_sha: str) -> UpdateResult:
                       previous=previous)
     finally:
         _release_lock(fd)
+
+
+class UpdateChecker:
+    """A bounded worker that polls the remote SHA on a ~30-min cache.
+
+    Kept OFF the 15s refresh loop: `git ls-remote` can hang on a bad network,
+    and this must never stall indexing or shutdown. Fails closed -- a failed
+    check keeps the last known result as `stale` and never infers `behind`."""
+
+    def __init__(self, *, enabled: bool, interval_s: float = 1800.0,
+                 resolve_fn=resolve_remote_sha) -> None:
+        self.enabled = enabled
+        self.interval_s = interval_s
+        self._resolve_fn = resolve_fn
+        self._lock = threading.Lock()
+        self._state = read_update_state() or UpdateState(
+            state="unknown", installed_sha=installed_sha(),
+            latest_sha=None, checked_at=None, error=None)
+
+    def snapshot(self) -> UpdateState:
+        with self._lock:
+            return self._state
+
+    def check_once(self) -> UpdateState:
+        installed = installed_sha()
+        if not self.enabled:
+            state = UpdateState(state="unknown", installed_sha=installed,
+                                latest_sha=None, checked_at=_now_iso(), error=None)
+            self._store(state)
+            return state
+        try:
+            remote = self._resolve_fn(timeout=8.0)
+        except Exception as exc:  # noqa: BLE001 - fail closed on anything
+            remote = None
+            err = f"{type(exc).__name__}: {exc}"
+        else:
+            err = None if remote is not None else "could not reach GitHub"
+        with self._lock:
+            last = self._state
+        if remote is None:
+            # Fail closed: keep the last known SHA, mark stale, never nudge.
+            state = UpdateState(state="stale", installed_sha=installed,
+                                latest_sha=last.latest_sha,
+                                checked_at=_now_iso(), error=err)
+        else:
+            state = UpdateState(state=classify(installed, remote),
+                                installed_sha=installed, latest_sha=remote,
+                                checked_at=_now_iso(), error=None)
+        self._store(state)
+        return state
+
+    def _store(self, state: UpdateState) -> None:
+        with self._lock:
+            self._state = state
+        try:
+            write_update_state(state)
+        except OSError:
+            log.warning("could not persist update state")
+
+    def run_periodic(self, stop_event: threading.Event) -> None:
+        # Jittered so a fleet of installs does not hammer GitHub in lockstep.
+        while True:
+            self.check_once()
+            wait = self.interval_s + random.uniform(0, self.interval_s * 0.1)
+            if stop_event.wait(wait):
+                return

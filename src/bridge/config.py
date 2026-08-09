@@ -169,6 +169,14 @@ def _read_config_file(path: Path) -> dict:
         if not isinstance(port, int) or port < 1 or port > 65535:
             raise ConfigError(f"{path}: port must be an integer between 1 and 65535")
         values["port"] = port
+    update = data.get("update", {})
+    if not isinstance(update, dict):
+        raise ConfigError(f"{path}: [update] must be a table")
+    if "enabled" in update:
+        enabled = update["enabled"]
+        if not isinstance(enabled, bool):
+            raise ConfigError(f"{path}: update.enabled must be true or false")
+        values["update_check_enabled"] = enabled
     return values
 
 
@@ -230,6 +238,9 @@ class Config:
     # state and not a degraded one.
     aliases: dict[str, str]
     archived_paths: tuple[str, ...]
+    # Whether the bounded background worker (Task 7) polls GitHub for a newer
+    # SHA. Configured via [update] enabled in config.toml.
+    update_check_enabled: bool
 
 
 def load(overrides: dict | None = None) -> Config:
@@ -251,6 +262,7 @@ def load(overrides: dict | None = None) -> Config:
         port=_env_port() or 8787,
         aliases={},
         archived_paths=(),
+        update_check_enabled=True,
     )
     # defaults < config.toml < BRIDGE_PORT < overrides. The file can only reach
     # the fields it actually names, and a test's explicit override always wins.

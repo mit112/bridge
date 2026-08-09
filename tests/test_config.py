@@ -318,3 +318,15 @@ def test_an_override_still_beats_bridge_port(tmp_path, monkeypatch):
     write_config(tmp_path, monkeypatch, "port = 9999\n")
     monkeypatch.setenv("BRIDGE_PORT", "5555")
     assert load({"port": 7000}).port == 7000
+
+
+def test_update_check_opt_out(tmp_path, monkeypatch):
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text("[update]\nenabled = false\n")
+    monkeypatch.setenv("BRIDGE_CONFIG", str(cfg_file))
+    assert load().update_check_enabled is False
+
+
+def test_update_check_default_on(tmp_path, monkeypatch):
+    monkeypatch.setenv("BRIDGE_CONFIG", str(tmp_path / "missing.toml"))
+    assert load().update_check_enabled is True
