@@ -4,7 +4,6 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.13](https://img.shields.io/badge/python-3.13-blue.svg)](https://www.python.org/downloads/release/python-3130/)
 
-<!-- TODO: capture hero screenshot of the panel -->
 ![Bridge panel showing project cards with git status, handoff prompts, and live session state](docs/images/bridge-panel.png)
 
 Running several Claude Code sessions across several project directories loses
@@ -33,7 +32,7 @@ bridge index
 bridge open
 ```
 
-### Homebrew (HEAD-only, tap setup in progress)
+### Or install with Homebrew
 
 ```bash
 brew tap mit112/bridge
@@ -43,8 +42,16 @@ brew install --HEAD bridge
 Bridge has no tagged releases, so the formula only supports `--HEAD` — it
 builds from `main`, same as the `uv tool install` path above. `bridge update`
 detects a Homebrew install and runs `brew upgrade --fetch-HEAD mit112/bridge/bridge`
-for you instead of the `uv` path. **The `mit112/bridge` tap repository is still
-being set up**; until it's published, use the `uv tool install` method above.
+for you instead of the `uv` path. Note that a plain `brew upgrade` will **not**
+advance Bridge — always use `bridge update` (or `brew upgrade --fetch-HEAD`).
+
+**Rollback is not supported on the Homebrew path.** If an update leaves Bridge
+broken, reinstall via `uv` instead:
+
+```bash
+brew uninstall bridge
+uv tool install git+https://github.com/mit112/bridge
+```
 
 `bridge setup` walks you through everything: it finds your project directories,
 picks a port, optionally installs the `/handoff` slash command, and optionally
