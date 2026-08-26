@@ -1393,16 +1393,30 @@ const unavailableState = label.textContent;
 window.bridgeApplyDashboardUpdate(REFRESH_BODY);
 const beforeRefresh = refreshStatus.textContent;
 clickHandler({ target: { closest: (sel) => sel === "[data-dashboard-refresh]" ? refreshButton : null } });
-setImmediate(() => console.log(JSON.stringify({
-  stale, fresh: label.textContent, unavailableState,
-  announcements,
-  textareaSame: textareaIdentity.every((item, index) => item === cards[index].textarea),
-  textareaValues: textareaIdentity.map((item) => item.value),
-  refresh: refreshStatus.textContent, totals: totals.today.textContent,
-  lastIndex: totals.last_index.textContent,
-  stripState: strip.getAttribute("data-freshness-state"),
-  beforeRefresh,
-})));
+setImmediate(() => {
+  const afterSuccessfulRefresh = refreshStatus.textContent;
+  // A failed reindex still comes back as an HTTP-success envelope carrying
+  // whatever data was already on hand -- `response.ok` and
+  // `applyDashboardUpdate` both pass it, so only `refresh.completed` tells
+  // the two apart.
+  REFRESH_BODY = { schema: 1, kind: "snapshot", generated_at: 999999, generation: 2,
+    freshness: { server: "available", index_at: 146, index_age_seconds: 0 },
+    topbar: {}, diagnostics: { alert: false }, card_order: [], cards: {},
+    refresh: { attempted: true, completed: false, error: "index is locked" },
+    unattributed: [] };
+  clickHandler({ target: { closest: (sel) => sel === "[data-dashboard-refresh]" ? refreshButton : null } });
+  setImmediate(() => console.log(JSON.stringify({
+    stale, fresh: label.textContent, unavailableState,
+    announcements,
+    textareaSame: textareaIdentity.every((item, index) => item === cards[index].textarea),
+    textareaValues: textareaIdentity.map((item) => item.value),
+    refresh: afterSuccessfulRefresh, totals: totals.today.textContent,
+    lastIndex: totals.last_index.textContent,
+    stripState: strip.getAttribute("data-freshness-state"),
+    beforeRefresh,
+    afterFailedRefresh: refreshStatus.textContent,
+  })));
+});
 '''
 
 
@@ -1497,6 +1511,16 @@ def test_dashboard_patch_preserves_user_edited_textarea_value(tmp_path):
 def test_refresh_button_posts_and_applies_snapshot(tmp_path):
     got = _run_freshness(tmp_path, {})
     assert got["refresh"] == "Updated"
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_refresh_button_announces_failure_when_indexing_did_not_complete(tmp_path):
+    """Codex review finding #9: a failed reindex still returns HTTP 200 with a
+    schema-1 envelope -- `response.ok` and `applyDashboardUpdate` both pass it
+    -- so without checking `refresh.completed`, the button announced "Updated"
+    over data that was never actually refreshed."""
+    got = _run_freshness(tmp_path, {})
+    assert got["afterFailedRefresh"] == "Refresh failed; existing data kept."
 
 
 # --- Task 2.4: live.js tolerates the leaf-light Overview DOM ----------------

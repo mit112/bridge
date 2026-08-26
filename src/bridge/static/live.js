@@ -261,6 +261,14 @@ function refreshDashboard(button) {
     .then((response) => response.json().then((body) => ({ response, body })))
     .then(({ response, body }) => {
       if (!response.ok || !applyDashboardUpdate(body)) throw new Error("refresh failed");
+      // A failed reindex still comes back as an HTTP-success envelope --
+      // `{refresh: {completed: false, error: "..."}}` -- carrying whatever
+      // data was already on hand. `response.ok` and `applyDashboardUpdate`
+      // both pass on that envelope, so this is the one place left that can
+      // tell "refreshed" from "tried and failed, kept the old data".
+      if (body.refresh && body.refresh.attempted && !body.refresh.completed) {
+        throw new Error(body.refresh.error || "refresh failed");
+      }
       setText(status, "Updated");
     })
     .catch(() => setText(status, "Refresh failed; existing data kept."))
