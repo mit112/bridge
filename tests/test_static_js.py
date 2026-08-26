@@ -2455,6 +2455,7 @@ const modeSelect = { value: "background" };
 const toggleButton = { focus() {}, setAttribute() {}, getAttribute: () => null };
 const summaryCount = { textContent: "0" };
 const topbarCount = { textContent: "0" };
+const statusNode = { textContent: "" };
 
 const panel = {
   hidden: false,
@@ -2482,6 +2483,7 @@ globalThis.document = {
     if (sel === '[data-schedule-toggle="schedule-panel-1"]') return toggleButton;
     if (sel === "[data-scheduled-count]") return summaryCount;
     if (sel === "[data-topbar-scheduled]") return topbarCount;
+    if (sel === '[data-schedule-status="schedule-panel-1"]') return statusNode;
     return null;
   },
 };
@@ -2493,7 +2495,7 @@ globalThis.fetch = async (url, init) => {
   sentUrl = url;
   sentMethod = init.method;
   sentBody = JSON.parse(init.body);
-  return { ok: true, status: 201, json: async () => ({ id: "new-job" }) };
+  return { ok: true, status: 201, json: async () => ({ id: "new-job", journaled: JOURNALED }) };
 };
 
 const fs = require("fs");
@@ -2506,13 +2508,17 @@ const submitButton = {
 };
 
 clickHandler({ target: submitButton }).then(() => {
-  console.log(JSON.stringify({ sentUrl, sentMethod, sentBody }));
+  console.log(JSON.stringify({ sentUrl, sentMethod, sentBody, status: statusNode.textContent }));
 });
 """
 
 
-def _run_schedule_submit(tmp_path, handoff_id) -> dict:
-    script = SCHEDULE_SUBMIT_HARNESS.replace("HANDOFF_ID", json.dumps(handoff_id))
+def _run_schedule_submit(tmp_path, handoff_id, journaled=True) -> dict:
+    script = (
+        SCHEDULE_SUBMIT_HARNESS
+        .replace("HANDOFF_ID", json.dumps(handoff_id))
+        .replace("JOURNALED", json.dumps(journaled))
+    )
     return _run_node(tmp_path, "schedule_submit.js", script, SCHEDULE_JS)
 
 
@@ -2535,6 +2541,22 @@ def test_schedule_submit_posts_seconds_and_a_null_source_for_the_compose_box(tmp
 def test_schedule_submit_carries_the_handoff_id_for_the_handoff_path(tmp_path):
     got = _run_schedule_submit(tmp_path, handoff_id="h1")
     assert got["sentBody"]["source_handoff_id"] == "h1"
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_schedule_submit_announces_plain_success_when_journaled(tmp_path):
+    got = _run_schedule_submit(tmp_path, handoff_id=None, journaled=True)
+    assert got["status"] == "✓ Scheduled"
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_schedule_submit_warns_when_the_journal_write_failed(tmp_path):
+    """Codex review finding #10: a journal failure never costs the schedule
+    itself (the row exists and fires normally), but the panel announced a
+    plain "✓ Scheduled" regardless -- claiming a durability the write never
+    achieved, with nothing telling the user a database loss could lose it."""
+    got = _run_schedule_submit(tmp_path, handoff_id=None, journaled=False)
+    assert got["status"] == "⚠ Scheduled, but not saved durably — a database reset could lose it"
 
 
 # --- Codex review finding #15: a programmatic clear must not leave the
