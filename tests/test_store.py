@@ -644,6 +644,58 @@ def test_reseeding_an_alias_replaces_its_target(store):
     assert store.alias_map() == {"/old/a": "/newer/a"}
 
 
+# --- Codex review finding #14: an alias added AFTER the first index must
+#     still merge what is already there -----------------------------------
+#
+# `set_alias` used to only write the alias row. Seeding it BEFORE the first
+# index (the common case: config declares a move up front) works because
+# nothing has been attributed to the old path yet -- but an alias added
+# LATER left the old project's sessions, handoffs, and launches exactly
+# where they were, since an unchanged transcript is never re-scanned to
+# notice the alias exists now. The old, now-orphaned card stayed forever.
+
+
+def test_an_alias_added_after_indexing_merges_the_existing_project(store):
+    old_pid = store.upsert_project("/old/path", "path")
+    store.upsert_session(rec("s1", project_path="/old/path"), old_pid)
+    store.create_handoff(handoff("h1", project_path="/old/path"), old_pid)
+    store.create_launch(launch(old_pid, "l1", handoff_id="h1"))
+
+    store.set_alias("/old/path", "/new/path")
+
+    projects = store.projects()
+    assert [p["path"] for p in projects] == ["/new/path"]
+    new_pid = projects[0]["id"]
+    assert {s["id"] for s in store.sessions(new_pid)} == {"s1"}
+    assert {h["id"] for h in store.handoffs(new_pid)} == {"h1"}
+    assert {l["id"] for l in store.launches(new_pid)} == {"l1"}
+    # The old row is gone outright, not just emptied -- nothing left to
+    # render as a second, orphaned card.
+    assert store.project_by_path("/old/path") is None
+
+
+def test_an_alias_added_after_indexing_creates_the_canonical_project_if_new(store):
+    """The canonical path may never have been indexed at all yet (a project
+    renamed to a path Claude has not been reopened under) -- the merge must
+    still create it rather than assuming it already exists."""
+    old_pid = store.upsert_project("/old/path", "path")
+    store.upsert_session(rec("s1", project_path="/old/path"), old_pid)
+
+    store.set_alias("/old/path", "/brand/new/path")
+
+    projects = store.projects()
+    assert [p["path"] for p in projects] == ["/brand/new/path"]
+    assert {s["id"] for s in store.sessions(projects[0]["id"])} == {"s1"}
+
+
+def test_set_alias_before_any_indexing_is_a_no_op_beyond_the_alias_itself(store):
+    """The common case (config declares a move up front): no project row
+    exists yet for the alias path, so there is nothing to merge."""
+    store.set_alias("/old/path", "/new/path")
+    assert store.projects() == []
+    assert store.alias_map() == {"/old/path": "/new/path"}
+
+
 def test_second_handoff_supersedes_the_first_and_both_survive(store):
     """A card shows exactly one next step, but nothing is thrown away."""
     pid = store.upsert_project("/d", "d")

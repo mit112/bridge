@@ -392,14 +392,52 @@ class Store:
             return list(self.conn.execute(sql + " ORDER BY name"))
 
     def set_alias(self, alias_path: str, canonical_path: str) -> None:
-        """Seeding re-runs on every index, so this must update in place."""
-        with self._lock:
+        """Seeding re-runs on every index, so this must update in place.
+
+        If a project row already exists for `alias_path` -- sessions were
+        indexed under it BEFORE this alias was known -- every session,
+        handoff, and launch already attributed to it is moved onto the
+        canonical project's row (creating one if it does not exist yet), and
+        the now-empty alias row is deleted. Without this, an alias
+        registered AFTER the first index leaves the old, now-orphaned card
+        in place forever: the indexer skips an unchanged transcript by
+        size+mtime, so nothing would ever re-scan it and notice the alias.
+        `git_cache` is dropped rather than moved -- keyed on `project_id` as
+        its own PRIMARY KEY, and stale probe data is worth less than the
+        table-rebuild risk of reconciling two rows' worth of it.
+        """
+        with self.transaction():
             self.conn.execute(
                 "INSERT INTO project_aliases(alias_path, canonical_path) VALUES(?,?) "
                 "ON CONFLICT(alias_path) DO UPDATE SET "
                 "canonical_path=excluded.canonical_path",
                 (alias_path, canonical_path),
             )
+            alias_row = self.conn.execute(
+                "SELECT id FROM projects WHERE path=?", (alias_path,)
+            ).fetchone()
+            if alias_row is None:
+                return
+            alias_id = alias_row["id"]
+            canonical_id = self.upsert_project(
+                canonical_path, Path(canonical_path.rstrip("/")).name
+            )
+            if alias_id == canonical_id:
+                return
+            self.conn.execute(
+                "UPDATE sessions SET project_id=? WHERE project_id=?",
+                (canonical_id, alias_id),
+            )
+            self.conn.execute(
+                "UPDATE handoffs SET project_id=? WHERE project_id=?",
+                (canonical_id, alias_id),
+            )
+            self.conn.execute(
+                "UPDATE launches SET project_id=? WHERE project_id=?",
+                (canonical_id, alias_id),
+            )
+            self.conn.execute("DELETE FROM git_cache WHERE project_id=?", (alias_id,))
+            self.conn.execute("DELETE FROM projects WHERE id=?", (alias_id,))
 
     def alias_map(self) -> dict[str, str]:
         """Read once per index run; attribution then resolves in memory rather
