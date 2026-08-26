@@ -21,6 +21,17 @@ async function announceComposeLaunchFailure(key, field, detail) {
   );
 }
 
+// A plain `field.value = ""` fires no `input` event, so launch.js's compose
+// draft (sessionStorage) and its launch-button enable state never learn the
+// field emptied -- the stale draft would resurrect the just-launched prompt
+// on the next router swap, and the button would stay enabled over nothing.
+// `window.bridgeClearComposeField` (launch.js) clears both; the plain
+// fallback keeps this file working standalone (e.g. under test).
+function clearComposeField(field) {
+  if (window.bridgeClearComposeField) window.bridgeClearComposeField(field);
+  else field.value = "";
+}
+
 async function postJSON(url, method, body) {
   const response = await fetch(url, {
     method,
@@ -243,7 +254,7 @@ document.addEventListener("click", async (event) => {
         return;
       }
       announce(key, "✓ Launched — the session is opening in Terminal");
-      field.value = "";
+      clearComposeField(field);
     } catch (error) {
       await announceComposeLaunchFailure(
         key, field, "the panel did not answer",
@@ -294,7 +305,7 @@ document.addEventListener("click", async (event) => {
       announce(key, "✓ Scheduled");
       // The compose box's own prompt is cleared on success; a handoff's is
       // left alone, since it stays queued for a manual launch too.
-      if (!handoffId) field.value = "";
+      if (!handoffId) clearComposeField(field);
       const toggle = document.querySelector(`[data-schedule-toggle="${panelId}"]`);
       // Focus moves to the toggle BEFORE the panel is hidden -- the button
       // just clicked is a descendant of `panel`, and hiding an ancestor of

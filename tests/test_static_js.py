@@ -2513,6 +2513,171 @@ def test_schedule_submit_carries_the_handoff_id_for_the_handoff_path(tmp_path):
     assert got["sentBody"]["source_handoff_id"] == "h1"
 
 
+# --- Codex review finding #15: a programmatic clear must not leave the
+#     compose draft or the launch button stale ------------------------------
+#
+# `field.value = ""` fires no `input` event, so `saveComposeDraft` (the
+# sessionStorage persistence) and the launch button's enable rule -- both
+# wired to that event in launch.js -- never learn the field emptied. The old
+# prompt could resurface on the next router swap, and the button stayed
+# enabled over nothing. `schedule.js` now routes both clears through
+# `window.bridgeClearComposeField` (launch.js), so this loads BOTH files, as
+# the settings.js + launch.js harness above does, and drives the real
+# cross-file call rather than a stub.
+COMPOSE_CLEAR_HARNESS = """
+globalThis.window = globalThis;
+// schedule.js AND launch.js each register their own delegated "click"
+// listener -- a single `clickHandler = fn` slot (fine when only one file is
+// loaded) silently drops the first registration to the second file's `eval`.
+// Every listener must fire, exactly as real `addEventListener` calls would.
+let clickHandlers = [];
+async function clickHandler(event) {
+  for (const fn of clickHandlers) await fn(event);
+}
+
+const composeField = {
+  id: "compose-1", value: "typed prompt", dataset: {},
+  closest: (sel) => (sel === "[data-compose-prompt]" ? composeField : null),
+};
+const launchButton = {
+  disabled: false,
+  attrs: { "data-launch-button": "launch-1" },
+  getAttribute(n) { return this.attrs[n] ?? null; },
+  setAttribute() {}, removeAttribute() {},
+  closest: (sel) => (sel === "[data-launch-button]" ? launchButton : null),
+};
+const launchBand = {
+  attrs: { "data-launch-prompt": "compose-1" },
+  getAttribute(n) {
+    return Object.prototype.hasOwnProperty.call(this.attrs, n) ? this.attrs[n] : null;
+  },
+  querySelector: (sel) => (sel === "[data-launch-button]" ? launchButton : null),
+};
+const statusNode = { textContent: "" };
+
+const storageMap = new Map();
+storageMap.set("bridge.compose.compose-1", "typed prompt");
+globalThis.sessionStorage = {
+  getItem: (k) => (storageMap.has(k) ? storageMap.get(k) : null),
+  setItem: (k, v) => storageMap.set(k, String(v)),
+  removeItem: (k) => storageMap.delete(k),
+};
+
+globalThis.document = {
+  addEventListener(type, fn) { if (type === "click") clickHandlers.push(fn); },
+  getElementById: (id) => (id === "compose-1" ? composeField : null),
+  querySelector(sel) {
+    if (sel === '[data-compose-status="compose-1"]') return statusNode;
+    if (sel === '[data-schedule-status="schedule-panel-1"]') return statusNode;
+    if (sel === '[data-launch-prompt="compose-1"]') return launchBand;
+    return null;
+  },
+  querySelectorAll: () => [],
+};
+globalThis.navigator = { clipboard: { writeText: async () => {} } };
+globalThis.fetch = async () => (
+  { ok: true, status: 200, json: async () => ({ outcome: "started" }) }
+);
+
+const fs = require("fs");
+eval(fs.readFileSync(process.argv[2], "utf8"));  // schedule.js
+eval(fs.readFileSync(process.argv[3], "utf8"));  // launch.js
+
+(async () => {
+  TARGET
+
+  console.log(JSON.stringify({
+    fieldValue: composeField.value,
+    storage: Object.fromEntries(storageMap),
+    buttonDisabled: launchButton.disabled,
+  }));
+})();
+"""
+
+
+def _run_compose_clear(tmp_path, name: str, target: str) -> dict:
+    harness = tmp_path / f"compose_clear_{name}.js"
+    harness.write_text(COMPOSE_CLEAR_HARNESS.replace("TARGET", target))
+    proc = subprocess.run(
+        [_node(), str(harness), str(SCHEDULE_JS), str(LAUNCH_JS)],
+        capture_output=True, text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout)
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_a_successful_compose_launch_clears_the_stale_draft_and_disables_the_button(
+    tmp_path,
+):
+    runButtonScript = """
+    const runButton = {
+      disabled: false,
+      setAttribute() {}, removeAttribute() {},
+      getAttribute(name) {
+        if (name === "data-compose-run") return "compose-1";
+        if (name === "data-compose-path") return "/Users/you/dev/demo";
+        if (name === "data-compose-launch") return "launch-1";
+        return null;
+      },
+      closest(sel) { return sel === "[data-compose-run]" ? runButton : null; },
+    };
+    await clickHandler({ target: runButton });
+    """
+    got = _run_compose_clear(tmp_path, "launch", runButtonScript)
+    assert got["fieldValue"] == ""
+    assert got["storage"] == {}
+    assert got["buttonDisabled"] is True
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_a_successful_schedule_submit_clears_the_stale_draft_and_disables_the_button(
+    tmp_path,
+):
+    submitScript = """
+    const whenInput = { value: "2026-06-01T10:00" };
+    const modeSelect = { value: "terminal" };
+    const toggleButton = { focus() {}, setAttribute() {}, getAttribute: () => null };
+    const panel = {
+      hidden: false,
+      getAttribute(name) {
+        if (name === "data-schedule-path") return "/Users/you/dev/demo";
+        if (name === "data-schedule-prompt") return "compose-1";
+        if (name === "data-schedule-handoff") return null;
+        return null;
+      },
+      querySelector(sel) {
+        if (sel === "[data-schedule-when]") return whenInput;
+        if (sel === "[data-schedule-mode]") return modeSelect;
+        return null;
+      },
+    };
+    document.getElementById = (id) => {
+      if (id === "schedule-panel-1") return panel;
+      if (id === "compose-1") return composeField;
+      return null;
+    };
+    const originalQuerySelector = document.querySelector.bind(document);
+    document.querySelector = (sel) => {
+      if (sel === '[data-schedule-toggle="schedule-panel-1"]') return toggleButton;
+      if (sel === "[data-scheduled-count]") return null;
+      if (sel === "[data-topbar-scheduled]") return null;
+      return originalQuerySelector(sel);
+    };
+    globalThis.fetch = async () => ({ ok: true, status: 201, json: async () => ({ id: "job-1" }) });
+    const submitButton = {
+      getAttribute: () => "schedule-panel-1",
+      closest: (sel) => (sel === "[data-schedule-submit]" ? submitButton : null),
+      disabled: false,
+    };
+    await clickHandler({ target: submitButton });
+    """
+    got = _run_compose_clear(tmp_path, "schedule", submitScript)
+    assert got["fieldValue"] == ""
+    assert got["storage"] == {}
+    assert got["buttonDisabled"] is True
+
+
 # --- (d) The Scheduled section's cancel handler -----------------------------
 
 SCHEDULE_CANCEL_HARNESS = """
