@@ -302,7 +302,16 @@ document.addEventListener("click", async (event) => {
         announce(key, `⚠ Not scheduled — ${data.detail || `HTTP ${status}`}`);
         return;
       }
-      announce(key, "✓ Scheduled");
+      // A journal write failure never costs the schedule itself -- the row
+      // exists and will fire normally -- but `journaled: false` means a
+      // database loss before then would lose it with no way to recover it.
+      // "Scheduled" alone would claim a durability the write never achieved.
+      announce(
+        key,
+        data.journaled === false
+          ? "⚠ Scheduled, but not saved durably — a database reset could lose it"
+          : "✓ Scheduled",
+      );
       // The compose box's own prompt is cleared on success; a handoff's is
       // left alone, since it stays queued for a manual launch too.
       if (!handoffId) clearComposeField(field);
