@@ -272,6 +272,64 @@ def test_quarantining_a_corrupt_status_record_logs_a_warning_naming_it(
     assert any("good.500.status.json" in r.getMessage() for r in warnings)
 
 
+# --- Codex review finding #11: an insert failure must not half-restore the
+#     table and then permanently lock the rest out ---------------------------
+#
+# `stats.restored` used to accumulate as each record inserted, with a bare
+# `except: pass` around the one that failed. Whatever DID land made
+# `count_scheduled_runs() > 0` true, so the NEXT `bridge index` hit the
+# empty-table guard and skipped -- the record that failed to insert was
+# never quarantined (only a parse failure is), so it sat in `schedules/`
+# forever with no path back in.
+def test_an_insert_failure_rolls_back_every_record_this_attempt_restored(
+    store, spool_dir, monkeypatch,
+):
+    schedspool.journal(job("good", scheduled_for=FUTURE), spool_dir)
+    schedspool.journal(job("poison", scheduled_for=FUTURE), spool_dir)
+
+    real_restore = store.restore_scheduled_run
+
+    def flaky_restore(run):
+        if run.id == "poison":
+            raise Exception("simulated insert failure")
+        return real_restore(run)
+
+    monkeypatch.setattr(store, "restore_scheduled_run", flaky_restore)
+
+    stats = schedspool.rebuild_if_empty(store, spool_dir, now=NOW)
+
+    assert stats.failed == 1
+    assert stats.restored == 0
+    # Rolled back, not half-applied: "good" inserted BEFORE "poison" failed
+    # (alphabetical id order), and it must not be left behind.
+    assert store.count_scheduled_runs() == 0
+
+
+def test_a_fixed_retry_after_a_rolled_back_rebuild_restores_everything(
+    store, spool_dir, monkeypatch,
+):
+    """The empty-table guard is what makes a retry possible at all -- proving
+    the rollback actually left it empty, not just that the stats say so."""
+    schedspool.journal(job("good", scheduled_for=FUTURE), spool_dir)
+    schedspool.journal(job("poison", scheduled_for=FUTURE), spool_dir)
+
+    real_restore = store.restore_scheduled_run
+    monkeypatch.setattr(
+        store, "restore_scheduled_run",
+        lambda run: (_ for _ in ()).throw(Exception("boom")) if run.id == "poison"
+        else real_restore(run),
+    )
+    first = schedspool.rebuild_if_empty(store, spool_dir, now=NOW)
+    assert first.failed == 1
+    monkeypatch.undo()  # the cause is "fixed": restore_scheduled_run works again
+
+    second = schedspool.rebuild_if_empty(store, spool_dir, now=NOW)
+
+    assert second.restored == 2
+    assert store.get_scheduled_run("good") is not None
+    assert store.get_scheduled_run("poison") is not None
+
+
 def test_the_journal_survives_a_real_database_deletion(tmp_path, spool_dir):
     """`rm ~/.bridge/bridge.db` is the scenario this whole module exists for."""
     db = tmp_path / "db" / "s.db"

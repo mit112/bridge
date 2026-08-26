@@ -264,6 +264,81 @@ def test_rebuild_also_picks_up_anything_still_pending(tmp_path, spool_dir):
 # --- Phase 3: the launcher ---------------------------------------------------
 
 
+# --- Codex review finding #11: an insert failure must not half-restore the
+#     table and then permanently lock the rest out ---------------------------
+#
+# `stats.failed` already existed here, unlike schedspool's bare `except:
+# pass` -- but the record was still never quarantined, and whatever DID
+# land made `handoff_count() > 0` true, so the NEXT rebuild hit the guard
+# above and skipped entirely. The failed record's own creation file just
+# sat in `drained/`, permanently un-retried.
+def test_an_insert_failure_rolls_back_every_record_this_attempt_restored(
+    tmp_path, spool_dir, monkeypatch,
+):
+    db = tmp_path / "r.db"
+    s1 = Store(db)
+    spool.write(h("good", created_at=1), spool_dir)
+    spool.write(h("poison", created_at=2), spool_dir)
+    spool.drain(s1, spool_dir)
+    s1.close()
+    db.unlink()
+    for suffix in ("-wal", "-shm"):
+        Path(str(db) + suffix).unlink(missing_ok=True)
+
+    s2 = Store(db)
+    real_create = s2.create_handoff
+
+    def flaky_create(handoff, project_id):
+        if handoff.id == "poison":
+            raise Exception("simulated insert failure")
+        return real_create(handoff, project_id)
+
+    monkeypatch.setattr(s2, "create_handoff", flaky_create)
+
+    stats = spool.rebuild_if_empty(s2, spool_dir)
+
+    assert stats.failed == 1
+    assert stats.drained == 0
+    # Rolled back, not half-applied: "good" was created_at=1, inserted BEFORE
+    # "poison" failed, and must not be left behind.
+    assert s2.handoff_count() == 0
+    s2.close()
+
+
+def test_a_fixed_retry_after_a_rolled_back_rebuild_restores_everything(
+    tmp_path, spool_dir, monkeypatch,
+):
+    """The empty-table guard is what makes a retry possible at all -- proving
+    the rollback actually left it empty, not just that the stats say so."""
+    db = tmp_path / "r.db"
+    s1 = Store(db)
+    spool.write(h("good", created_at=1), spool_dir)
+    spool.write(h("poison", created_at=2), spool_dir)
+    spool.drain(s1, spool_dir)
+    s1.close()
+    db.unlink()
+    for suffix in ("-wal", "-shm"):
+        Path(str(db) + suffix).unlink(missing_ok=True)
+
+    s2 = Store(db)
+    real_create = s2.create_handoff
+    monkeypatch.setattr(
+        s2, "create_handoff",
+        lambda handoff, pid: (_ for _ in ()).throw(Exception("boom"))
+        if handoff.id == "poison" else real_create(handoff, pid),
+    )
+    first = spool.rebuild_if_empty(s2, spool_dir)
+    assert first.failed == 1
+    monkeypatch.undo()  # the cause is "fixed": create_handoff works again
+
+    second = spool.rebuild_if_empty(s2, spool_dir)
+
+    assert second.drained == 2
+    pid = demo_pid(s2)
+    assert {r["id"] for r in s2.handoffs(pid)} == {"good", "poison"}
+    s2.close()
+
+
 def test_journal_status_writes_a_record_that_cannot_be_mistaken_for_a_handoff(
     spool_dir,
 ):

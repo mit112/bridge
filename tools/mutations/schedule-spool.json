@@ -42,8 +42,8 @@
   {
     "name": "a claim replays as its raw status, restoring a launching job that only a later serve would reconcile",
     "file": "src/bridge/schedspool.py",
-    "old": "                \"indeterminate\" if ended.status == \"launching\" else ended.status",
-    "new": "                ended.status",
+    "old": "                        \"indeterminate\" if ended.status == \"launching\"\n                        else ended.status",
+    "new": "                        ended.status",
     "tests": [
       "tests/test_schedspool.py::test_a_future_job_claimed_by_run_now_replays_as_indeterminate"
     ],

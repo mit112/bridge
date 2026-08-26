@@ -260,12 +260,28 @@ def rebuild_if_empty(store, spool_dir: Path, resolve=None) -> DrainStats:
                 stats.bad += 1
 
     records.sort(key=lambda h: (h.created_at, h.id))
-    for h in records:
-        try:
-            store.create_handoff(h, resolve(store, h.project_path))
-            stats.drained += 1
-        except Exception:  # noqa: BLE001
-            stats.failed += 1
+    # One transaction for every creation record: a record that fails to
+    # insert used to be counted in `stats.failed` and then left behind --
+    # whatever DID land made `handoff_count() > 0` true, so the next rebuild
+    # hit the guard above and skipped entirely, and the failed record's
+    # creation file was never quarantined either, so it was never retried,
+    # permanently. Rolling the whole batch back on any failure keeps the
+    # table empty, so the guard stays honest and a fixed retry restores
+    # everything -- including statuses and the live outbox drain below,
+    # which are skipped this attempt rather than applied against a
+    # creation set that only partially exists.
+    try:
+        with store.transaction():
+            for h in records:
+                store.create_handoff(h, resolve(store, h.project_path))
+                stats.drained += 1
+    except Exception as exc:  # noqa: BLE001 - reported, not raised; see below
+        log.exception(
+            "handoff rebuild failed partway through and rolled back "
+            "(%d of %d records restored before the failure): %s",
+            stats.drained, len(records), exc,
+        )
+        return DrainStats(failed=1)
 
     # Statuses last, in `at` order. A creation queues, and `create_handoff`
     # supersedes as it goes, so applying a status before every creation is in
