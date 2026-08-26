@@ -1014,7 +1014,6 @@ Object.defineProperty(label, "textContent", {
   set(value) { this._text = String(value); announcements.push(this._text); },
 });
 const age = node();
-const membership = node();
 const diagnostics = node();
 const totals = {};
 for (const name of ["projects", "running", "queued", "scheduled", "today", "last_5h", "burn_rate", "last_index"]) totals[name] = node();
@@ -1026,10 +1025,7 @@ function card(id) {
   const leaves = {
     "[data-live-status]": node(), "[data-live-age]": node(),
     "[data-live-model]": node(), "[data-live-effort]": node(),
-    "[data-git-branch]": node(), "[data-git-dirty]": node(),
-    "[data-git-ahead]": node(), "[data-git-stale]": node(),
-    "[data-git-cache]": node(), '[data-git-status="not_a_repo"]': node(),
-    '[data-git-status="unavailable"]': node(), "[data-burn-today]": node(),
+    "[data-burn-today]": node(),
     "[data-burn-last-5h]": node(), "[data-sparkline]": node(),
   };
   const bandParent = node();
@@ -1039,14 +1035,12 @@ function card(id) {
   return root;
 }
 const cards = [card("1"), card("2")];
-const list = node();
-[cards[1], cards[0]].forEach((item) => list.append(item));
 const cardMap = Object.fromEntries(cards.map((item) => [item.getAttribute("data-project-card"), item]));
 
 const selectors = {
   "[data-freshness-strip]": strip, "[data-freshness-label]": label,
-  "[data-freshness-age]": age, "[data-project-membership-status]": membership,
-  "[data-diagnostics-alert]": diagnostics, "[data-cards-list]": list,
+  "[data-freshness-age]": age,
+  "[data-diagnostics-alert]": diagnostics,
   "[data-dashboard-refresh]": refreshButton, "[data-refresh-status]": refreshStatus,
 };
 for (const [name, value] of Object.entries(totals)) selectors[`[data-dashboard-total="${name}"]`] = value;
@@ -1066,7 +1060,6 @@ globalThis.document = {
   // twice), so this has to answer for the same selectors querySelector does or
   // the totals assertions below would pass vacuously against an empty list.
   querySelectorAll(sel) {
-    if (sel === "[data-project-card]") return cards;
     return selectors[sel] ? [selectors[sel]] : [];
   },
 };
@@ -1103,12 +1096,6 @@ window.bridgeApplyDashboardUpdate({ schema: 1, kind: "patch", generated_at: 146,
   cards: { "1": { live: { available: true, status: "busy", started_at: 2 } } } });
 const stale = label.textContent;
 window.bridgeApplyDashboardUpdate(REFRESH_BODY);
-const changedIds = list.children.map((item) => item.getAttribute("data-project-card"));
-membership.textContent = "";
-window.bridgeApplyDashboardUpdate({ schema: 1, kind: "patch", generated_at: 147,
-  generation: 2, freshness: { server: "available", index_at: 146, index_age_seconds: 1 },
-  card_order: ["1", "3"], cards: {} });
-const membershipText = membership.textContent;
 window.bridgeApplyDashboardUpdate({ schema: 1, kind: "snapshot", generated_at: 148,
   generation: 3, freshness: { server: "unavailable", index_at: null, index_age_seconds: null },
   topbar: {}, diagnostics: { alert: true }, card_order: [], cards: {},
@@ -1118,7 +1105,7 @@ window.bridgeApplyDashboardUpdate(REFRESH_BODY);
 const beforeRefresh = refreshStatus.textContent;
 clickHandler({ target: { closest: (sel) => sel === "[data-dashboard-refresh]" ? refreshButton : null } });
 setImmediate(() => console.log(JSON.stringify({
-  stale, fresh: label.textContent, unavailableState, changedIds, membershipText,
+  stale, fresh: label.textContent, unavailableState,
   announcements,
   textareaSame: textareaIdentity.every((item, index) => item === cards[index].textarea),
   textareaValues: textareaIdentity.map((item) => item.value),
@@ -1173,16 +1160,6 @@ def test_topbar_last_index_is_left_server_rendered_not_overwritten_with_a_raw_ep
 
 
 @pytest.mark.skipif(_node() is None, reason="node is not installed")
-def test_dashboard_refresh_reorders_existing_nodes_and_preserves_user_text(tmp_path):
-    got = _run_freshness(tmp_path, {})
-    assert got["changedIds"] == ["1", "2"]
-    assert got["textareaSame"] is True
-    assert got["textareaValues"] == ["typed 1", "typed 2"]
-    assert got["membershipText"] == "Project list changed - reopen the panel to update cards."
-    assert got["refresh"] == "Updated"
-
-
-@pytest.mark.skipif(_node() is None, reason="node is not installed")
 def test_liveness_patch_does_not_reset_index_freshness(tmp_path):
     got = _run_freshness(tmp_path, {})
     assert got["stale"] == "Stale"
@@ -1209,24 +1186,10 @@ def test_connection_states_do_not_announce_heartbeats(tmp_path):
 
 
 @pytest.mark.skipif(_node() is None, reason="node is not installed")
-def test_membership_drift_is_non_alarm_and_identity_safe(tmp_path):
-    got = _run_freshness(tmp_path, {})
-    assert got["membershipText"].startswith("Project list changed")
-    assert got["unavailableState"] == "Unavailable"
-    assert got["textareaSame"] is True
-
-
-@pytest.mark.skipif(_node() is None, reason="node is not installed")
 def test_unavailable_snapshot_is_distinct_from_stale_project(tmp_path):
     got = _run_freshness(tmp_path, {})
     assert got["unavailableState"] == "Unavailable"
     assert got["stale"] == "Stale"
-
-
-@pytest.mark.skipif(_node() is None, reason="node is not installed")
-def test_snapshot_reorders_existing_cards_by_server_order(tmp_path):
-    got = _run_freshness(tmp_path, {})
-    assert got["changedIds"] == ["1", "2"]
 
 
 @pytest.mark.skipif(_node() is None, reason="node is not installed")
@@ -1251,10 +1214,10 @@ def test_refresh_button_posts_and_applies_snapshot(tmp_path):
 #
 # Overview (`/`) renders totals, a freshness strip, and (at most) a live-status
 # word -- it has no `[data-cards-list]`, and the one card-shaped element it
-# might address has none of the `[data-git-*]`/`[data-burn-*]`/
-# `[data-sparkline]` leaves `patchGit`/`patchBurn` look for (those hooks now
-# have zero renderers anywhere in the app; git is static text in the
-# workspace). Its freshness strip also never carries `data-generation`/
+# might address has none of the `[data-burn-*]`/`[data-sparkline]` leaves
+# `patchBurn` looks for (those hooks have no renderer on the Overview; git is
+# static text in the workspace and has no client-side patcher at all).
+# Its freshness strip also never carries `data-generation`/
 # `data-generated-at`: `OverviewModel.freshness` has no server generation
 # counter, so `overview.html`'s call to `freshness_status()` omits both
 # kwargs, and the macro's own `{% if generated_at is not none %}` guard skips
@@ -1449,18 +1412,12 @@ const pinButton = {
   // ancestor is the whole difference, since only the grouped index re-sorts.
   closest: (sel) => (sel === "[data-project-card]" && PIN_HAS_CARD ? card : null),
 };
-const details = { attrs: { hidden: "" },
-                  setAttribute(n, v) { this.attrs[n] = v; },
-                  removeAttribute(n) { delete this.attrs[n]; } };
-const count = { textContent: "0" };
 const list = { appended: 0, append() { this.appended += 1; } };
 const cardStatus = { textContent: "" };
 const hiddenStatus = { textContent: "" };
 const row = { removed: false, remove() { this.removed = true; } };
 
 const nodes = {
-  "[data-hidden-projects]": details,
-  "[data-hidden-count]": count,
   "[data-hidden-list]": list,
   '[data-project-status="7"]': cardStatus,
   "[data-hidden-status]": hiddenStatus,
@@ -1529,8 +1486,6 @@ clickHandler({ target: { closest: (sel) => {
   console.log(JSON.stringify({
     sent, errors,
     cardRemoved: card.removed,
-    count: count.textContent,
-    listHidden: Object.prototype.hasOwnProperty.call(details.attrs, "hidden"),
     appended: list.appended,
     cardStatus: cardStatus.textContent,
     hiddenStatus: hiddenStatus.textContent,
@@ -1571,11 +1526,7 @@ def test_hide_patches_the_status_and_moves_the_card_into_the_hidden_list(tmp_pat
     assert got["sent"]["url"] == "/api/projects/7"
     assert got["sent"]["body"] == {"status": "hidden"}
     assert got["cardRemoved"] is True
-    # The list has to become reachable in the same gesture, or hiding the first
-    # project strands it until a reload.
     assert got["appended"] == 1
-    assert got["count"] == "1"
-    assert got["listHidden"] is False, "the hidden list stayed collapsed away"
     # Never fail silently: a success announces itself, matching pin/restore.
     assert "✓" in got["cardStatus"]
 
@@ -1626,7 +1577,6 @@ def test_a_refused_hide_leaves_the_card_on_screen_and_says_so(tmp_path):
     got = _run_projects(tmp_path, "hide", ok=False)
     assert got["cardRemoved"] is False
     assert got["appended"] == 0
-    assert got["count"] == "0"
     assert "⚠" in got["cardStatus"]
     assert any("hiding" in e for e in got["errors"])
 

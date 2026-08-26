@@ -117,30 +117,6 @@ function patchLive(card, live) {
   setText(leaf(card, "[data-live-effort]"), live.effort ? `/${live.effort}` : "");
 }
 
-function patchGit(card, git) {
-  if (!card || !git) return;
-  const branch = leaf(card, "[data-git-branch]");
-  const dirty = leaf(card, "[data-git-dirty]");
-  const ahead = leaf(card, "[data-git-ahead]");
-  const stale = leaf(card, "[data-git-stale]");
-  const cache = leaf(card, "[data-git-cache]");
-  const notRepo = leaf(card, "[data-git-status=\"not_a_repo\"]");
-  const unavailable = leaf(card, "[data-git-status=\"unavailable\"]");
-  const ok = git.status === "ok";
-  setText(branch, ok ? git.branch : "");
-  setHidden(branch, !ok);
-  setText(dirty, git.dirty_count ? ` · ${git.dirty_count} dirty` : "");
-  setHidden(dirty, !ok || !git.dirty_count);
-  setText(ahead, git.ahead ? ` · ${git.ahead} ahead` : "");
-  setHidden(ahead, !ok || !git.ahead);
-  setText(stale, git.stale ? `⚠ uncommitted for ${git.oldest_uncommitted_at || ""}` : "");
-  setHidden(stale, !git.stale);
-  setText(cache, git.cached_at ? ` · as of ${git.cached_at}` : "");
-  setHidden(cache, !git.cached_at);
-  setHidden(notRepo, git.status !== "not_a_repo");
-  setHidden(unavailable, git.status !== "unavailable");
-}
-
 function patchBurn(card, burn) {
   if (!card || !burn) return;
   setText(leaf(card, "[data-burn-today]"), `${formatKilo(burn.today)} today`);
@@ -154,28 +130,7 @@ function applyCardUpdates(cards) {
     const card = cardFor(projectId);
     if (!card) continue;
     patchLive(card, update.live);
-    patchGit(card, update.git);
     patchBurn(card, update.burn);
-  }
-}
-
-function applyCardOrder(order) {
-  if (!Array.isArray(order) || !document.querySelectorAll) return;
-  const list = query("[data-cards-list]");
-  if (!list) return;
-  const nodes = [...document.querySelectorAll("[data-project-card]")];
-  const byId = new Map(nodes.map((node) => [String(node.getAttribute("data-project-card")), node]));
-  const incoming = order.map(String);
-  const existing = nodes.map((node) => String(node.getAttribute("data-project-card")));
-  const sameSet = incoming.length === existing.length
-    && incoming.every((id) => byId.has(id));
-  const status = query("[data-project-membership-status]");
-  setHidden(status, sameSet);
-  if (!sameSet) setText(status, "Project list changed - reopen the panel to update cards.");
-  // append() moves an existing node; it does not clone, create, or replace it.
-  for (const id of incoming) {
-    const node = byId.get(id);
-    if (node) list.append(node);
   }
 }
 
@@ -279,7 +234,6 @@ function applyDashboardUpdate(update) {
   // first tick. Index time changes rarely, so it stays server-rendered until a
   // reload rather than being reformatted client-side.
   if (update.cards) applyCardUpdates(update.cards);
-  if (update.card_order) applyCardOrder(update.card_order);
   if (update.diagnostics && update.diagnostics.alert != null) {
     setHidden(query("[data-diagnostics-alert]"), !update.diagnostics.alert);
   }
