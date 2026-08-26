@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from bridge import models
+from bridge import indexer, models
 from bridge.config import load
 from bridge.indexer import reindex
 from bridge.registry import transcript_files
@@ -225,6 +225,32 @@ def test_malformed_file_does_not_abort_the_run(env):
     write(projects, "bad.jsonl", ["{broken\n"])
     write(projects, "ok.jsonl", transcript_lines())
     stats = reindex(store, cfg)
+    assert stats.parse_errors >= 1
+    assert stats.sessions_upserted == 1
+
+
+def test_a_type_error_from_one_file_does_not_abort_the_run(env, monkeypatch):
+    """Codex review finding #6, defense-in-depth layer: `transcripts.py` now
+    guards every field type it reads, but a shape neither it nor
+    `store.to_epoch` anticipated must still cost this ONE file, not every
+    file after it -- proving `_index_one`'s catch is broad enough to survive
+    something worse than `OSError` without also swallowing a real bug
+    silently forever (it is still logged and counted)."""
+    cfg, store, projects = env
+    write(projects, "bad.jsonl", ["{}\n"])
+    write(projects, "ok.jsonl", transcript_lines())
+
+    real_scan = indexer.scan
+
+    def flaky_scan(path, *args, **kwargs):
+        if path.name == "bad.jsonl":
+            raise TypeError("simulated: an unanticipated field shape")
+        return real_scan(path, *args, **kwargs)
+
+    monkeypatch.setattr(indexer, "scan", flaky_scan)
+
+    stats = reindex(store, cfg)
+
     assert stats.parse_errors >= 1
     assert stats.sessions_upserted == 1
 

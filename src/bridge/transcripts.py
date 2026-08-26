@@ -18,6 +18,16 @@ from pathlib import Path
 from bridge.models import SessionRecord
 
 
+def _as_int(value) -> int:
+    """A usage counter that decoded to something `int()` rejects (a string
+    like `"abc"`, a list, `None`) is treated as absent -- 0 -- rather than
+    raising `ValueError`/`TypeError` out of a single transcript line."""
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 @dataclass
 class ScanResult:
     record: SessionRecord | None
@@ -77,8 +87,13 @@ def _apply(rec: SessionRecord | None, obj: dict, path: str) -> SessionRecord | N
         rec.project_path = obj["cwd"]
     if obj.get("gitBranch"):
         rec.git_branch = obj["gitBranch"]
+    # A CLI version that ever wrote a non-string timestamp (an int, most
+    # plausibly) must not become a crash two layers away, inside
+    # `store.to_epoch`'s `.replace("Z", ...)` -- unknown shapes are tolerated
+    # everywhere else in this function, so an untimestamped-looking record is
+    # treated the same as one with no timestamp at all, not fatal.
     ts = obj.get("timestamp")
-    if ts:
+    if isinstance(ts, str) and ts:
         if rec.started_at is None or ts < rec.started_at:
             rec.started_at = ts
         if rec.ended_at is None or ts > rec.ended_at:
@@ -90,8 +105,14 @@ def _apply(rec: SessionRecord | None, obj: dict, path: str) -> SessionRecord | N
     if kind == "user" and not sidechain:
         rec.user_msgs += 1
     elif kind == "assistant":
-        msg = obj.get("message") or {}
-        usage = msg.get("usage") or {}
+        # A `message` or `usage` that decoded to some other JSON type (a list,
+        # a string) would otherwise raise `AttributeError` on the very next
+        # `.get` -- guarded here rather than down in each individual read
+        # below, matching the same "wrong shape is unknown shape" tolerance.
+        msg = obj.get("message")
+        msg = msg if isinstance(msg, dict) else {}
+        usage = msg.get("usage")
+        usage = usage if isinstance(usage, dict) else {}
         # One API response is written as several assistant entries (thinking,
         # text, tool_use), each repeating that response's `usage` verbatim, so
         # summing them counts it two or three times over. Measured across 60
@@ -114,8 +135,9 @@ def _apply(rec: SessionRecord | None, obj: dict, path: str) -> SessionRecord | N
 
         if sidechain:
             if not already_counted:
-                rec.sidechain_tokens += int(usage.get("input_tokens") or 0) + int(
-                    usage.get("output_tokens") or 0
+                rec.sidechain_tokens += (
+                    _as_int(usage.get("input_tokens"))
+                    + _as_int(usage.get("output_tokens"))
                 )
             return rec
         # Deliberately NOT deduped: this counts transcript entries, and every
@@ -127,8 +149,8 @@ def _apply(rec: SessionRecord | None, obj: dict, path: str) -> SessionRecord | N
         if obj.get("effort"):
             rec.effort = obj["effort"]
         if not already_counted:
-            rec.tokens_in += int(usage.get("input_tokens") or 0)
-            rec.tokens_out += int(usage.get("output_tokens") or 0)
-            rec.tokens_cache_create += int(usage.get("cache_creation_input_tokens") or 0)
-            rec.tokens_cache_read += int(usage.get("cache_read_input_tokens") or 0)
+            rec.tokens_in += _as_int(usage.get("input_tokens"))
+            rec.tokens_out += _as_int(usage.get("output_tokens"))
+            rec.tokens_cache_create += _as_int(usage.get("cache_creation_input_tokens"))
+            rec.tokens_cache_read += _as_int(usage.get("cache_read_input_tokens"))
     return rec

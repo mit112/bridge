@@ -228,6 +228,12 @@ SCHEDULED_RUN_RETENTION_DAYS = 30
 def to_epoch(iso: str | None) -> int | None:
     if not iso:
         return None
+    if not isinstance(iso, str):
+        # A non-string timestamp is a malformed transcript field, not a bug
+        # here -- `transcripts.py` already guards its own writes, but this is
+        # the layer that would otherwise crash on `.replace` with
+        # `AttributeError`, uncaught by the `except ValueError` below.
+        return None
     try:
         return int(datetime.fromisoformat(iso.replace("Z", "+00:00")).timestamp())
     except ValueError:

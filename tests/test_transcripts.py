@@ -50,6 +50,60 @@ def test_missing_keys_tolerated(write_transcript):
     assert r.record.tokens_in == 0
 
 
+# --- Codex review finding #6: a wrong-typed field must not crash the scan --
+#
+# The scanner only ever checked that a decoded line was a JSON OBJECT
+# (`isinstance(obj, dict)`); nothing checked the TYPE of an individual
+# field. Each of these reproduces a shape that is valid JSON, passes that
+# check with `parse_errors == 0`, and used to raise anyway -- an int
+# `timestamp` blew up two layers away in `store.to_epoch`'s
+# `.replace("Z", ...)`; a list `message` or `usage` raised on the very next
+# `.get`; a non-numeric usage counter raised inside `int(...)`.
+
+
+def test_an_integer_timestamp_is_ignored_not_fatal(write_transcript):
+    p = write_transcript("s.jsonl", [
+        jline(type="user", sessionId="s1", timestamp=1234567890),
+    ])
+    r = scan(p)
+    assert r.parse_errors == 0
+    assert r.record.session_id == "s1"
+    assert r.record.started_at is None
+    assert r.record.ended_at is None
+
+
+def test_a_list_valued_message_is_ignored_not_fatal(write_transcript):
+    p = write_transcript("s.jsonl", [
+        jline(type="assistant", sessionId="s1", message=["not", "a", "dict"]),
+    ])
+    r = scan(p)
+    assert r.parse_errors == 0
+    assert r.record.assistant_msgs == 1
+    assert r.record.tokens_in == 0
+    assert r.record.model is None
+
+
+def test_a_list_valued_usage_is_ignored_not_fatal(write_transcript):
+    p = write_transcript("s.jsonl", [
+        jline(type="assistant", sessionId="s1",
+              message={"usage": ["not", "a", "dict"]}),
+    ])
+    r = scan(p)
+    assert r.parse_errors == 0
+    assert r.record.tokens_in == 0
+
+
+def test_a_non_numeric_usage_counter_counts_as_zero_not_fatal(write_transcript):
+    p = write_transcript("s.jsonl", [
+        jline(type="assistant", sessionId="s1",
+              message={"usage": {"input_tokens": "not-a-number", "output_tokens": 5}}),
+    ])
+    r = scan(p)
+    assert r.parse_errors == 0
+    assert r.record.tokens_in == 0
+    assert r.record.tokens_out == 5
+
+
 def test_empty_file_yields_no_record(write_transcript):
     p = write_transcript("empty.jsonl", [])
     r = scan(p)

@@ -60,6 +60,16 @@ def reindex(
             _index_one(store, path, stats, aliases)
         except OSError:
             continue  # file vanished or unreadable mid-run; never fatal
+        except (AttributeError, TypeError, ValueError) as exc:
+            # A belt-and-suspenders backstop, not the primary fix: valid JSON
+            # with an unexpected field type (an int timestamp, a list-valued
+            # message) is guarded in `transcripts.py`/`to_epoch` at the point
+            # each field is read, but a shape neither of those anticipated
+            # must still cost this ONE file, not the entire run -- every file
+            # after it in `files` would otherwise never be scanned.
+            stats.parse_errors += 1
+            log.warning("skipping %s: %s: %s", path, type(exc).__name__, exc)
+            continue
 
     # Discover git repos under every discovery path that have no transcripts
     # yet, so a repo you have not opened in Claude still gets a card
