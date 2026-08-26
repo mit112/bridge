@@ -186,6 +186,7 @@ port = 8787
 |---|---|---|
 | `BRIDGE_PORT` | `8787` | Port the panel listens on |
 | `BRIDGE_CONFIG` | `~/.bridge/config.toml` | Path to the config file |
+| `BRIDGE_LOG_LEVEL` | `INFO` | Log threshold (e.g. `DEBUG`) for the panel and CLI |
 
 ## CLI reference
 
@@ -199,7 +200,10 @@ bridge setup     Interactive first-time setup
 bridge index     Scan Claude Code transcripts
 bridge serve     Start the panel manually
 bridge backfill  Import stray HANDOFF.md / NEXT-SESSION.md files
+bridge diagnose  Print version, config, and serve.log tail for bug reports
 ```
+
+`bridge --version` prints the version with its build SHA and install method.
 
 ## Scope and safety
 
@@ -231,6 +235,23 @@ JSON for your port. In `~/.claude/settings.json`, give `Notification`,
 and add that same URL to `allowedHttpHookUrls`. The `timeout: 2` is why a
 stopped Bridge costs nothing — the connection is refused immediately.
 Everything else in the panel works without hooks.
+
+## Troubleshooting
+
+Start with `bridge diagnose` — it prints the version, resolved config, the
+LaunchAgent state, and the tail of `serve.log` in one report to paste into a bug
+report (`--lines N` shows more of the log):
+
+```bash
+bridge diagnose
+```
+
+The panel logs to `~/.bridge/serve.log`. For more detail, raise the level and
+restart the panel:
+
+```bash
+BRIDGE_LOG_LEVEL=DEBUG bridge serve
+```
 
 ## Uninstall
 
