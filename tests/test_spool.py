@@ -71,6 +71,23 @@ def test_an_interrupted_write_leaves_no_readable_final_file(spool_dir, monkeypat
     assert [f.name for f in spool_dir.iterdir()] == []
 
 
+# --- Codex review finding #19: the rename itself must be durable, not just
+#     the file's contents -------------------------------------------------
+#
+# `_atomic_write` fsynced the temp file before `os.replace`, which makes the
+# CONTENTS durable, but never fsynced the directory the rename landed in --
+# on some filesystems the rename (the directory entry pointing at the new
+# name) can still be lost to a power loss even though the file's bytes are
+# safe on disk.
+def test_write_fsyncs_the_containing_directory_after_the_rename(spool_dir, monkeypatch):
+    calls = []
+    monkeypatch.setattr(spool, "fsync_dir", lambda d: calls.append(Path(d)))
+
+    spool.write(h("h1"), spool_dir)
+
+    assert calls == [spool_dir]
+
+
 def test_pending_ignores_the_drained_and_bad_subdirectories(store, spool_dir):
     spool.write(h("h1"), spool_dir)
     (spool_dir / "broken.json").write_text("{nope")
