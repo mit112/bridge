@@ -154,6 +154,50 @@ def test_launching_ids_names_the_strays_reconcile_would_flip(store):
     assert store.get_scheduled_run("a")["status"] == "launching"
 
 
+# --- Codex review finding #4: a stray 'pending' launch (and any handoff it
+#     claimed) must be reconcilable at boot, mirroring scheduled runs -------
+
+
+def test_pending_launch_ids_names_the_strays_reconcile_would_flip(store):
+    pid = store.upsert_project("/d", "d")
+    # left at its default outcome='pending'
+    store.create_launch(launch(pid, "l1", handoff_id=None))
+
+    assert store.pending_launch_ids() == ["l1"]
+
+
+def test_reconcile_pending_launches_flips_the_launch_and_its_claimed_handoff(store):
+    pid = store.upsert_project("/d", "d")
+    store.create_handoff(handoff("h1"), pid)
+    assert store.claim_queued_handoff("h1", pid) is not None  # -> 'launching'
+    store.create_launch(launch(pid, "l1", handoff_id="h1"))
+
+    assert store.reconcile_pending_launches(["l1"]) == 1
+
+    assert store.conn.execute("SELECT outcome FROM launches WHERE id=?", ("l1",)).fetchone()["outcome"] == "indeterminate"
+    assert store.get_handoff("h1")["status"] == "indeterminate"
+
+
+def test_reconcile_pending_launches_leaves_a_handoff_free_launch_alone(store):
+    """A launch with no handoff_id (`bridge launch` given a bare prompt) has
+    nothing to reconcile beyond its own outcome -- the handoff-side UPDATE
+    must be skipped rather than matching every row with `status='launching'`
+    across every project."""
+    pid = store.upsert_project("/d", "d")
+    store.create_launch(launch(pid, "l1", handoff_id=None))
+
+    assert store.reconcile_pending_launches(["l1"]) == 1
+    assert store.conn.execute("SELECT outcome FROM launches WHERE id=?", ("l1",)).fetchone()["outcome"] == "indeterminate"
+
+
+def test_reconcile_pending_launches_of_an_empty_list_touches_nothing(store):
+    pid = store.upsert_project("/d", "d")
+    store.create_launch(launch(pid, "l1", handoff_id=None))
+
+    assert store.reconcile_pending_launches([]) == 0
+    assert store.conn.execute("SELECT outcome FROM launches WHERE id=?", ("l1",)).fetchone()["outcome"] == "pending"
+
+
 def test_a_missed_run_can_be_retried(store):
     """Without this a replayed job is a dead end: retry rejects it and run-now
     requires `pending`, leaving the user to retype the schedule."""

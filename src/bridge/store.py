@@ -696,6 +696,57 @@ class Store:
                 (session_id, short_id, launch_id),
             )
 
+    def pending_launch_ids(self) -> list[str]:
+        """Name the strays `reconcile_pending_launches` would flip, without
+        flipping. `pending` is the row's state from the moment it is
+        inserted until a terminal outcome is recorded (`_started`/`_failed`
+        in launcher.py) -- a process killed in between (or one whose
+        `set_launch_outcome` call itself raised) leaves it here forever,
+        indistinguishable from a launch still genuinely in flight one
+        second ago. Only a fresh boot can tell the difference: nothing THIS
+        process just started can still be pending by the time it asks."""
+        with self._lock:
+            return [
+                r["id"] for r in
+                self.conn.execute("SELECT id FROM launches WHERE outcome='pending'")
+            ]
+
+    def reconcile_pending_launches(self, ids: list[str]) -> int:
+        """Flip a stray `pending` launch to `indeterminate` -- a real spawn
+        may or may not have happened, so this is terminal and never retried
+        automatically, exactly as `reconcile_launching` treats a stray
+        scheduled run. Any handoff those launches had claimed (moved to
+        `launching` by `claim_queued_handoff`, never resolved to `consumed`
+        or reverted to `queued` because the process died first) moves to
+        `indeterminate` alongside it, so it stops being invisible -- neither
+        offered as queued again nor silently stuck in a status nothing
+        displays.
+        """
+        if not ids:
+            return 0
+        with self.transaction():
+            placeholders = ",".join("?" for _ in ids)
+            handoff_ids = [
+                r["handoff_id"] for r in self.conn.execute(
+                    f"SELECT handoff_id FROM launches WHERE id IN ({placeholders})",
+                    ids,
+                )
+                if r["handoff_id"] is not None
+            ]
+            cur = self.conn.execute(
+                f"UPDATE launches SET outcome='indeterminate' "
+                f"WHERE id IN ({placeholders}) AND outcome='pending'",
+                ids,
+            )
+            if handoff_ids:
+                hph = ",".join("?" for _ in handoff_ids)
+                self.conn.execute(
+                    f"UPDATE handoffs SET status='indeterminate' "
+                    f"WHERE id IN ({hph}) AND status='launching'",
+                    handoff_ids,
+                )
+            return cur.rowcount
+
     def launches(
         self, project_id: int, limit: int = 50, offset: int = 0,
         *, sort: str | None = None, direction: str | None = None,
