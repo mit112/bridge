@@ -767,8 +767,25 @@ def create_app(
             _sse_connections["n"] += 1
 
         def live_signature(payload: dict) -> dict:
+            # `queued`/`scheduled`/`dirty`/`attention` are all present in
+            # EVERY payload shape this compares (both `full_update()` and the
+            # faster `live_patch()` compute them the same way in
+            # `_envelope`), so including them here is what lets an authored
+            # mutation -- a handoff queued, a schedule created, a project
+            # marked dirty -- reach the stream on its own, rather than only
+            # ever surfacing on the next `generation` bump from a periodic
+            # reindex. `git`/`burn` per card are deliberately NOT here:
+            # `live_patch()` strips both from every card, so comparing them
+            # against a full-update payload would spuriously fire on every
+            # tick.
             return {
-                "topbar": {"running": payload["topbar"]["running"]},
+                "topbar": {
+                    "running": payload["topbar"]["running"],
+                    "queued": payload["topbar"]["queued"],
+                    "scheduled": payload["topbar"]["scheduled"],
+                    "dirty": payload["topbar"]["dirty"],
+                    "attention": payload["topbar"]["attention"],
+                },
                 "diagnostics": payload["diagnostics"],
                 "freshness": payload["freshness"],
                 "cards": {

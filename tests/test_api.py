@@ -1797,6 +1797,32 @@ def test_an_unchanged_tick_emits_nothing_after_the_snapshot(client):
     assert [n for n, _ in frames] == ["snapshot"], "a quiet server still emitted"
 
 
+def test_sse_emits_on_a_queued_count_change_with_no_generation_bump(tmp_path, monkeypatch):
+    """Codex review finding #8: creating a queued handoff bumps the notifier
+    but never `generation` (that only advances on a reindex), so the stream's
+    `live_patch` branch is the only path that could ever notice it -- and
+    without `topbar.queued` in `live_signature`, that branch saw no
+    difference at all. Creating a handoff for real between ticks would work
+    too, but there is no hook to run it exactly between tick 1 and tick 2 of
+    a single streamed response; stubbing the exact count `_envelope` reads
+    isolates the signature comparison itself from that plumbing problem."""
+    cfg = load({"db_path": tmp_path / "queued.db", "spool_dir": tmp_path / "spool"})
+    store = Store(cfg.db_path)
+    store.upsert_project("/p/queued", "queued")
+    counts = iter([0, 1, 1, 1])
+    monkeypatch.setattr(store, "queued_handoff_count", lambda: next(counts))
+
+    c = TestClient(create_app(store, cfg))
+    with c.stream("GET", "/events?max_ticks=2&interval=0") as r:
+        frames = _frames("".join(r.iter_text()))
+    store.close()
+
+    assert [n for n, _ in frames] == ["snapshot", "update"], (
+        "a queued-count change with no generation bump never reached the wire"
+    )
+    assert frames[1][1]["topbar"]["queued"] == 1
+
+
 def test_a_capped_stream_ends_with_a_named_refresh_rather_than_running_forever(client):
     """`max_ticks` is a BACKSTOP, not the thing under test.
 
