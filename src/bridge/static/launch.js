@@ -63,14 +63,90 @@ async function savePrompt(field) {
     // An older save that resolves after a newer one must not overwrite the
     // newer save's already-recorded result -- only the request that is still
     // the newest ISSUED for this field may record its own success.
-    if (promptSaveSeq.get(field) === seq) field.dataset.savedPrompt = submitted;
+    if (promptSaveSeq.get(field) === seq) {
+      field.dataset.savedPrompt = submitted;
+      clearHandoffDraft(handoffId);
+    }
     announce(key, "✓ Prompt saved");
   } catch (error) {
     // The prompt is the one thing Bridge cannot rebuild from transcripts, so a
-    // failed save says so in words and points at the way out.
+    // failed save says so in words and points at the way out. It is also the
+    // only copy of the edit: a navigation right after this still swaps the
+    // field away (the router only waits for this promise to SETTLE, not
+    // succeed), so the failed text is persisted here and restored on the next
+    // `onEnter` rather than left to vanish with the old field.
     console.error("bridge: saving the prompt failed", error);
     announce(key, "⚠ Not saved — use Copy prompt so the text is not lost");
+    if (promptSaveSeq.get(field) === seq) saveHandoffDraft(handoffId, submitted);
   }
+}
+
+function handoffDraftKey(handoffId) {
+  return "bridge.handoff-draft." + handoffId;
+}
+
+function saveHandoffDraft(handoffId, value) {
+  let store;
+  try {
+    store = window.sessionStorage;
+  } catch (error) {
+    return;
+  }
+  if (!store) return;
+  try {
+    store.setItem(handoffDraftKey(handoffId), value);
+  } catch (error) {
+    // Blocked or full storage: the draft simply is not persisted this time.
+  }
+}
+
+function clearHandoffDraft(handoffId) {
+  let store;
+  try {
+    store = window.sessionStorage;
+  } catch (error) {
+    return;
+  }
+  if (!store) return;
+  try {
+    store.removeItem(handoffDraftKey(handoffId));
+  } catch (error) {
+    // Ignore -- nothing to clean up if storage will not answer.
+  }
+}
+
+// Restores a handoff prompt that failed to save before a navigation swapped
+// its field out. Unlike the compose draft (a brand-new prompt with no server
+// copy), the server ALWAYS pre-fills this field with its own last-saved
+// value, so the restore is unconditional on the field being empty and instead
+// keyed on the draft actually differing from what just got rendered -- and it
+// re-announces the warning, since the restored text is still not saved.
+function restoreHandoffDrafts() {
+  if (typeof document === "undefined" || !document.querySelectorAll) return;
+  let store;
+  try {
+    store = window.sessionStorage;
+  } catch (error) {
+    return;
+  }
+  if (!store) return;
+
+  document.querySelectorAll("[data-prompt-handoff]").forEach((field) => {
+    const handoffId = field.getAttribute("data-prompt-handoff");
+    let draft;
+    try {
+      draft = store.getItem(handoffDraftKey(handoffId));
+    } catch (error) {
+      return;
+    }
+    if (draft === null || draft === field.value) return;
+
+    field.value = draft;
+    announce(
+      `[data-prompt-status="${field.id}"]`,
+      "⚠ Not saved — use Copy prompt so the text is not lost",
+    );
+  });
 }
 
 document.addEventListener("focusout", (event) => {
@@ -349,8 +425,10 @@ if (window.bridgePage) {
   ));
   window.bridgePage.onEnter(prefillLaunchDefaults);
   window.bridgePage.onEnter(restoreComposeDrafts);
+  window.bridgePage.onEnter(restoreHandoffDrafts);
 }
 if (!window.bridgePage) {
   prefillLaunchDefaults();
   restoreComposeDrafts();
+  restoreHandoffDrafts();
 }
