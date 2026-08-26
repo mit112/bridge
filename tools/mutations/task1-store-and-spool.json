@@ -38,7 +38,7 @@
   {
     "name": "let a parse error propagate instead of quarantining the file",
     "file": "src/bridge/spool.py",
-    "old": "        try:\n            parsed.append((_load(path), path))\n        except Exception:  # noqa: BLE001 - one bad file must not stop the drain\n            _quarantine(path, bad_dir)\n            stats.bad += 1",
+    "old": "        try:\n            parsed.append((_load(path), path))\n        except Exception as exc:  # noqa: BLE001 - one bad file must not stop the drain\n            log.warning(\"quarantining unparsable spool file %s: %s\", path.name, exc)\n            _quarantine(path, bad_dir)\n            stats.bad += 1",
     "new": "        parsed.append((_load(path), path))\n        if False:\n            _quarantine(path, bad_dir)\n            stats.bad += 1",
     "tests": [
       "tests/test_spool.py::test_a_corrupt_file_is_quarantined_and_the_valid_ones_still_drain"

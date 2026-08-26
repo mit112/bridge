@@ -26,11 +26,14 @@ regression test for both.
 
 import dataclasses
 import json
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 
 from bridge.models import ScheduledRun
 from bridge.spool import _atomic_write, _quarantine
+
+log = logging.getLogger(__name__)
 
 _FIELDS = frozenset(f.name for f in dataclasses.fields(ScheduledRun))
 
@@ -195,13 +198,21 @@ def rebuild_if_empty(store, spool_dir: Path, now: int) -> RebuildStats:
             if path.name.endswith(STATUS_SUFFIX):
                 try:
                     statuses.append(_load_status(path))
-                except Exception:  # noqa: BLE001 - one bad record cannot stop replay
+                except Exception as exc:  # noqa: BLE001 - one bad record cannot stop replay
+                    log.warning(
+                        "quarantining unparsable schedule status record %s: %s",
+                        path.name,
+                        exc,
+                    )
                     _quarantine(path, bad_dir)
                     stats.bad += 1
                 continue
             try:
                 records.append(_load(path))
-            except Exception:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001
+                log.warning(
+                    "quarantining unparsable schedule record %s: %s", path.name, exc
+                )
                 _quarantine(path, bad_dir)
                 stats.bad += 1
 

@@ -52,8 +52,8 @@
   {
     "name": "let a diagnostics write failure fail the whole index -- the one thing that must always work",
     "file": "src/bridge/indexer.py",
-    "old": "    except Exception:  # noqa: BLE001\n        pass\n\n    return stats",
-    "new": "    except Exception:  # noqa: BLE001\n        raise\n\n    return stats",
+    "old": "    except Exception as exc:  # noqa: BLE001\n        log.warning(\"failed to record index run for Diagnostics: %s\", exc)\n        pass\n\n    return stats",
+    "new": "    except Exception as exc:  # noqa: BLE001\n        log.warning(\"failed to record index run for Diagnostics: %s\", exc)\n        raise\n\n    return stats",
     "tests": [
       "tests/test_api.py::test_a_diagnostics_write_failure_cannot_fail_an_index"
     ],

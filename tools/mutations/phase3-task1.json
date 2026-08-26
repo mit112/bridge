@@ -116,8 +116,8 @@
   {
     "name": "let a corrupt status record abort the whole replay instead of quarantining it",
     "file": "src/bridge/spool.py",
-    "old": "                except Exception:  # noqa: BLE001 - one bad record cannot stop the replay\n                    _quarantine(path, bad_dir)\n                    stats.bad += 1\n                continue",
-    "new": "                except Exception:  # noqa: BLE001 - one bad record cannot stop the replay\n                    raise\n                continue",
+    "old": "                except Exception as exc:  # noqa: BLE001 - one bad record cannot stop the replay\n                    log.warning(\n                        \"quarantining unparsable status record %s: %s\", path.name, exc\n                    )\n                    _quarantine(path, bad_dir)\n                    stats.bad += 1\n                continue",
+    "new": "                except Exception as exc:  # noqa: BLE001 - one bad record cannot stop the replay\n                    raise\n                continue",
     "tests": [
       "tests/test_spool.py::test_a_corrupt_status_record_is_quarantined_and_the_replay_continues"
     ],

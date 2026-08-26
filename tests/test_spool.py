@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 from pathlib import Path
 
@@ -373,4 +374,41 @@ def test_a_corrupt_status_record_is_quarantined_and_the_replay_continues(
     assert {r["id"] for r in s.handoffs(pid)} == {"h1", "h2"}
     assert s.get_handoff("h1")["status"] == "consumed"
     assert s.queued_handoff(pid)["id"] == "h2"
+    s.close()
+
+
+def test_quarantining_a_corrupt_drain_file_logs_a_warning_naming_it(
+    store, spool_dir, caplog
+):
+    """Quarantine drops spool depth with no user-visible signal; the log is it."""
+    spool.write(h("good1", created_at=1), spool_dir)
+    (spool_dir / "broken.json").write_text("{not json at all")
+
+    with caplog.at_level(logging.WARNING, logger="bridge.spool"):
+        stats = spool.drain(store, spool_dir)
+
+    # Behaviour preserved: the good handoff drained, only the bad one quarantined.
+    assert (stats.drained, stats.bad) == (1, 1)
+    assert (spool_dir / "bad" / "broken.json").exists()
+    assert store.queued_handoff(demo_pid(store))["id"] == "good1"
+    # ...and the operator now gets a warning that names the offending file.
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("broken.json" in r.getMessage() for r in warnings)
+
+
+def test_quarantining_a_corrupt_status_record_logs_a_warning_naming_it(
+    tmp_path, spool_dir, caplog
+):
+    spool.journal(h("h1", created_at=1), spool_dir)
+    (spool_dir / "drained" / "h1.500.status.json").write_text("{not json at all")
+
+    s = Store(tmp_path / "q.db")
+    with caplog.at_level(logging.WARNING, logger="bridge.spool"):
+        stats = spool.rebuild_if_empty(s, spool_dir)
+
+    # Behaviour preserved: the creation replayed, only the bad status quarantined.
+    assert (stats.drained, stats.bad) == (1, 1)
+    assert (spool_dir / "bad" / "h1.500.status.json").exists()
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("h1.500.status.json" in r.getMessage() for r in warnings)
     s.close()
