@@ -2950,7 +2950,14 @@ def test_running_a_schedule_now_journals_the_claim_before_firing(
 
 def test_a_claim_that_cannot_be_journalled_does_not_fire(launch_app, monkeypatch):
     """The one journal failure that must abort: firing without the claim record
-    is the duplicate-launch scenario this whole change exists to close."""
+    is the duplicate-launch scenario this whole change exists to close.
+
+    The row goes back to `pending`, not `failed` -- `failed` is terminal, so a
+    job still scheduled for the future would never fire again over what is
+    very likely a transient filesystem hiccup. Unclaiming costs nothing
+    fire() hadn't already been skipped for: run-now (or the scheduler's own
+    next tick, if this job's time has not yet come) can claim it again.
+    """
     from bridge import schedspool
 
     c, _, _, fake = launch_app
@@ -2966,8 +2973,14 @@ def test_a_claim_that_cannot_be_journalled_does_not_fire(launch_app, monkeypatch
 
     r = c.post(f"/api/schedule/{sid}/run-now")
 
-    assert r.json()["status"] == "failed"
+    assert r.json()["status"] == "pending"
     assert fake.calls == []
+    # And it is genuinely retryable, not just labelled that way: the next
+    # attempt (journaling fixed) claims and fires it normally.
+    monkeypatch.setattr(schedspool, "journal_status", lambda *a, **kw: None)
+    retry = c.post(f"/api/schedule/{sid}/run-now")
+    assert retry.json()["status"] == "fired"
+    assert len(fake.calls) == 1
 
 
 # --- Task 5: the Scheduled panel section --------------------------------------
