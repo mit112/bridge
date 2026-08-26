@@ -268,6 +268,14 @@ This removes the LaunchAgent. You'll be asked whether to delete `~/.bridge/`
 uv run pytest
 ```
 
+A slice of the suite (`test_morph.py`, `test_static_js.py`,
+`test_swap_lifecycle.py`, `test_liverefresh.py`, `test_shell_contract.py`)
+exercises the client-side JavaScript by running it under [Node](https://nodejs.org/)
+against a small hand-rolled DOM. It self-skips when `node` is not on your
+PATH — a skip, not a failure — so install Node to run that part locally; CI
+installs it explicitly rather than relying on the runner image happening to
+have it.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
