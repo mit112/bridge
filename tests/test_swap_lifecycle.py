@@ -191,7 +191,7 @@ def test_view_toggle_reannounces_after_a_swap(tmp_path):
         const { El } = require(MINIDOM);
         document.documentElement.setAttribute("data-projects-view", "grid");
         function freshButtons() {
-          document.body.children.length = 0;
+          document.body.childNodes = [];
           const list = new El("button", { "data-projects-view-button": "list",
                                           "aria-pressed": "true" });
           const grid = new El("button", { "data-projects-view-button": "grid",
@@ -508,7 +508,7 @@ def test_the_freshness_strip_is_reseeded_after_returning_to_overview(tmp_path):
         """
         const { El } = require(MINIDOM);
         function strip(server) {
-          document.body.children.length = 0;
+          document.body.childNodes = [];
           const s = new El("section", { "data-freshness-strip": "",
                                         "data-index-at": "1754300000",
                                         "data-server": server });
@@ -521,7 +521,7 @@ def test_the_freshness_strip_is_reseeded_after_returning_to_overview(tmp_path):
         const afterFirst = first.s.getAttribute("data-freshness-state");
         // Away to a page with no strip, then back to a freshly rendered one.
         window.bridgePage.leave();
-        document.body.children.length = 0;
+        document.body.childNodes = [];
         window.bridgePage.enter();
         const back = strip("available");
         window.bridgePage.enter();
