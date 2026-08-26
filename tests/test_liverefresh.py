@@ -158,6 +158,50 @@ def test_navigating_away_during_an_in_flight_fetch_does_not_clobber_the_new_rout
     assert got["clobbered"] is False, "a stale fetch must never morph into the new route's DOM"
     assert got["fetches"] == 2, "the same-route bump after returning must still get its own fetch"
 
+# Codex review finding #13: the stale-fetch guard compared pathname only.
+# `/schedule?view=upcoming` and `/schedule?view=history` share a pathname, so
+# an in-flight fetch issued for one view survived a swap to the other and
+# morphed its stale fragment in regardless. minidom's `location` stub has no
+# `search` getter (nothing else here needed one), so it is added per-test.
+def test_a_query_string_change_during_an_in_flight_fetch_does_not_clobber_the_new_view(
+    tmp_path,
+):
+    got = _run("""
+        Object.defineProperty(globalThis.location, "search", {
+          get() { return new URL(this.href).search; },
+        });
+        (async () => {
+        setPath("/schedule?view=upcoming");
+        const body = shellBody();
+        const marker = document.createElement("span");
+        marker.setAttribute("data-marker", "original"); body.append(marker);
+        const inc = document.createElement("div"); inc.setAttribute("class", "shell__body");
+        inc.append(document.createElement("p")); window.__parsed = { body: inc };
+
+        window.bridgePage.enter();                             // land on ?view=upcoming
+        window.bridgeLiveRefresh._onFrame({ generation: 1 });   // baseline = 1
+        window.bridgeLiveRefresh._onFrame({ generation: 2 });   // bump -> pending
+        window.bridgeLiveRefresh._refreshNow();                 // fetch #1: for ?view=upcoming, in flight
+
+        // Same PATHNAME, different QUERY -- `owned` stays true and the path
+        // check alone would see no change at all.
+        await window.bridgePage.leave();
+        setPath("/schedule?view=history");
+        window.bridgePage.enter();
+
+        // Let fetch #1's chain fully settle now that the view has moved on.
+        await new Promise((resolve) => setImmediate(resolve));
+
+        const clobbered = body.children.length !== 1 || marker.parent !== body;
+        report({ clobbered });
+        })();
+    """, tmp_path)
+    assert got["clobbered"] is False, (
+        "an in-flight fetch for one query-string view morphed its stale "
+        "fragment into a DIFFERENT view sharing the same pathname"
+    )
+
+
 def test_focus_on_a_non_preserve_node_does_not_abort_the_whole_refresh(tmp_path):
     # morph.js calls opts.ignore on the ROOT .shell__body first. The old
     # ignoreNode returned true whenever the root `.contains(activeElement)` --

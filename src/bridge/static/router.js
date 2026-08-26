@@ -84,19 +84,33 @@ function announceArrival() {
   if (body) body.scrollTop = 0;
 }
 
+// A monotonic counter, bumped once per `navigate()` call. Two rapid
+// navigations (a fast double-click, or a click racing a popstate) can have
+// their `leave()`/`fetch()` steps resolve in EITHER order -- nothing about
+// promises guarantees the one issued first finishes first. Each call
+// captures the epoch it was issued under and re-checks it after every await;
+// a navigation whose epoch no longer matches the current one has been
+// superseded by a newer navigation and must touch neither the DOM nor
+// history, and must not fall back to a full reload of its own (now stale)
+// href either -- the newer navigation is already doing the right thing.
+let navEpoch = 0;
+
 async function navigate(href, { push = true } = {}) {
   const url = new URL(href, window.location.href);
   if (!swappable(url)) { window.location.assign(href); return; }
+  const epoch = ++navEpoch;
   try {
     // Awaited -- not fire-and-forget. A leave hook's own async work (launch.js's
     // prompt flush) must settle before the fragment fetch and the swap it feeds,
     // or a failed save's warning lands on a status node that is already gone.
     // bridgePage.leave() (shell.js) returns a promise for exactly this.
     await window.bridgePage.leave();
+    if (epoch !== navEpoch) return;  // superseded while awaiting leave()
     const response = await fetch(url.href, {
       headers: { "X-Bridge-Fragment": "1" },
       credentials: "same-origin",
     });
+    if (epoch !== navEpoch) return;  // superseded while the fetch was in flight
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const parsed = parseFragment(await response.text());
     if (!parsed || !applyFragment(parsed)) throw new Error("unusable fragment");
@@ -104,6 +118,7 @@ async function navigate(href, { push = true } = {}) {
     window.bridgePage.enter();
     announceArrival();
   } catch (error) {
+    if (epoch !== navEpoch) return;  // a newer navigation already took over
     // Never strand the user on a link that did nothing. A real navigation is
     // always correct -- it is only ever slower.
     console.error("bridge: swap failed, falling back to a full load", error);
