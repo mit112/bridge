@@ -311,6 +311,21 @@ function restoreComposeDrafts() {
   });
 }
 
+// Shared with schedule.js: a successful compose action (immediate launch or
+// schedule) clears the field PROGRAMMATICALLY, which fires no `input` event --
+// so without this, `saveComposeDraft`'s sessionStorage entry survives to
+// resurrect the just-launched prompt on the next swap, and the launch button
+// (armed by that same event) stays enabled over the now-empty field.
+window.bridgeClearComposeField = function bridgeClearComposeField(field) {
+  field.value = "";
+  saveComposeDraft(field);
+  const band = document.querySelector(`[data-launch-prompt="${field.id}"]`);
+  if (band) {
+    const button = band.querySelector("[data-launch-button]");
+    if (button) button.disabled = true;
+  }
+};
+
 // Dismiss a queued handoff from the workspace's Current tab. Reuses the same
 // PATCH the handoff prompt already saves through — only the body differs —
 // so no new write path is introduced. No reload: the already-rendered
