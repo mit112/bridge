@@ -13,9 +13,12 @@ One local server process is the **sole writer** to a SQLite database in WAL mode
 Everything else — the web UI, the `bridge` CLI, the Claude sessions that report
 into it — is a client. Funnelling every write through one process gives zero lock
 contention and no torn state under concurrent multi-session access, and keeps the
-CLI stateless. The database is a pure derived cache of the transcripts on disk; it
-can be deleted and rebuilt at any time, so schema and attribution changes never
-need a data migration for correctness.
+CLI stateless. Most of the database — sessions, git state, token counts — is a
+pure derived cache of the transcripts on disk and can be deleted and rebuilt at
+any time. Handoffs and scheduled runs are the exception: they are **authored**
+data with no transcript to rebuild them from, so each is backed by its own
+append-only on-disk journal (see Durability below) rather than the transcript
+corpus.
 
 ```
   Claude session ─┐
@@ -24,7 +27,7 @@ need a data migration for correctness.
                                          ▼
    ~/.claude/projects/*.jsonl ──►  ┌────────────┐
    git repos (read-only)     ──►   │   server   │──► SQLite (WAL)
-   claude agents --json      ──►   │  (FastAPI) │
+   ~/.claude/sessions/*.json ──►   │  (FastAPI) │
    session-meta/*.json (opt) ──►   └─────┬──────┘
                                          │ HTML + SSE
                                          ▼
@@ -36,15 +39,18 @@ need a data migration for correctness.
 
 ## Stack
 
-FastAPI + Jinja2 + HTMX + Server-Sent Events, plain CSS. No build step, no
-`node_modules`, one language. Python pinned via `uv`. Runtime deps are `fastapi`,
-`uvicorn`, `jinja2`, and `httpx` (CLI only); `sqlite3` is from the stdlib. Server
+FastAPI + Jinja2 + Server-Sent Events, plain CSS and hand-written JavaScript. No
+build step, no `node_modules`, no frontend framework. Python pinned via `uv`.
+Runtime deps are `fastapi`, `uvicorn`, and `jinja2`; the CLI talks to the server
+over stdlib `urllib`, not a dependency; `sqlite3` is from the stdlib. Server
 binds to `127.0.0.1` with no authentication — it is a single-user local tool, and
 LAN exposure is deliberately out of scope (an unauthenticated session-launcher
 must not be reachable off the loopback).
 
 The API boundary between server and UI is clean, so the frontend is a contained
-piece: server-rendered Jinja fragments swapped over HTMX, kept live by SSE.
+piece: server-rendered Jinja fragments, swapped into a persistent shell by a
+small client-side router (no HTMX, no build step) and kept live by SSE plus an
+in-place DOM morph.
 
 ## Data sources
 
@@ -52,7 +58,7 @@ piece: server-rendered Jinja fragments swapped over HTMX, kept live by SSE.
 |---|---|---|
 | `~/.claude/projects/**/*.jsonl` | Sessions, titles, prompts, model, effort, branch, token usage | Authoritative |
 | Project git repos | Branch, dirty count, ahead/behind, last commit, uncommitted age | Authoritative, read-only |
-| `claude agents --json` | Currently running sessions | Authoritative, may fail |
+| `~/.claude/sessions/*.json` | Currently running sessions | Authoritative, may fail |
 | `~/.claude/usage-data/session-meta/*.json` | Enrichment (tool counts, languages, commits, duration) | Optional, incomplete |
 
 Every source is treated as untrusted input. Unknown record shapes and absent keys
@@ -68,8 +74,8 @@ Each unit has one job, a typed interface, and independent tests.
   mapping moved project paths to a canonical path so split history merges.
 - **`gitprobe`** — repo path → branch, dirty count, ahead/behind, last commit, and
   `oldest_uncommitted_at`. Shells out to `git` with a timeout; never mutates.
-- **`agents`** — wraps `claude agents --json`; returns *unavailable* on any
-  non-zero exit, malformed JSON, or unexpected shape.
+- **`agents`** — reads the `~/.claude/sessions/*.json` registry directly (no
+  subprocess); returns *unavailable* on any read or shape failure.
 - **`store`** — the SQLite schema and queries; the sole writer. WAL,
   `foreign_keys=ON`, `busy_timeout`. Migrations are additive only.
 - **`registry`** — discovers and classifies projects (opt-out, not opt-in), then
@@ -118,13 +124,18 @@ SQLite has no `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`, so replaying a schema
 list on every open cannot add a column — the second open raises `duplicate column
 name`. Column evolution therefore goes through a migration map plus an
 `_ensure_columns()` step that consults `PRAGMA table_info` and issues `ALTER TABLE`
-only for genuinely-absent columns; tables use `CREATE TABLE IF NOT EXISTS`. Because
-the database is a derived cache, migrations only matter for preserving a *running*
-server's data, never for correctness — a full rebuild reconstructs everything.
+only for genuinely-absent columns; tables use `CREATE TABLE IF NOT EXISTS`. For the
+derived tables, migrations only matter for preserving a *running* server's data,
+never for correctness — a full rebuild reconstructs everything from transcripts.
+`handoffs` and `scheduled_runs` are the exception: their rebuild source is their
+own on-disk journal, not the transcript corpus, so losing both the database and
+the journal loses them for good.
 
-Core tables: `projects`, `sessions`, `handoffs`, `launches`, `scan_state`,
-`git_cache`, plus a path-alias table that folds moved projects into one canonical
-identity.
+Core tables: `projects`, `sessions`, `handoffs`, `launches`, `scheduled_runs`,
+`scan_state`, `git_cache`, plus a path-alias table that folds moved projects into
+one canonical identity. `handoffs` and `scheduled_runs` are the authored tables
+called out above — the migration story is the same, but a rebuild after data
+loss for them means replaying their own journal, not re-scanning transcripts.
 
 ## The handoff loop
 
@@ -188,7 +199,7 @@ several failed probes still renders with what it has.
 | Truncated final line | Expected; leave `parsed_offset` before it. |
 | Transcript file shrank | Treat as rewritten; re-scan from offset zero. |
 | `git` timeout or non-repo | Mark git *unknown* on that card only; show last good cache with its age. |
-| `claude agents --json` fails | Live band renders *unavailable*; rest of card unaffected. |
+| Registry read (`~/.claude/sessions/*.json`) fails | Live band renders *unavailable*; rest of card unaffected. |
 | Server unreachable from CLI | Spool to disk, exit zero, drain on boot. |
 | Launch fails | Surface the error in the UI and copy the prompt to the clipboard. |
 | Project path no longer exists | Auto-archive, keep history. |
