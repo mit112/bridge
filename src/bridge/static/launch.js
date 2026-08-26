@@ -30,6 +30,12 @@ window.bridgeLaunchBody = function bridgeLaunchBody(id, projectPath) {
   };
 };
 
+// Tracks, per field, the sequence number of the most recently ISSUED save --
+// not the most recently RESOLVED one. `focusout` and the `onLeave` flush can
+// both fire a save for the same field, so two requests can be in flight at
+// once; the network makes no promise about which answers first.
+const promptSaveSeq = new WeakMap();
+
 // Save an edited prompt when focus leaves the field, and only when the text
 // actually changed — `focusout` (which bubbles, unlike `blur`) fires on every
 // tab-through, and a PATCH per tab-through would re-journal an unchanged prompt.
@@ -38,15 +44,26 @@ async function savePrompt(field) {
   const saved = field.dataset.savedPrompt ?? field.defaultValue;
   if (field.value === saved) return;
 
+  // Captured now, not re-read after the `await` below: the user can keep
+  // typing while this request is in flight, and `savedPrompt` must record
+  // what the server actually received, never whatever happens to be in the
+  // field when the response lands.
+  const submitted = field.value;
+  const seq = (promptSaveSeq.get(field) || 0) + 1;
+  promptSaveSeq.set(field, seq);
+
   const key = `[data-prompt-status="${field.id}"]`;
   try {
     const response = await fetch(`/api/handoff/${encodeURIComponent(handoffId)}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ next_prompt: field.value }),
+      body: JSON.stringify({ next_prompt: submitted }),
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    field.dataset.savedPrompt = field.value;
+    // An older save that resolves after a newer one must not overwrite the
+    // newer save's already-recorded result -- only the request that is still
+    // the newest ISSUED for this field may record its own success.
+    if (promptSaveSeq.get(field) === seq) field.dataset.savedPrompt = submitted;
     announce(key, "✓ Prompt saved");
   } catch (error) {
     // The prompt is the one thing Bridge cannot rebuild from transcripts, so a
