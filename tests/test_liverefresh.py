@@ -295,6 +295,36 @@ def test_first_frame_after_enter_does_not_spuriously_refresh(tmp_path):
     """, tmp_path)
     assert got["fetches"] == 0, "the very first frame for a view must only adopt a baseline"
 
+def test_a_morph_reapplies_client_derived_state(tmp_path):
+    # Client-derived display -- e.g. schedule.js paints every [data-scheduled-for]
+    # cell into the viewer's local time -- is registered via bridgePage.onMorph
+    # and must re-run AFTER each live morph. Otherwise morph.js's leaf-text sync
+    # reverts those cells to the server's raw UTC and nothing repaints them
+    # (the enter() pass does not re-run on an in-place morph). The hook must also
+    # see the ALREADY-MORPHED DOM so it derives from the fresh nodes.
+    got = _run("""
+        (async () => {
+        setPath("/schedule");
+        const body = shellBody();
+        const inc = document.createElement("div"); inc.setAttribute("class", "shell__body");
+        inc.append(document.createElement("p")); window.__parsed = { body: inc };
+        let ran = 0, sawChildren = -1;
+        window.bridgePage.onMorph(() => { ran += 1; sawChildren = body.children.length; });
+        window.bridgePage.enter();
+        window.bridgeLiveRefresh._onFrame({ generation: 1 });
+        window.bridgeLiveRefresh._onFrame({ generation: 2 });   // bump -> refresh
+        window.bridgeLiveRefresh._refreshNow();
+        await new Promise((resolve) => setImmediate(resolve));
+        report({ ran, sawChildren });
+        })();
+    """, tmp_path)
+    assert got["ran"] == 1, "an onMorph hook must run exactly once after a live morph"
+    assert got["sawChildren"] == 1, (
+        "the onMorph hook must run AFTER the fragment is morphed in, so client-"
+        "derived display re-applies to the fresh nodes"
+    )
+
+
 def test_a_debounced_burst_schedules_only_one_refresh(tmp_path):
     got = _run("""
         setPath("/schedule");

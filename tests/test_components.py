@@ -218,6 +218,39 @@ def test_schedule_row_interactive_pending_shows_run_now_edit_cancel():
     assert "data-scheduled-retry=" not in html
 
 
+def test_schedule_row_edit_controls_survive_the_live_morph():
+    """The Edit toggle's aria-expanded and its panel's `hidden` are client-owned
+    (schedule.js flips them on click), but the server always renders them
+    collapsed. The live morph re-syncs both attributes to the server default, so
+    without data-live-preserve on BOTH nodes an SSE refresh silently re-hides an
+    open edit panel AND inverts the toggle (schedule.js reads aria-expanded to
+    decide direction, so the next click would re-open instead of close)."""
+    row = ScheduleRow(
+        id="s3",
+        project_id=7,
+        project_name="Demo",
+        prompt_preview="go",
+        scheduled_for=1735700000,
+        status="pending",
+        error=None,
+        scheduled_for_utc="2025-01-01 00:00 UTC",
+        scheduled_for_iso="2025-01-01T00:00:00+00:00",
+        mode="terminal",
+    )
+    html = _module().schedule_row(row, interactive=True)
+
+    toggle_start = html.index("data-scheduled-edit-toggle")
+    toggle_tag = html[html.rindex("<", 0, toggle_start):html.index(">", toggle_start)]
+    assert "data-live-preserve" in toggle_tag, (
+        "the Edit toggle must keep its aria-expanded across a morph"
+    )
+    panel_start = html.index("data-scheduled-edit-panel")
+    panel_tag = html[html.rindex("<", 0, panel_start):html.index(">", panel_start)]
+    assert "data-live-preserve" in panel_tag, (
+        "the edit panel must keep its open state across a morph"
+    )
+
+
 def test_schedule_row_interactive_launching_omits_run_now_edit_and_cancel():
     """A `launching` row is already claimed: `run-now`, `patch_schedule`, and
     `delete_schedule` all 409 on it, so Run now, Edit and Cancel would be dead

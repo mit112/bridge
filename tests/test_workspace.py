@@ -859,6 +859,50 @@ def test_edit_prompt_reveals_the_editable_handoff_textarea_behind_a_preview(tmp_
     store.close()
 
 
+def test_edit_prompt_disclosure_survives_the_live_morph(tmp_path):
+    """The 'Edit prompt' <details> open state is client-owned, but the server
+    always renders it collapsed and the live-update morph strips any attribute
+    the incoming fragment omits (morph.js syncAttrs). Without data-live-preserve
+    ON THE DISCLOSURE, an SSE refresh silently re-collapses the panel while the
+    user is reading/editing. The attribute makes the morph hand off the whole
+    subtree, keeping `open` -- and the textarea -- intact."""
+    c, store, pid = _client_with_handoff(tmp_path)
+    html = c.get(f"/project/{pid}?tab=current").text
+
+    edit_start = html.index('class="handoff__edit"')
+    details_tag = html[edit_start:html.index(">", edit_start)]
+    assert "data-live-preserve" in details_tag, (
+        "the edit disclosure must be preserved so the live morph cannot strip "
+        "its open state and auto-collapse it mid-edit"
+    )
+    store.close()
+
+
+def test_collapsible_launch_surfaces_survive_the_live_morph(tmp_path):
+    """Same bug class as the handoff editor across the rest of the Current tab:
+    the 'Start a different session' and 'Change options' disclosures and the
+    schedule mini-form are all server-rendered collapsed, and the live morph
+    strips their open state (details `open`, panel `hidden`, toggle
+    `aria-expanded`). Each interactive node must carry data-live-preserve so an
+    SSE refresh cannot snap it shut mid-use."""
+    c, store, pid = _client_with_handoff(tmp_path)
+    html = c.get(f"/project/{pid}?tab=current").text
+
+    for cls in ("compose__disclosure", "launch__options"):
+        start = html.index(f'class="{cls}"')
+        tag = html[html.rindex("<", 0, start):html.index(">", start)]
+        assert "data-live-preserve" in tag, f"the {cls} disclosure must survive the morph"
+
+    panel_start = html.index('class="schedule-form"')
+    panel_tag = html[html.rindex("<", 0, panel_start):html.index(">", panel_start)]
+    assert "data-live-preserve" in panel_tag, "the schedule mini-form panel must survive the morph"
+
+    toggle_start = html.index("data-schedule-toggle")
+    toggle_tag = html[html.rindex("<", 0, toggle_start):html.index(">", toggle_start)]
+    assert "data-live-preserve" in toggle_tag, "the schedule toggle must keep its aria-expanded"
+    store.close()
+
+
 # --- Task 3.4: Sessions / Handoffs / Launches history tabs -------------------
 
 

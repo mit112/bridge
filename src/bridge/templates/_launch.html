@@ -9,7 +9,11 @@
    Autoescape stays on; nothing here is ever marked `safe`. #}
 
 {% macro schedule_form(panel_id, project_path, prompt_id, totals, handoff_id=none) -%}
-<div class="schedule-form" id="{{ panel_id }}" data-schedule-panel hidden
+{# data-live-preserve: this panel is server-rendered `hidden` and schedule.js
+   toggles it open client-side. Without it the SSE morph would re-add `hidden`
+   and collapse the form the user is filling. Its toggle button carries the
+   same marker so the morph cannot desync the two into an inverted toggle. #}
+<div class="schedule-form" id="{{ panel_id }}" data-schedule-panel hidden data-live-preserve
      data-schedule-path="{{ project_path }}" data-schedule-prompt="{{ prompt_id }}"
      {%- if handoff_id %} data-schedule-handoff="{{ handoff_id }}"{% endif %}>
   <span class="schedule-form__field">
@@ -40,7 +44,9 @@
 {% macro compose_box(card, totals, collapsed=False) %}
   {% set cid = "compose-" ~ card.project_id %}
   {% set panel = "schedule-" ~ cid %}
-  {% if collapsed %}<details class="compose__disclosure"><summary>Start a different session</summary>{% endif %}
+  {# data-live-preserve so the SSE morph does not strip this <details>'s `open`
+     state (the server always renders it collapsed) and snap it shut mid-use. #}
+  {% if collapsed %}<details class="compose__disclosure" data-live-preserve><summary>Start a different session</summary>{% endif %}
   <section class="compose" aria-labelledby="{{ cid }}-title" data-compose="{{ cid }}">
     <h2 class="compose__title" id="{{ cid }}-title">New session</h2>
     <label class="compose__label" for="{{ cid }}">Prompt for {{ card.name }}</label>
@@ -64,7 +70,7 @@
               data-compose-launch="{{ cid }}">Run now</button>
       {% endif %}
       <button type="button" class="btn" data-schedule-toggle="{{ panel }}"
-              aria-expanded="false" aria-controls="{{ panel }}">Schedule…</button>
+              aria-expanded="false" aria-controls="{{ panel }}" data-live-preserve>Schedule…</button>
       <span class="compose__status" role="status" aria-live="polite"
             data-compose-status="{{ cid }}"></span>
       {# A SIBLING of the panel below, not a descendant: on submit,
@@ -114,7 +120,11 @@
       <div class="handoff-prompt">
         <strong>Saved prompt</strong>
         <p class="handoff__preview">{{ handoff.next_prompt[:240] }}{% if handoff.next_prompt | length > 240 %}…{% endif %}</p>
-        <details class="handoff__edit">
+        {# data-live-preserve so the SSE morph hands off this whole subtree:
+           the server always renders this <details> collapsed, and morph.js
+           strips any attribute the incoming fragment omits -- without this the
+           panel's `open` state is wiped and it auto-collapses mid-edit. #}
+        <details class="handoff__edit" data-live-preserve>
           <summary>Edit prompt</summary>
       {% endif %}
       {# Editable in place, with a persistent visible label rather than a
@@ -137,7 +147,7 @@
     {% set hpanel = "schedule-" ~ hid %}
     <div class="handoff__actions">
         <button type="button" class="btn" data-schedule-toggle="{{ hpanel }}"
-                aria-expanded="false" aria-controls="{{ hpanel }}">Schedule</button>
+                aria-expanded="false" aria-controls="{{ hpanel }}" data-live-preserve>Schedule</button>
         <button type="button" class="btn{% if show_dismiss %} btn--quiet{% endif %}" data-copy-target="{{ hid }}">Copy prompt</button>
         {% if show_dismiss %}
         <button type="button" class="btn btn--quiet" data-handoff-dismiss="{{ handoff.id }}">Dismiss handoff</button>
@@ -261,7 +271,9 @@
             {%- if not handoff %} disabled{% endif %}
             aria-label="{{ 'Continue' if handoff else 'Start' }} a session for {{ card.name }} in Terminal">{{ "Continue in Terminal" if handoff else "Start session" }}</button>
     {% endif %}
-    {% if collapse_options %}<details class="launch__options"><summary><span class="launch__effective">{{ sm or card.launch_models[0].value }} · {{ se or card.launch_efforts[0] }} · Ask as usual</span><span class="launch__change">Change options</span></summary>{% endif %}
+    {# data-live-preserve so the SSE morph does not strip this <details>'s `open`
+       state (server always renders it collapsed) and collapse it mid-use. #}
+    {% if collapse_options %}<details class="launch__options" data-live-preserve><summary><span class="launch__effective">{{ sm or card.launch_models[0].value }} · {{ se or card.launch_efforts[0] }} · Ask as usual</span><span class="launch__change">Change options</span></summary>{% endif %}
     {{ launch_options(card, lid, sm, se) }}
     {% if collapse_options %}</details>{% endif %}
     {% if not primary %}

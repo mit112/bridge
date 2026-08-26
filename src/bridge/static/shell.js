@@ -23,6 +23,14 @@
   // from running, so each is called in its own try/catch.
   const enterHooks = [];
   const leaveHooks = [];
+  // Morph hooks re-apply client-derived display AFTER a live in-place morph
+  // (liverefresh.js) -- distinct from enter hooks, which fire on a real route
+  // arrival. A morph re-renders the SAME view in place, so "restore once"
+  // enter work (draft prefill, focus) must NOT re-run, but DOM-derived paints
+  // that morph.js's leaf-text/attr sync just reverted (e.g. localized clocks)
+  // must. Keeping them a separate registry is what avoids re-entering
+  // liverefresh's own enter hook every 3s.
+  const morphHooks = [];
   function runAll(hooks) {
     for (const fn of hooks) {
       try {
@@ -35,7 +43,9 @@
   window.bridgePage = {
     onEnter(fn) { enterHooks.push(fn); },
     onLeave(fn) { leaveHooks.push(fn); },
+    onMorph(fn) { morphHooks.push(fn); },
     enter() { runAll(enterHooks); },
+    morphed() { runAll(morphHooks); },
     // Returns a promise that settles once every leave hook's own async work has
     // settled. Most hooks return nothing; launch.js's prompt flush returns one
     // (deliberately not awaited INSIDE the hook -- it only hands the promise
