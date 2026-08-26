@@ -27,6 +27,19 @@ jobs:
         with:
           python-version: "3.13"
 
+      # A real DOM-adjacent slice of the JS test lane (test_morph.py,
+      # test_static_js.py, test_swap_lifecycle.py, test_liverefresh.py,
+      # test_shell_contract.py) shells out to `node` and self-skips when it
+      # is absent -- a skip that is silent, not a failure. `macos-latest`
+      # happens to ship Node today, so this lane has only ever run by
+      # accident of the runner image, never because CI guaranteed it. Pin it
+      # explicitly so a future runner-image change can't quietly turn ~350
+      # tests into no-ops with a green checkmark.
+      - name: Install Node (required by the JS test lane)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
       - name: Sync dependencies (with dev extras)
         run: uv sync --extra dev
 
