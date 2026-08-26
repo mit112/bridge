@@ -17,6 +17,7 @@ import json
 import os
 import shutil
 import subprocess
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -2722,6 +2723,88 @@ def test_a_successful_schedule_submit_clears_the_stale_draft_and_disables_the_bu
     assert got["fieldValue"] == ""
     assert got["storage"] == {}
     assert got["buttonDisabled"] is True
+
+
+# --- Codex review finding #16: editing a schedule must update the `<time>`
+#     element's machine-readable `datetime`, not just its visible text -------
+#
+# The edit-save handler updated `data-scheduled-for` (which drives the
+# repainted VISIBLE text) and the input's own `data-scheduled-epoch`, but
+# never touched the `<time>` element's `datetime` attribute -- the one a
+# screen reader or any other consumer of the real HTML semantics actually
+# reads. A successful edit left it naming the time the row was edited AWAY
+# from, forever.
+SCHEDULE_EDIT_SAVE_HARNESS = """
+globalThis.window = globalThis;
+let clickHandler = null;
+
+const timeEl = {
+  attrs: { "data-scheduled-for": "1000" },
+  setAttribute(name, value) { this.attrs[name] = String(value); },
+  getAttribute(name) { return this.attrs[name] ?? null; },
+  textContent: "",
+};
+const whenInput = {
+  value: "2026-06-01T10:00",
+  attrs: { "data-scheduled-epoch": "1000" },
+  setAttribute(name, value) { this.attrs[name] = String(value); },
+  getAttribute(name) { return this.attrs[name] ?? null; },
+};
+const statusNode = { textContent: "" };
+const row = {
+  querySelector(sel) { return sel === "[data-scheduled-for]" ? timeEl : null; },
+  querySelectorAll: () => [],
+};
+
+globalThis.document = {
+  addEventListener(type, fn) { if (type === "click") clickHandler = fn; },
+  querySelector(sel) {
+    if (sel === '[data-scheduled-edit-when="j1"]') return whenInput;
+    if (sel === '[data-scheduled-job="j1"]') return row;
+    if (sel === '[data-scheduled-status="j1"]') return statusNode;
+    return null;
+  },
+};
+globalThis.fetch = async () => ({
+  ok: true, status: 200, json: async () => ({ id: "j1", scheduled_for: 1717200000 }),
+});
+
+const fs = require("fs");
+eval(fs.readFileSync(process.argv[2], "utf8"));
+
+const editSave = {
+  getAttribute: () => "j1",
+  closest: (sel) => (sel === "[data-scheduled-edit-save]" ? editSave : null),
+  disabled: false,
+};
+
+clickHandler({ target: editSave }).then(() => {
+  console.log(JSON.stringify({
+    dataScheduledFor: timeEl.getAttribute("data-scheduled-for"),
+    datetime: timeEl.getAttribute("datetime"),
+    status: statusNode.textContent,
+  }));
+});
+"""
+
+
+def _run_schedule_edit_save(tmp_path) -> dict:
+    return _run_node(tmp_path, "schedule_edit_save.js", SCHEDULE_EDIT_SAVE_HARNESS, SCHEDULE_JS)
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_editing_a_schedule_updates_the_datetime_attribute_not_just_the_text(tmp_path):
+    # "2026-06-01T10:00" read as UTC (the harness runs under TZ=UTC, matching
+    # test_schedule_submit_posts_seconds_and_a_null_source_for_the_compose_box's
+    # own use of the same input string and expected epoch).
+    got = _run_schedule_edit_save(tmp_path)
+    assert got["dataScheduledFor"] == "1780308000"
+    assert got["datetime"] is not None
+    # The attribute must actually name the NEW time, not be merely present.
+    assert datetime.fromisoformat(
+        got["datetime"].replace("Z", "+00:00")
+    ).timestamp() == 1780308000
+    assert got["status"] == "✓ Saved"
 
 
 # --- (d) The Scheduled section's cancel handler -----------------------------

@@ -351,6 +351,32 @@ def test_schedule_route_pending_row_exposes_run_now_edit_cancel(tmp_path):
     assert 'data-scheduled-edit-when="pending-1"' in body
 
 
+def test_schedule_route_run_now_edit_cancel_have_distinct_per_row_labels(tmp_path):
+    """Codex review finding #16: bare "Run now"/"Edit"/"Cancel" text gives
+    every pending row in the Scheduled section the SAME accessible name --
+    indistinguishable in a screen reader's button list once there is more
+    than one. Each must be named enough to tell rows apart, matching the
+    Retry control's existing `aria-label` treatment."""
+    client, store = _client(tmp_path)
+    store.upsert_project("/p/alpha", "alpha")
+    store.upsert_project("/p/beta", "beta")
+    store.create_scheduled_run(_run(
+        id="pending-a", project_path="/p/alpha", scheduled_for=900,
+    ))
+    store.create_scheduled_run(_run(
+        id="pending-b", project_path="/p/beta", scheduled_for=901,
+    ))
+
+    body = client.get("/schedule").text
+
+    for verb in ("Run now", "Edit", "Cancel"):
+        labels = re.findall(rf'aria-label="({re.escape(verb)} — [^"]*)"', body)
+        assert len(labels) == 2, f"expected two {verb!r} aria-labels, got {labels}"
+        assert labels[0] != labels[1], f"{verb!r} labels do not distinguish the two rows"
+        assert "alpha" in labels[0] or "alpha" in labels[1]
+        assert "beta" in labels[0] or "beta" in labels[1]
+
+
 def test_schedule_route_launching_row_omits_edit_and_cancel(tmp_path):
     """`patch_schedule`/`delete_schedule` 409 on any row that is no longer
     pending, so Edit and Cancel are dead controls on a `launching` row -- they

@@ -802,7 +802,7 @@ def test_starting_a_different_session_does_not_touch_the_queued_handoff_field(tm
 def test_empty_state_when_no_handoff_offers_start_session(tmp_path):
     c, store, pid = _client(tmp_path)
     html = c.get(f"/project/{pid}?tab=current").text
-    assert "No session in progress for this project." in html
+    assert "No queued handoff for this project." in html
     tag = html.split(f'data-handoff-empty="{pid}"', 1)[1].split(">", 1)[0]
     assert "hidden" not in tag
     assert "Start session" in html
