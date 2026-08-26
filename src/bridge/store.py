@@ -581,6 +581,48 @@ class Store:
                 "SELECT * FROM handoffs WHERE id=?", (handoff_id,)
             ).fetchone()
 
+    def claim_queued_handoff(self, handoff_id: str, project_id: int) -> sqlite3.Row | None:
+        """Atomically move a queued handoff to `launching`, scoped to the
+        project that owns it. Returns the pre-claim row (still carrying
+        `next_prompt`/`summary`) on success, or `None` if the id does not
+        exist, belongs to a DIFFERENT project, or is no longer `queued` --
+        the three ways a stale or foreign `handoff_id` could otherwise still
+        fire a session. `WHERE ... AND status='queued'` on the UPDATE itself
+        (not just the preceding SELECT) is what makes this safe under two
+        concurrent launches of the same handoff: only one can move the row,
+        and the other's rowcount comes back 0.
+
+        `launching`, not `consumed`, so a spawn that then fails can be
+        reverted with `revert_claimed_handoff` -- the handoff must stay
+        available for a retry, exactly as it did before claiming existed.
+        """
+        with self.transaction():
+            row = self.conn.execute(
+                "SELECT * FROM handoffs WHERE id=? AND project_id=? AND status='queued'",
+                (handoff_id, project_id),
+            ).fetchone()
+            if row is None:
+                return None
+            cur = self.conn.execute(
+                "UPDATE handoffs SET status='launching' "
+                "WHERE id=? AND project_id=? AND status='queued'",
+                (handoff_id, project_id),
+            )
+            if cur.rowcount != 1:
+                return None
+            return row
+
+    def revert_claimed_handoff(self, handoff_id: str) -> None:
+        """Undo `claim_queued_handoff` when the spawn itself fails. Scoped to
+        `status='launching'` so this can never resurrect a handoff some other
+        transition (dismiss, a since-completed launch) has already moved on
+        from."""
+        with self._lock:
+            self.conn.execute(
+                "UPDATE handoffs SET status='queued' WHERE id=? AND status='launching'",
+                (handoff_id,),
+            )
+
     def set_handoff_status(self, handoff_id: str, status: str) -> None:
         """`consumed_at` is stamped only on the transition that earns it."""
         with self._lock:

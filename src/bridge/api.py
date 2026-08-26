@@ -1291,13 +1291,25 @@ def create_app(
 
     @app.post("/api/schedule", status_code=201)
     def post_schedule(body: ScheduleIn):
+        project_path = store.alias_map().get(body.project_path, body.project_path)
         # Mirrors `post_launch`'s check for `body.handoff_id`: without it a
         # made-up id only fails at fire time, deep inside `_fire_claimed_job`,
-        # as a foreign-key error instead of a 404 at the edge.
+        # as a foreign-key error instead of a 404 at the edge. The project_id
+        # match additionally catches a handoff id that exists but belongs to
+        # a DIFFERENT project -- scheduling it under this one would otherwise
+        # fire someone else's prompt under this project's path. Ownership is
+        # all that is checked here; whether it is still queued is left to the
+        # atomic claim inside `launcher.launch()` at actual fire time, so an
+        # edit or a manual launch between now and then is still caught then.
         if body.source_handoff_id is not None:
-            if store.get_handoff(body.source_handoff_id) is None:
+            source = store.get_handoff(body.source_handoff_id)
+            if source is None:
                 raise HTTPException(status_code=404, detail="unknown handoff")
-        project_path = store.alias_map().get(body.project_path, body.project_path)
+            if source["project_id"] != resolve_project(store, project_path):
+                raise HTTPException(
+                    status_code=404,
+                    detail="handoff belongs to a different project",
+                )
         permission_mode = body.permission_mode
         job = ScheduledRun(
             id=str(uuid4()),

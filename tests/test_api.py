@@ -2667,6 +2667,26 @@ def test_schedule_create_rejects_an_unknown_source_handoff(client):
     assert store.scheduled_runs() == []
 
 
+def test_schedule_create_rejects_a_handoff_from_a_different_project(client):
+    """Codex review finding #3: an id that EXISTS but belongs to a different
+    project must not be scheduled under this one -- it would fire a foreign
+    prompt under this project's path once the schedule actually ran. Whether
+    it is still queued at fire time is a separate, later check (the atomic
+    claim inside `launcher.launch()`); this one is only ownership."""
+    c, store, _ = client
+    other_path = str(Path(DEMO).parent / "a-different-project")
+    c.post("/api/handoff", json=body("h1", path=other_path))
+
+    r = c.post("/api/schedule", json={"project_path": DEMO, "prompt": "go",
+        "scheduled_for": 1000, "mode": "background",
+        "source_handoff_id": "h1"})
+
+    assert r.status_code == 404
+    assert store.scheduled_runs() == []
+    # The handoff itself is untouched -- still queued, under its own project.
+    assert store.get_handoff("h1")["status"] == "queued"
+
+
 def test_schedule_create_rejects_an_out_of_range_scheduled_for(client):
     c, store, _ = client
     r = c.post("/api/schedule", json={"project_path": DEMO, "prompt": "go",

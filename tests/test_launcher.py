@@ -771,6 +771,83 @@ def test_a_successful_launch_consumes_and_journals_the_handoff(store, cfg, proje
     assert only_launch(store, str(project))["handoff_id"] == hid
 
 
+# --- Codex review finding #3: a handoff must be claimed atomically, scoped
+#     to its own project -----------------------------------------------------
+#
+# `launch()` used to trust `handoff_id` outright: whatever project the caller
+# named got the launch, and whatever `next_prompt` the row still carried got
+# sent, with no check that the id was still `queued` OR that it belonged to
+# THIS project. Two failures followed directly: a handoff authored for one
+# project could be fired under a different one, and the same handoff could be
+# launched twice (a retried request, or two tabs) since nothing but "does a
+# row with this id exist" gated it.
+
+
+def test_launch_rejects_a_handoff_queued_under_a_different_project(
+    store, cfg, project, tmp_path, fake_claude,
+):
+    other = tmp_path / "other-project"
+    other.mkdir()
+    hid = queue_handoff(store, str(other))
+
+    with pytest.raises(LaunchError):
+        launcher.launch(
+            store, cfg, spec(project_path=str(project), session_id=None), hid,
+            run=recorder(proc(0)),
+        )
+
+    # Nothing fired, and the handoff is untouched -- still queued, under its
+    # OWN project, not the one that tried to claim it.
+    assert store.get_handoff(hid)["status"] == "queued"
+    assert store.launches(resolve_project(store, str(project))) == []
+    assert store.launches(resolve_project(store, str(other))) == []
+
+
+def test_launch_rejects_an_already_consumed_handoff(store, cfg, project, fake_claude):
+    hid = queue_handoff(store, str(project))
+    first = launcher.launch(
+        store, cfg, spec(project_path=str(project), session_id=None), hid,
+        run=recorder(proc(0)),
+    )
+    assert first.outcome == "started"
+
+    with pytest.raises(LaunchError):
+        launcher.launch(
+            store, cfg, spec(project_path=str(project), session_id=None), hid,
+            run=recorder(proc(0)),
+        )
+
+    # Exactly one launch row -- the second call never reached `_new_row`.
+    only_launch(store, str(project))
+
+
+def test_a_failed_spawn_reverts_the_claim_so_the_handoff_can_be_retried(
+    store, cfg, project, fake_claude,
+):
+    """`claim_queued_handoff` moves the row to `launching` before the spawn
+    attempt; a failed spawn must hand it back to `queued`, or a handoff could
+    get permanently stuck in the one status nothing ever displays or offers a
+    retry from."""
+    hid = queue_handoff(store, str(project))
+
+    result = launcher.launch(
+        store, cfg, spec(project_path=str(project), session_id=None), hid,
+        run=recorder(proc(1, stderr="boom")),
+    )
+
+    assert result.outcome == "failed"
+    row = store.get_handoff(hid)
+    assert row["status"] == "queued"
+    # And retryable: a second attempt, spawn now succeeding, must be allowed
+    # to claim it -- which it could not if the revert had left it anywhere
+    # other than `queued`.
+    retry = launcher.launch(
+        store, cfg, spec(project_path=str(project), session_id=None), hid,
+        run=recorder(proc(0)),
+    )
+    assert retry.outcome == "started"
+
+
 def test_the_launch_row_carries_mode_model_effort_and_outcome(store, cfg, project,
                                                              fake_claude):
     launcher.launch(
