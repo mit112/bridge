@@ -1103,6 +1103,25 @@ def test_the_prompt_file_is_0600_inside_a_0700_directory(store, cfg, project,
     assert sorted(p.name for p in directory.iterdir()) == [prompt_path.name]
 
 
+def test_writing_the_prompt_file_fsyncs_its_directory_after_the_rename(
+    store, cfg, project, fake_claude, monkeypatch,
+):
+    """Codex review finding #19: `os.replace` makes the rename atomic, but
+    only fsyncing the directory entry makes it durable against power loss --
+    fsyncing the file's own contents (already done) does not cover that."""
+    calls = []
+    monkeypatch.setattr(
+        launcher.spool, "fsync_dir", lambda d: calls.append(Path(d))
+    )
+
+    launcher.launch(
+        store, cfg, spec(project_path=str(project), session_id=None),
+        run=recorder(proc(0)),
+    )
+
+    assert calls == [Path(cfg.launches_dir)]
+
+
 def test_the_prompt_file_is_normalised_so_both_modes_agree(store, cfg, project,
                                                            fake_claude, monkeypatch):
     """`$(cat)` strips trailing newlines and argv does not. One standard, not two."""

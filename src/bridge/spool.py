@@ -108,6 +108,24 @@ def journal_status(handoff_id: str, status: str, at: int, spool_dir: Path) -> Pa
     )
 
 
+def fsync_dir(directory: Path) -> None:
+    """fsync a directory entry after an `os.replace` into it.
+
+    `os.replace` is atomic -- a reader never sees a half-written file -- but
+    the RENAME ITSELF is only durable once the directory entry pointing at it
+    is on disk. fsyncing the file being replaced covers its contents, not the
+    directory's own metadata; without this, a power loss right after
+    `os.replace` can still lose the rename on some filesystems, even though
+    the file's bytes are safe. Shared by every atomic writer in this module
+    and by `launcher.write_prompt_file`, which has the identical shape.
+    """
+    fd = os.open(str(directory), os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
 def _atomic_write(payload: dict, stem: str, directory: Path) -> Path:
     """Serialize one record durably enough that a reader never sees a partial file.
 
@@ -127,6 +145,7 @@ def _atomic_write(payload: dict, stem: str, directory: Path) -> Path:
             os.fsync(f.fileno())
         final = live / f"{stem}.json"
         os.replace(tmp, final)
+        fsync_dir(live)
         return final
     except BaseException:
         Path(tmp).unlink(missing_ok=True)

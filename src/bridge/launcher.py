@@ -370,6 +370,7 @@ def write_prompt_file(launches_dir: str | Path, session_id: str, prompt: str) ->
             f.flush()
             os.fsync(f.fileno())
         os.replace(tmp, final)
+        spool.fsync_dir(directory)
     except BaseException:
         Path(tmp).unlink(missing_ok=True)
         raise
