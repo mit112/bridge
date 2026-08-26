@@ -494,6 +494,16 @@ def launch(
 
     prompt = spec.prompt.rstrip("\n")
     project_id = resolve_project(store, spec.project_path)
+    if handoff_id is not None and store.claim_queued_handoff(handoff_id, project_id) is None:
+        # Existence was already checked at the API edge; this is the part
+        # that check cannot do -- reject a handoff that belongs to a
+        # DIFFERENT project, or one a concurrent launch already claimed,
+        # before anything spawns. Nothing has been written yet (`_new_row`
+        # is below this), so refusing here leaves no row and no journal
+        # entry, matching every other refusal in this function.
+        raise LaunchError(
+            f"handoff {handoff_id!r} is not a queued handoff for this project"
+        )
     if spec.mode == "background":
         return _launch_background(store, cfg, spec, prompt, project_id,
                                   handoff_id, claude, run)
@@ -557,7 +567,7 @@ def _launch_terminal(store, cfg, spec, prompt, project_id, handoff_id, claude, r
         prompt_path = write_prompt_file(cfg.launches_dir, session_id, prompt)
         store.set_launch_session(launch_id, session_id, session_id[:8])
 
-    return _failed(store, launch_id, error)
+    return _failed(store, launch_id, handoff_id, error)
 
 
 def _launch_background(store, cfg, spec, prompt, project_id, handoff_id, claude, run):
@@ -574,9 +584,9 @@ def _launch_background(store, cfg, spec, prompt, project_id, handoff_id, claude,
     try:
         proc = run(argv, capture_output=True, text=True, cwd=spec.project_path)
     except OSError as exc:
-        return _failed(store, launch_id, f"could not run {claude}: {exc}")
+        return _failed(store, launch_id, handoff_id, f"could not run {claude}: {exc}")
     if proc.returncode != 0:
-        return _failed(store, launch_id, _spawn_error(claude, proc))
+        return _failed(store, launch_id, handoff_id, _spawn_error(claude, proc))
 
     short_id = parse_bg_handle((proc.stdout or "") + (proc.stderr or ""))
     if short_id is None:
@@ -613,14 +623,18 @@ def _started(store, cfg, launch_id, handoff_id, session_id=None, short_id=None,
     return LaunchResult(launch_id, "started", session_id, short_id, None, note)
 
 
-def _failed(store, launch_id, error) -> LaunchResult:
+def _failed(store, launch_id, handoff_id, error) -> LaunchResult:
     """The handoff is left `queued` — deliberately, and that is the whole contract.
 
     The launcher's promise is only that a failure does not consume; putting the
     prompt on the clipboard belongs to the caller, which is the layer that has a
-    clipboard.
+    clipboard. `launch()` claims the handoff (-> `launching`) before spawning,
+    so a failed spawn must explicitly hand it back rather than relying on
+    consumption never having happened.
     """
     store.set_launch_outcome(launch_id, "failed")
+    if handoff_id:
+        store.revert_claimed_handoff(handoff_id)
     return LaunchResult(launch_id, "failed", error=error or "launch failed")
 
 
