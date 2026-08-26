@@ -220,16 +220,6 @@
     "expect_count": 1
   },
   {
-    "name": "leave the hidden list collapsed after a hide, stranding the project until a reload",
-    "file": "src/bridge/static/projects.js",
-    "old": "      bumpHiddenCount(1);",
-    "new": "      ;",
-    "tests": [
-      "tests/test_static_js.py::test_hide_patches_the_status_and_moves_the_card_into_the_hidden_list"
-    ],
-    "expect_count": 1
-  },
-  {
     "name": "drop the row into nothing, so the hidden project is never named on screen",
     "file": "src/bridge/static/projects.js",
     "old": "      if (list) list.append(hiddenRow(id, name));",

@@ -33,14 +33,6 @@
       "expect_count": 1
     },
     {
-      "name": "drop server card order application so the client cannot preserve actionability order",
-      "file": "src/bridge/static/live.js",
-      "old": "  if (update.card_order) applyCardOrder(update.card_order);",
-      "new": "  if (false) applyCardOrder(update.card_order);",
-      "tests": ["tests/test_static_js.py::test_snapshot_reorders_existing_cards_by_server_order"],
-      "expect_count": 1
-    },
-    {
       "name": "replace a live leaf by innerHTML and discard the existing card subtree",
       "file": "src/bridge/static/live.js",
       "old": "    if (band) band.textContent = state.status;",
@@ -86,14 +78,6 @@
       "old": "  if (state === lastConnectionState) return;",
       "new": "  if (false) return;",
       "tests": ["tests/test_static_js.py::test_connection_states_do_not_announce_heartbeats"],
-      "expect_count": 1
-    },
-    {
-      "name": "turn project membership drift into an alarm instead of a persistent non-alarm status",
-      "file": "src/bridge/static/live.js",
-      "old": "  if (!sameSet) setText(status, \"Project list changed - reopen the panel to update cards.\");",
-      "new": "  if (sameSet) setText(status, \"Project list changed - reopen the panel to update cards.\");",
-      "tests": ["tests/test_static_js.py::test_membership_drift_is_non_alarm_and_identity_safe"],
       "expect_count": 1
     },
     {

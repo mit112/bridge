@@ -41,18 +41,6 @@ function reindexProjects() {
   else window.location.assign("/projects");
 }
 
-// The count in the summary is the only thing that says the list is worth
-// opening, so it moves with the list rather than waiting for a reload.
-function bumpHiddenCount(delta) {
-  const details = document.querySelector("[data-hidden-projects]");
-  const count = document.querySelector("[data-hidden-count]");
-  if (!count || !details) return;
-  const next = Math.max(0, Number(count.textContent || 0) + delta);
-  count.textContent = String(next);
-  if (next > 0) details.removeAttribute("hidden");
-  else details.setAttribute("hidden", "");
-}
-
 function hiddenRow(projectId, name) {
   const li = document.createElement("li");
   li.setAttribute("data-hidden-project", projectId);
@@ -134,7 +122,6 @@ document.addEventListener("click", async (event) => {
       }
       const list = document.querySelector("[data-hidden-list]");
       if (list) list.append(hiddenRow(id, name));
-      bumpHiddenCount(1);
       card.remove();
       // Never fail silently -- a success says so, matching pin/restore.
       say(`[data-project-status="${id}"]`, "✓ Hidden");
