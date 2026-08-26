@@ -57,6 +57,16 @@ class RebuildStats:
     skipped_pruned: int = 0
     bad: int = 0
     skipped: int = 0
+    # A record that FAILS to insert (not a parse failure -- those are
+    # quarantined and counted in `bad`) used to be swallowed silently. The
+    # table stayed non-empty from whichever records DID land, so the next
+    # rebuild hit the `count_scheduled_runs() > 0` guard and skipped
+    # entirely -- the failed record's own creation file was never
+    # quarantined either, so it sat in `schedules/` forever, permanently
+    # un-retried. `failed=1` means the whole attempt rolled back (see
+    # `rebuild_if_empty`), so the table is empty again and a fixed retry
+    # can restore everything, not just what happened to insert first.
+    failed: int = 0
 
 
 @dataclass(frozen=True)
@@ -224,31 +234,46 @@ def rebuild_if_empty(store, spool_dir: Path, now: int) -> RebuildStats:
         latest[s.run_id] = s
 
     records.sort(key=lambda j: (j.created_at, j.id))
-    for job in records:
-        if job.id in pruned:
-            stats.skipped_pruned += 1
-            continue
-        ended = latest.get(job.id)
-        if ended is not None:
-            # A claim with no outcome is `indeterminate`, never `pending`:
-            # the launch may already have happened.
-            job.status = (
-                "indeterminate" if ended.status == "launching" else ended.status
-            )
-            job.completed_at = ended.at
-        elif job.scheduled_for > when:
-            job.status = "pending"
-        else:
-            job.status = "missed"
-            job.completed_at = when
-            stats.missed += 1
-        try:
-            # `restore_scheduled_run`, not `create_scheduled_run`: the latter
-            # omits `completed_at`, and a terminal row without one can never
-            # satisfy retention's `completed_at < ?` bound.
-            store.restore_scheduled_run(job)
-            stats.restored += 1
-        except Exception:  # noqa: BLE001 - one failed insert cannot stop replay
-            pass
+    # The whole replay is one transaction: a record that fails to insert
+    # rolls back everything restored so far in THIS call, rather than
+    # leaving a partially-populated table that then satisfies
+    # `count_scheduled_runs() > 0` and permanently skips the failed record
+    # on every later retry. Losing today's other, healthy records back to
+    # `pending` for one attempt is the safe trade -- they are still on disk
+    # and the very next `bridge index` restores all of them, including the
+    # one that failed, once its cause is fixed.
+    try:
+        with store.transaction():
+            for job in records:
+                if job.id in pruned:
+                    stats.skipped_pruned += 1
+                    continue
+                ended = latest.get(job.id)
+                if ended is not None:
+                    # A claim with no outcome is `indeterminate`, never
+                    # `pending`: the launch may already have happened.
+                    job.status = (
+                        "indeterminate" if ended.status == "launching"
+                        else ended.status
+                    )
+                    job.completed_at = ended.at
+                elif job.scheduled_for > when:
+                    job.status = "pending"
+                else:
+                    job.status = "missed"
+                    job.completed_at = when
+                    stats.missed += 1
+                # `restore_scheduled_run`, not `create_scheduled_run`: the
+                # latter omits `completed_at`, and a terminal row without one
+                # can never satisfy retention's `completed_at < ?` bound.
+                store.restore_scheduled_run(job)
+                stats.restored += 1
+    except Exception as exc:  # noqa: BLE001 - reported, not raised; see below
+        log.exception(
+            "schedule rebuild failed partway through and rolled back "
+            "(%d of %d records restored before the failure): %s",
+            stats.restored, len(records), exc,
+        )
+        return RebuildStats(failed=1)
 
     return stats

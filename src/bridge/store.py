@@ -249,6 +249,7 @@ class Store:
         # contention only. This lock is what actually makes the shared connection
         # safe, and it matches the sole-writer architecture.
         self._lock = threading.RLock()
+        self._txn_depth = 0
         with self._lock:
             self.conn = sqlite3.connect(
                 db_path, timeout=5.0, isolation_level=None, check_same_thread=False
@@ -269,9 +270,23 @@ class Store:
     def transaction(self):
         """Group writes so an interrupt cannot advance a scan offset without
         also persisting the session it accounts for. RLock makes the nested
-        per-method locks re-entrant.
+        per-method LOCKS re-entrant; `_txn_depth` makes nested `transaction()`
+        calls themselves re-entrant too -- sqlite3 raises `cannot start a
+        transaction within a transaction` on a literal nested `BEGIN`, which a
+        caller wrapping several transaction()-using methods in one outer
+        transaction() (e.g. a journal rebuild wrapping per-record
+        `create_handoff`) would otherwise hit. Only the outermost `with`
+        actually issues BEGIN/COMMIT/ROLLBACK; an inner one just participates.
         """
         with self._lock:
+            if self._txn_depth > 0:
+                self._txn_depth += 1
+                try:
+                    yield
+                finally:
+                    self._txn_depth -= 1
+                return
+            self._txn_depth = 1
             self.conn.execute("BEGIN")
             try:
                 yield
@@ -279,6 +294,8 @@ class Store:
             except BaseException:
                 self.conn.execute("ROLLBACK")
                 raise
+            finally:
+                self._txn_depth = 0
 
     def _ensure_columns(self) -> None:
         with self._lock:
