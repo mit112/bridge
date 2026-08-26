@@ -59,21 +59,48 @@ function compile(selector) {
   };
 }
 
+// A real DOM has TWO views of a node's contents: `childNodes` (every node,
+// text included, in document order) and `children` (element nodes only).
+// `El` used to model only the second, with text folded into a single `_text`
+// scalar that WIPED any element children the moment it was set -- so nothing
+// here could represent `<p>Handoff saved<time>...</time></p>`, mixed text
+// and element content, at all. `childNodes` is now the one real backing
+// store; `children` is a computed filter over it, matching the browser.
+class TextNode {
+  constructor(text) {
+    this._text = String(text);
+    this.parent = null;
+  }
+  get nodeType() { return 3; }
+  get textContent() { return this._text; }
+  set textContent(v) { this._text = String(v); }
+  remove() {
+    if (!this.parent) return;
+    const i = this.parent.childNodes.indexOf(this);
+    if (i >= 0) this.parent.childNodes.splice(i, 1);
+    this.parent = null;
+  }
+}
+
 class El {
   constructor(tag, attrs = {}) {
     this.tag = tag;
     this.attrs = new Map(Object.entries(attrs));
-    this.children = [];
+    this.childNodes = [];
     this.parent = null;
     this.listeners = new Map();
     this.classList = new Set((attrs.class || "").split(/\s+/).filter(Boolean));
-    this._text = "";
     this.dataset = {};
     this.options = [];
     this.value = attrs.value ?? "";
     this.defaultValue = this.value;
     this.disabled = false;
   }
+  get nodeType() { return 1; }
+  // Element children only -- every existing caller of `.children` (morph's
+  // own keyed reconciliation included) means "the things a CSS selector or a
+  // tag-name match can see", which a text node never is.
+  get children() { return this.childNodes.filter((n) => n.nodeType === 1); }
   get hidden() { return this.getAttribute("hidden") !== null; }
   set hidden(v) { v ? this.setAttribute("hidden", "") : this.removeAttribute("hidden"); }
   // `.id` reflects the `id` content attribute in every real DOM; launch.js
@@ -97,13 +124,26 @@ class El {
   removeAttribute(name) { this.attrs.delete(name); }
   hasAttribute(name) { return this.attrs.has(name); }
   getAttributeNames() { return [...this.attrs.keys()]; }
-  get textContent() { return this._text; }
-  set textContent(v) { this._text = String(v); this.children = []; }
-  append(child) { child.parent = this; this.children.push(child); }
+  // Recursive, matching the real `Node.textContent` getter: an element with
+  // element children concatenates THEIR text too, not just its own direct
+  // text nodes. Irrelevant to morph's own leaf check (a leaf by definition
+  // has no element children left to recurse into) but kept spec-accurate
+  // rather than a leaf-only approximation.
+  get textContent() { return this.childNodes.map((n) => n.textContent).join(""); }
+  set textContent(v) {
+    for (const n of this.childNodes) n.parent = null;
+    this.childNodes = [];
+    if (v !== "" && v != null) {
+      const t = new TextNode(v);
+      t.parent = this;
+      this.childNodes.push(t);
+    }
+  }
+  append(child) { child.parent = this; this.childNodes.push(child); }
   remove() {
     if (!this.parent) return;
-    const i = this.parent.children.indexOf(this);
-    if (i >= 0) this.parent.children.splice(i, 1);
+    const i = this.parent.childNodes.indexOf(this);
+    if (i >= 0) this.parent.childNodes.splice(i, 1);
     this.parent = null;
   }
   insertBefore(node, ref) {
@@ -111,13 +151,13 @@ class El {
     // first, or a reorder would clone it into two places. minidom's `append`
     // deliberately does not detach, so morph uses this exclusively.
     if (node.parent) {
-      const j = node.parent.children.indexOf(node);
-      if (j >= 0) node.parent.children.splice(j, 1);
+      const j = node.parent.childNodes.indexOf(node);
+      if (j >= 0) node.parent.childNodes.splice(j, 1);
     }
     node.parent = this;
-    if (ref == null) { this.children.push(node); return node; }
-    const i = this.children.indexOf(ref);
-    this.children.splice(i < 0 ? this.children.length : i, 0, node);
+    if (ref == null) { this.childNodes.push(node); return node; }
+    const i = this.childNodes.indexOf(ref);
+    this.childNodes.splice(i < 0 ? this.childNodes.length : i, 0, node);
     return node;
   }
   descendants() {
@@ -153,7 +193,7 @@ class El {
   }
 }
 
-module.exports = { El, compile, makeDocument, load, report };
+module.exports = { El, TextNode, compile, makeDocument, load, report };
 
 function makeDocument(root) {
   const doc = new El("#document");
@@ -165,6 +205,7 @@ function makeDocument(root) {
   if (root) body.append(root);
   doc.getElementById = (id) => doc.querySelector(`[id="${id}"]`);
   doc.createElement = (tag) => new El(tag);
+  doc.createTextNode = (text) => new TextNode(text);
   // Every static file here is `<script defer>`, and per spec the parser sets
   // readiness to "interactive" BEFORE deferred scripts run -- a `defer`
   // script never observes "loading" at evaluation time. Defaulting to

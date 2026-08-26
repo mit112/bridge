@@ -18,11 +18,11 @@
     // tag; minidom exposes `tag`.
     const el = document.createElement(node.localName || node.tag);
     for (const name of node.getAttributeNames()) el.setAttribute(name, node.getAttribute(name));
-    const kids = Array.from(node.children);
-    if (kids.length === 0) {
-      if (node.textContent) el.textContent = node.textContent;
-    } else {
-      for (const kid of kids) el.append(cloneInto(kid));
+    // Every child NODE, not just element children -- `<p>Handoff saved
+    // <time>...</time></p>` has a text node before `<time>`, and cloning only
+    // `.children` (the old approach) silently dropped it.
+    for (const kid of Array.from(node.childNodes)) {
+      el.append(kid.nodeType === 3 ? document.createTextNode(kid.textContent) : cloneInto(kid));
     }
     return el;
   }
@@ -44,54 +44,80 @@
   function morphNode(live, incoming, opts) {
     if (opts.ignore(live)) return;              // protected subtree: hands off
     let changed = syncAttrs(live, incoming);
-    const incKids = Array.from(incoming.children);
-    if (incKids.length === 0) {
-      // Leaf: sync text. (A live subtree that became a leaf server-side has its
-      // children removed by reconcileChildren below via the empty incoming set.)
-      if (Array.from(live.children).length === 0 &&
-          live.textContent !== incoming.textContent) {
-        live.textContent = incoming.textContent;
-        changed = true;
-      }
-    }
-    reconcileChildren(live, incoming, opts);
+    if (reconcileChildren(live, incoming, opts)) changed = true;
     if (changed) opts.onChange(live);
   }
 
+  // Reconciles every CHILD NODE -- text included, not just element children.
+  // A leaf (`<span>text</span>`) and a mixed node (`<p>text<time>...</time>
+  // </p>`) are the same case here: both are just a childNodes sequence that
+  // may contain text entries, elements, or both, in any order. Element
+  // matching (keyed, then unkeyed-by-tag) is unchanged from before; text has
+  // no key or tag to match on, so it is matched purely by POSITION among the
+  // other text nodes -- the same "next one of this kind" rule the unkeyed
+  // element cursor already used, generalised to a second kind.
   function reconcileChildren(live, incoming, opts) {
-    const incKids = Array.from(incoming.children);
     const liveByKey = new Map();
     for (const el of Array.from(live.children)) {
       const k = opts.key(el);
       if (k != null) liveByKey.set(k, el);
     }
-    const unkeyed = Array.from(live.children).filter((el) => opts.key(el) == null);
+    const unkeyedEls = Array.from(live.children).filter((el) => opts.key(el) == null);
+    const liveTexts = Array.from(live.childNodes).filter((n) => n.nodeType === 3);
     let unkeyedCursor = 0;
-    const used = new Set();
+    let textCursor = 0;
+    let changed = false;
     const desired = [];
-    for (const inc of incKids) {
-      const k = opts.key(inc);
+    for (const inc of Array.from(incoming.childNodes)) {
       let node = null;
-      if (k != null && liveByKey.has(k)) {
-        node = liveByKey.get(k);
-      } else if (k == null) {
-        while (unkeyedCursor < unkeyed.length &&
-               (unkeyed[unkeyedCursor].localName || unkeyed[unkeyedCursor].tag) !==
-               (inc.localName || inc.tag)) unkeyedCursor += 1;
-        if (unkeyedCursor < unkeyed.length) { node = unkeyed[unkeyedCursor]; unkeyedCursor += 1; }
+      if (inc.nodeType === 3) {
+        if (textCursor < liveTexts.length) {
+          node = liveTexts[textCursor];
+          textCursor += 1;
+          if (node.textContent !== inc.textContent) {
+            node.textContent = inc.textContent;
+            changed = true;
+          }
+        } else {
+          node = document.createTextNode(inc.textContent);
+          changed = true;
+        }
+      } else {
+        const k = opts.key(inc);
+        if (k != null && liveByKey.has(k)) {
+          node = liveByKey.get(k);
+        } else if (k == null) {
+          while (unkeyedCursor < unkeyedEls.length &&
+                 (unkeyedEls[unkeyedCursor].localName || unkeyedEls[unkeyedCursor].tag) !==
+                 (inc.localName || inc.tag)) unkeyedCursor += 1;
+          if (unkeyedCursor < unkeyedEls.length) { node = unkeyedEls[unkeyedCursor]; unkeyedCursor += 1; }
+        }
+        if (node) {
+          morphNode(node, inc, opts);
+        } else {
+          node = cloneInto(inc);
+          opts.onChange(node);
+          changed = true;
+        }
       }
-      if (node) { morphNode(node, inc, opts); used.add(node); }
-      else { node = cloneInto(inc); opts.onChange(node); }
       desired.push(node);
     }
-    // Remove live children the server dropped -- but never a protected node.
-    for (const el of Array.from(live.children)) {
-      if (!used.has(el) && desired.indexOf(el) === -1 && !opts.ignore(el)) el.remove();
+    // Remove whatever the server dropped -- element or text, but never a
+    // protected node. Every reused or newly-placed node is already in
+    // `desired`, so anything left out of it is exactly what to drop.
+    for (const el of Array.from(live.childNodes)) {
+      if (desired.indexOf(el) !== -1 || opts.ignore(el)) continue;
+      el.remove();
+      changed = true;
     }
     // Put the desired sequence in order; insertBefore moves existing nodes.
     for (let i = 0; i < desired.length; i += 1) {
-      if (live.children[i] !== desired[i]) live.insertBefore(desired[i], live.children[i] || null);
+      if (live.childNodes[i] !== desired[i]) {
+        live.insertBefore(desired[i], live.childNodes[i] || null);
+        changed = true;
+      }
     }
+    return changed;
   }
 
   function morph(live, incoming, opts) {
