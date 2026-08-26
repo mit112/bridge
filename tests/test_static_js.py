@@ -837,6 +837,149 @@ def test_prompt_save_on_the_first_stacked_field_never_touches_the_second(tmp_pat
     assert got["statusH2"] == ""
 
 
+# --- Codex review finding #2: out-of-order prompt-save completion -----------
+#
+# `savePrompt` used to read `field.value` (the CURRENT value) at completion
+# time to decide what got saved, rather than the value it actually sent. Two
+# distinct corruptions follow from that:
+#
+#   1. A single save can be in flight while the user keeps typing (no second
+#      save has fired yet). When it resolves, the old code stamps
+#      `dataset.savedPrompt` with whatever is in the field NOW, not what the
+#      server actually received -- so a later blur/leave sees
+#      `field.value === savedPrompt` and skips the PATCH entirely, silently
+#      losing the newer text forever.
+#   2. Two saves can be in flight at once (a blur save and an `onLeave`
+#      flush overlap easily). If the OLDER one resolves LAST, the old code
+#      re-stamps `savedPrompt` with whatever is in the field at that moment,
+#      overwriting the correct value the NEWER save already recorded.
+#
+# The fix captures the submitted value before the `await` and only lets a
+# save touch `savedPrompt` if it is still the newest save issued for that
+# field. The harness gives each `fetch` call a controllable, out-of-order
+# resolution instead of resolving inline, so completion order is driven by
+# the test, not call order.
+PROMPT_RACE_HARNESS = """
+globalThis.window = globalThis;
+let focusoutHandlers = [];
+let enterHooks = [];
+let leaveHooks = [];
+
+function field(id, handoffId, value, saved) {
+  const self = {
+    id, value, defaultValue: saved, dataset: {},
+    getAttribute(name) { return name === "data-prompt-handoff" ? handoffId : null; },
+    closest(sel) { return sel === "[data-prompt-handoff]" ? self : null; },
+  };
+  return self;
+}
+
+const promptField = field("handoff-h1", "h1", "A", "orig");
+const statusNode = { textContent: "" };
+
+globalThis.document = {
+  addEventListener(type, fn) { if (type === "focusout") focusoutHandlers.push(fn); },
+  querySelector: (sel) => (sel === '[data-prompt-status="handoff-h1"]' ? statusNode : null),
+  querySelectorAll: (sel) => (sel === "[data-prompt-handoff]" ? [promptField] : []),
+};
+globalThis.navigator = { clipboard: { writeText: async () => {} } };
+
+// Every fetch call is captured but never resolved inline -- the test script
+// resolves them by index, in whatever order it chooses.
+const pending = [];
+globalThis.fetch = (url, init) => new Promise((resolve, reject) => {
+  pending.push({ url, body: JSON.parse(init.body), resolve, reject });
+});
+
+const storageMap = new Map();
+globalThis.sessionStorage = {
+  getItem: (k) => (storageMap.has(k) ? storageMap.get(k) : null),
+  setItem: (k, v) => storageMap.set(k, String(v)),
+  removeItem: (k) => storageMap.delete(k),
+};
+
+window.bridgePage = {
+  onEnter(fn) { enterHooks.push(fn); },
+  onLeave(fn) { leaveHooks.push(fn); },
+  onMorph() {},
+};
+
+const fs = require("fs");
+eval(fs.readFileSync(process.argv[2], "utf8"));
+
+function fireSave() {
+  focusoutHandlers.forEach((fn) => fn({ target: promptField }));
+}
+function resolveOk(index) {
+  pending[index].resolve({ ok: true, status: 200, json: async () => ({}) });
+}
+function tick() {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+(async () => {
+  SCRIPT
+  console.log(JSON.stringify({
+    pendingBodies: pending.map((p) => p.body),
+    savedPrompt: promptField.dataset.savedPrompt ?? null,
+    fieldValue: promptField.value,
+    status: statusNode.textContent,
+    storage: Object.fromEntries(storageMap),
+  }));
+})();
+"""
+
+
+def _run_prompt_race(tmp_path, name: str, script: str) -> dict:
+    harness = tmp_path / f"prompt_race_{name}.js"
+    harness.write_text(PROMPT_RACE_HARNESS.replace("SCRIPT", script))
+    proc = subprocess.run(
+        [_node(), str(harness), str(LAUNCH_JS)], capture_output=True, text=True
+    )
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout)
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_a_resolving_save_records_what_it_sent_not_the_current_field_value(tmp_path):
+    """One save in flight for "A"; the user keeps typing to "C" with no second
+    save fired. On success, `savedPrompt` must be "A" (what the server got),
+    never "C" -- stamping "C" would make a later leave believe "C" is already
+    saved and skip the PATCH that would actually persist it."""
+    got = _run_prompt_race(tmp_path, "single", """
+    fireSave();
+    promptField.value = "C";
+    resolveOk(0);
+    await tick();
+    """)
+    assert got["pendingBodies"] == [{"next_prompt": "A"}]
+    assert got["savedPrompt"] == "A"
+    assert got["fieldValue"] == "C"
+    assert "saved" in got["status"]
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_an_older_save_resolving_last_does_not_clobber_a_newer_ones_result(tmp_path):
+    """Two saves overlap: the first submits "A", then the field changes to "B"
+    and a second save submits "B", then the field changes again to "D" with no
+    third save fired. The NEWER save ("B") resolves first; the OLDER save
+    ("A") resolves last. `savedPrompt` must end at "B" -- the newest
+    acknowledged submission -- never "A" (the late, stale response) and never
+    "D" (never actually sent)."""
+    got = _run_prompt_race(tmp_path, "double", """
+    fireSave();
+    promptField.value = "B";
+    fireSave();
+    promptField.value = "D";
+    resolveOk(1);
+    await tick();
+    resolveOk(0);
+    await tick();
+    """)
+    assert got["pendingBodies"] == [{"next_prompt": "A"}, {"next_prompt": "B"}]
+    assert got["savedPrompt"] == "B"
+
+
 # --- Phase 4 Task 8: live.js behaviour ---------------------------------------
 
 LIVE_JS = Path(__file__).resolve().parent.parent / "src" / "bridge" / "static" / "live.js"
