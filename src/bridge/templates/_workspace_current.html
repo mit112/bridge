@@ -12,7 +12,7 @@
 
     <section class="continuation-panel" aria-label="Next session">
       <p class="empty" data-handoff-empty="{{ card.project_id }}" {% if card.handoffs %}hidden{% endif %}>
-        No session in progress for this project.
+        No queued handoff for this project.
       </p>
 
       {% for h in card.handoffs %}

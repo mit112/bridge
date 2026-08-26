@@ -210,15 +210,21 @@
          pending row, and `patch_schedule`/`delete_schedule` 409 on anything
          that is no longer pending. A `launching` row is already claimed, so
          every one of these controls would only 409 there -- render none. #}
-      <button type="button" class="btn" data-scheduled-run-now="{{ row.id }}">Run now</button>
+      {# Named per row, matching Retry below: twenty rows of a bare "Run now"/
+         "Edit"/"Cancel" are twenty identical entries in a screen reader's
+         button list once the Scheduled section fills up. #}
+      <button type="button" class="btn" data-scheduled-run-now="{{ row.id }}"
+              aria-label="Run now — {{ row.project_name }} run scheduled for {{ row.scheduled_for_utc }}">Run now</button>
       {# data-live-preserve on BOTH the toggle and its panel: schedule.js flips
          aria-expanded + the panel's `hidden` on click, but the server always
          renders them collapsed. Without this the SSE morph re-hides an open
          edit panel and resets the toggle -- desyncing the two into an inverted
          toggle (schedule.js reads aria-expanded to decide direction). #}
       <button type="button" class="btn" data-scheduled-edit-toggle="{{ row.id }}"
-              aria-expanded="false" aria-controls="scheduled-edit-{{ row.id }}" data-live-preserve>Edit</button>
-      <button type="button" class="btn" data-scheduled-cancel="{{ row.id }}">Cancel</button>
+              aria-expanded="false" aria-controls="scheduled-edit-{{ row.id }}" data-live-preserve
+              aria-label="Edit — {{ row.project_name }} run scheduled for {{ row.scheduled_for_utc }}">Edit</button>
+      <button type="button" class="btn" data-scheduled-cancel="{{ row.id }}"
+              aria-label="Cancel — {{ row.project_name }} run scheduled for {{ row.scheduled_for_utc }}">Cancel</button>
       <span class="scheduled__edit" id="scheduled-edit-{{ row.id }}"
             data-scheduled-edit-panel="{{ row.id }}" hidden data-live-preserve>
         <label class="compose__label" for="scheduled-edit-{{ row.id }}-when">Run at</label>

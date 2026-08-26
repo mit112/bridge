@@ -373,6 +373,11 @@ document.addEventListener("click", async (event) => {
       const timeEl = row ? row.querySelector("[data-scheduled-for]") : null;
       if (timeEl) {
         timeEl.setAttribute("data-scheduled-for", String(epoch));
+        // The machine-readable `datetime` attribute, not just the visible
+        // text and the data attribute that drives it -- left stale here, a
+        // screen reader or any other consumer of the real HTML semantics
+        // kept reading the time this row was edited AWAY from.
+        timeEl.setAttribute("datetime", new Date(epoch * 1000).toISOString());
         paintScheduledTimes(row);
       }
       when.setAttribute("data-scheduled-epoch", String(epoch));
