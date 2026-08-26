@@ -190,7 +190,12 @@ function settleRow(id, status, error) {
 // once for the whole session -- every scheduled cell rendered by a later
 // swap would keep the server's raw UTC string. shell.js always loads first,
 // matching settings.js's own guard for the same registry.
-if (window.bridgePage) window.bridgePage.onEnter(() => paintScheduledTimes());
+if (window.bridgePage) {
+  window.bridgePage.onEnter(() => paintScheduledTimes());
+  // A live morph re-renders /schedule in place and morph.js's leaf-text sync
+  // reverts every painted cell to the server's raw UTC -- repaint after it.
+  window.bridgePage.onMorph(() => paintScheduledTimes());
+}
 
 document.addEventListener("click", async (event) => {
   // --- Reveal the datetime + mode form beside a compose box or a handoff ---

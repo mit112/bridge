@@ -52,7 +52,7 @@
   {
     "name": "restore the bare DOMContentLoaded binding in schedule.js",
     "file": "src/bridge/static/schedule.js",
-    "old": "if (window.bridgePage) window.bridgePage.onEnter(() => paintScheduledTimes());",
+    "old": "if (window.bridgePage) {\n  window.bridgePage.onEnter(() => paintScheduledTimes());\n  // A live morph re-renders /schedule in place and morph.js's leaf-text sync\n  // reverts every painted cell to the server's raw UTC -- repaint after it.\n  window.bridgePage.onMorph(() => paintScheduledTimes());\n}",
     "new": "document.addEventListener(\"DOMContentLoaded\", () => paintScheduledTimes());",
     "tests": [
       "tests/test_shell_contract.py::test_no_domcontentloaded_outside_the_router[schedule.js]",

@@ -78,6 +78,9 @@
         const liveBody = document.querySelector(".shell__body");
         if (!liveBody) return;
         window.bridgeMorph(liveBody, parsed.body, { ignore: ignoreNode, onChange: highlight });
+        // Re-apply client-derived display the morph just reverted (e.g. localized
+        // schedule clocks): the enter() pass does NOT re-run on an in-place morph.
+        if (window.bridgePage && window.bridgePage.morphed) window.bridgePage.morphed();
         baselineGeneration = generationAtFetch;
         if (pendingGeneration != null && pendingGeneration <= generationAtFetch) pendingGeneration = null;
         // A newer trigger (generation bump or live-signal change) may have

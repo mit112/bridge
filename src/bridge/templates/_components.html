@@ -211,11 +211,16 @@
          that is no longer pending. A `launching` row is already claimed, so
          every one of these controls would only 409 there -- render none. #}
       <button type="button" class="btn" data-scheduled-run-now="{{ row.id }}">Run now</button>
+      {# data-live-preserve on BOTH the toggle and its panel: schedule.js flips
+         aria-expanded + the panel's `hidden` on click, but the server always
+         renders them collapsed. Without this the SSE morph re-hides an open
+         edit panel and resets the toggle -- desyncing the two into an inverted
+         toggle (schedule.js reads aria-expanded to decide direction). #}
       <button type="button" class="btn" data-scheduled-edit-toggle="{{ row.id }}"
-              aria-expanded="false" aria-controls="scheduled-edit-{{ row.id }}">Edit</button>
+              aria-expanded="false" aria-controls="scheduled-edit-{{ row.id }}" data-live-preserve>Edit</button>
       <button type="button" class="btn" data-scheduled-cancel="{{ row.id }}">Cancel</button>
       <span class="scheduled__edit" id="scheduled-edit-{{ row.id }}"
-            data-scheduled-edit-panel="{{ row.id }}" hidden>
+            data-scheduled-edit-panel="{{ row.id }}" hidden data-live-preserve>
         <label class="compose__label" for="scheduled-edit-{{ row.id }}-when">Run at</label>
         <input type="datetime-local" id="scheduled-edit-{{ row.id }}-when"
                data-scheduled-edit-when="{{ row.id }}" data-scheduled-epoch="{{ row.scheduled_for }}">
