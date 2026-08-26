@@ -980,6 +980,152 @@ def test_an_older_save_resolving_last_does_not_clobber_a_newer_ones_result(tmp_p
     assert got["savedPrompt"] == "B"
 
 
+# --- Codex review finding #1: a failed autosave must not lose the edit ------
+#
+# A failed `savePrompt` used to only announce a warning and resolve normally --
+# `onLeave` awaited it, saw a resolved (not rejected) promise, and the router
+# swapped the editor away with nothing keeping the text anywhere. The fix
+# mirrors the existing compose-draft mechanism: a failed save is persisted to
+# `sessionStorage` under `bridge.handoff-draft.<handoffId>`, a successful save
+# clears it, and `bridgePage.onEnter` restores it into the freshly re-rendered
+# field (which the server always pre-fills with its own last-saved value, so a
+# stale draft would otherwise be silently overwritten by that server value).
+PROMPT_DRAFT_HARNESS = """
+globalThis.window = globalThis;
+let focusoutHandlers = [];
+let enterHooks = [];
+
+function field(id, handoffId, value, saved) {
+  const self = {
+    id, value, defaultValue: saved, dataset: {},
+    getAttribute(name) { return name === "data-prompt-handoff" ? handoffId : null; },
+    closest(sel) { return sel === "[data-prompt-handoff]" ? self : null; },
+  };
+  return self;
+}
+
+const promptField = field("handoff-h1", "h1", VALUE, SAVED);
+const statusNode = { textContent: "" };
+
+globalThis.document = {
+  addEventListener(type, fn) { if (type === "focusout") focusoutHandlers.push(fn); },
+  querySelector: (sel) => (sel === '[data-prompt-status="handoff-h1"]' ? statusNode : null),
+  querySelectorAll: (sel) => (sel === "[data-prompt-handoff]" ? [promptField] : []),
+};
+globalThis.navigator = { clipboard: { writeText: async () => {} } };
+
+globalThis.fetch = async () => (FETCH_OK
+  ? { ok: true, status: 200, json: async () => ({}) }
+  : Promise.reject(new Error("network down")));
+
+const storageMap = new Map();
+for (const [k, v] of Object.entries(PRELOAD)) storageMap.set(k, v);
+globalThis.sessionStorage = {
+  getItem: (k) => (storageMap.has(k) ? storageMap.get(k) : null),
+  setItem: (k, v) => storageMap.set(k, String(v)),
+  removeItem: (k) => storageMap.delete(k),
+};
+
+window.bridgePage = {
+  onEnter(fn) { enterHooks.push(fn); },
+  onLeave() {},
+  onMorph() {},
+  enter() { enterHooks.forEach((fn) => fn()); },
+};
+
+const fs = require("fs");
+eval(fs.readFileSync(process.argv[2], "utf8"));
+
+// The focusout listener itself does not return `savePrompt`'s promise (a real
+// DOM event handler cannot be awaited by its dispatcher either), so calling
+// the handlers alone proves nothing about completion -- a `tick()` past the
+// event loop is what actually lets the fetch's microtask chain finish.
+function fireSave() {
+  focusoutHandlers.forEach((fn) => fn({ target: promptField }));
+  return tick();
+}
+function tick() {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+(async () => {
+  SCRIPT
+  console.log(JSON.stringify({
+    fieldValue: promptField.value,
+    status: statusNode.textContent,
+    storage: Object.fromEntries(storageMap),
+  }));
+})();
+"""
+
+
+def _run_prompt_draft(
+    tmp_path, name: str, script: str, *, value: str, saved: str,
+    fetch_ok: bool = True, preload: dict | None = None,
+) -> dict:
+    harness = tmp_path / f"prompt_draft_{name}.js"
+    text = (
+        PROMPT_DRAFT_HARNESS
+        .replace("SCRIPT", script)
+        .replace("VALUE", json.dumps(value))
+        .replace("SAVED", json.dumps(saved))
+        .replace("FETCH_OK", "true" if fetch_ok else "false")
+        .replace("PRELOAD", json.dumps(preload or {}))
+    )
+    harness.write_text(text)
+    proc = subprocess.run(
+        [_node(), str(harness), str(LAUNCH_JS)], capture_output=True, text=True
+    )
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout)
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_a_failed_save_persists_its_text_to_session_storage(tmp_path):
+    got = _run_prompt_draft(
+        tmp_path, "fail", "await fireSave();",
+        value="edited but unsaved", saved="orig", fetch_ok=False,
+    )
+    assert got["storage"] == {"bridge.handoff-draft.h1": "edited but unsaved"}
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_a_successful_save_clears_any_stale_draft(tmp_path):
+    got = _run_prompt_draft(
+        tmp_path, "success", "await fireSave();",
+        value="B", saved="orig", fetch_ok=True,
+        preload={"bridge.handoff-draft.h1": "a stale draft from an earlier failure"},
+    )
+    assert got["storage"] == {}
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_on_enter_a_freshly_rendered_field_is_restored_from_its_failed_draft(tmp_path):
+    """The field arrives from the server already showing ITS last-saved value
+    (value == saved, no local edit) -- exactly what a router swap re-renders
+    after navigating away with a failed save still sitting in storage. `enter`
+    must overwrite it with the draft and re-announce the warning, or the
+    user's edit is invisible on return with no sign it was never saved."""
+    got = _run_prompt_draft(
+        tmp_path, "restore", "window.bridgePage.enter();",
+        value="server value", saved="server value",
+        preload={"bridge.handoff-draft.h1": "the text that failed to save"},
+    )
+    assert got["fieldValue"] == "the text that failed to save"
+    assert "Not saved" in got["status"]
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_enter_is_a_no_op_when_the_field_already_matches_its_draft(tmp_path):
+    got = _run_prompt_draft(
+        tmp_path, "noop", "window.bridgePage.enter();",
+        value="already matches", saved="already matches",
+        preload={"bridge.handoff-draft.h1": "already matches"},
+    )
+    assert got["fieldValue"] == "already matches"
+    assert got["status"] == ""
+
+
 # --- Phase 4 Task 8: live.js behaviour ---------------------------------------
 
 LIVE_JS = Path(__file__).resolve().parent.parent / "src" / "bridge" / "static" / "live.js"
