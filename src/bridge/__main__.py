@@ -127,6 +127,17 @@ def run_db_command(argv: list[str] | None = None) -> int:
     if stray:
         log.info("reconciled %d stray 'launching' scheduled run(s)", stray)
 
+    # A manual launch has no journal of its own -- `launches` rows and a
+    # claimed handoff's `launching` status live only in the database -- so
+    # there is nothing to journal-then-flip here, unlike the scheduled-run
+    # reconciliation above. A row still `pending` at boot was claimed by a
+    # process that died before recording a terminal outcome; the spawn may
+    # or may not have actually happened, so this can only ever be marked
+    # `indeterminate`, never silently retried.
+    stray_launches = store.reconcile_pending_launches(store.pending_launch_ids())
+    if stray_launches:
+        log.info("reconciled %d stray 'pending' launch(es)", stray_launches)
+
     # Same policy as `gc_prompt_files` above, for the same reason: startup is
     # the only recurring event this process has. Finished runs only -- the
     # store's own guard -- so nothing still owed a launch is ever reaped.
