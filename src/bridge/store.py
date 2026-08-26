@@ -1065,6 +1065,26 @@ class Store:
                 "WHERE id=? AND status='pending'", (now_epoch(), id))
             return self.get_scheduled_run(id) if cur.rowcount == 1 else None
 
+    def unclaim(self, id: str) -> bool:
+        """Undo `claim_one_due`/`claim_specific` when nothing was actually
+        fired -- the row goes back to `pending`, exactly as if it had never
+        been claimed, so the scheduler or a later run-now can claim it again.
+
+        Used when the CLAIM's own journal write fails: the row must not be
+        marked a terminal `failed` for a problem that has nothing to do with
+        whether the job itself is still owed -- a `failed` row never fires
+        again, so a future-scheduled job that merely lost a race with a
+        transient filesystem hiccup would otherwise be silently dropped for
+        good.
+        """
+        with self.transaction():
+            cur = self.conn.execute(
+                "UPDATE scheduled_runs SET status='pending', claimed_at=NULL "
+                "WHERE id=? AND status='launching'",
+                (id,),
+            )
+            return cur.rowcount == 1
+
     def finish_scheduled_run(
         self, id: str, *, status: str, launch_id: str | None = None,
         error: str | None = None, fired_at: int | None = None,

@@ -109,6 +109,23 @@ def test_cancel_pending_marks_cancelled(store):
     assert store.claim_one_due(now=1500) is None              # cancelled never claimed
 
 
+def test_unclaim_returns_a_launching_job_to_pending(store):
+    _job(store, "a", scheduled_for=1000)
+    store.claim_one_due(now=1500)                             # leaves it 'launching'
+    assert store.unclaim("a") is True
+    row = store.get_scheduled_run("a")
+    assert row["status"] == "pending"
+    assert row["claimed_at"] is None
+    # And genuinely re-claimable, not just relabelled.
+    assert store.claim_one_due(now=1500)["id"] == "a"
+
+
+def test_unclaim_of_a_non_launching_row_is_a_no_op(store):
+    _job(store, "a", scheduled_for=1000)                      # still 'pending'
+    assert store.unclaim("a") is False
+    assert store.get_scheduled_run("a")["status"] == "pending"
+
+
 def test_reconcile_launching_flips_strays_to_indeterminate(store):
     _job(store, "a", scheduled_for=1000)
     store.claim_one_due(now=1500)                             # leaves it 'launching'

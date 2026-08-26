@@ -394,10 +394,15 @@ def _fire_claimed_job(store: Store, cfg: Config, row, launch_fn: LaunchFn):
     try:
         schedspool.journal_status(id, "launching", now_epoch(), cfg.spool_dir)
     except OSError as exc:
+        # Marking this `failed` would be a WORSE outcome than the filesystem
+        # hiccup that caused it: `failed` is terminal, so a job still owed
+        # tomorrow would never fire again over a transient write error today.
+        # Handing the claim back to `pending` costs nothing the claim itself
+        # hadn't already cost -- fire() was never called, so no launch was
+        # skipped -- and leaves the job exactly where a retry (this run-now,
+        # or the scheduler's own next tick past its time) can claim it again.
         log.exception("failed to journal claim of scheduled run %r", id)
-        store.finish_scheduled_run(
-            id, status="failed", error=f"could not journal the claim: {exc}"
-        )
+        store.unclaim(id)
         return store.get_scheduled_run(id)
     effective_path = store.alias_map().get(row["project_path"], row["project_path"])
     title = row["summary"] or launcher.default_title(
