@@ -9,6 +9,7 @@ import contextlib
 import dataclasses
 import json
 import logging
+import os
 import sqlite3
 import threading
 from datetime import datetime, timezone
@@ -248,6 +249,13 @@ class Store:
     def __init__(self, db_path: Path):
         db_path = Path(db_path)
         db_path.parent.mkdir(parents=True, exist_ok=True)
+        # The directory and every file here hold complete handoff and
+        # schedule prompt text -- authored data, not just a derived cache --
+        # so a default umask (0755/0644) leaves it readable by every other
+        # local account. Applied every construction, not only on first
+        # creation, so an existing install on an older version is corrected
+        # the next time Bridge opens it, not just a fresh one.
+        os.chmod(db_path.parent, 0o700)
         # `check_same_thread=False` is required because FastAPI dispatches sync
         # routes to a worker threadpool, but it only removes Python's guard rail —
         # it adds no synchronization, and sqlite3's per-connection statement cache
@@ -261,9 +269,17 @@ class Store:
                 db_path, timeout=5.0, isolation_level=None, check_same_thread=False
             )
             self.conn.row_factory = sqlite3.Row
+            os.chmod(db_path, 0o600)
             self.conn.execute("PRAGMA journal_mode=WAL")
             self.conn.execute("PRAGMA foreign_keys=ON")
             self.conn.execute("PRAGMA busy_timeout=5000")
+            # WAL mode creates the -wal/-shm sidecars at (or just after) the
+            # PRAGMA above; both hold the same authored data as the main file
+            # while a transaction is in flight, so they get the same mode.
+            for suffix in ("-wal", "-shm"):
+                sidecar = db_path.with_name(db_path.name + suffix)
+                if sidecar.exists():
+                    os.chmod(sidecar, 0o600)
             for stmt in SCHEMA:
                 self.conn.execute(stmt)
             self._ensure_columns()

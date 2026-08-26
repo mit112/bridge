@@ -1,4 +1,6 @@
+import os
 import sqlite3
+import stat
 import threading
 
 import pytest
@@ -366,6 +368,60 @@ def test_creates_parent_directory(tmp_path):
     s = Store(tmp_path / "deep" / "nested" / "b.db")
     assert (tmp_path / "deep" / "nested" / "b.db").exists()
     s.close()
+
+
+# --- Codex review finding #12: the data directory and its files must not be
+#     world-readable ---------------------------------------------------------
+#
+# A fresh store previously left its directory at the default umask (0755)
+# and its db/-wal/-shm files at 0644 -- all of them readable by every other
+# local account, despite carrying complete handoff and schedule prompt text.
+
+
+def _mode(path) -> int:
+    return stat.S_IMODE(os.stat(path).st_mode)
+
+
+def test_a_fresh_store_locks_down_its_directory_and_database_file(tmp_path):
+    db_path = tmp_path / "sub" / "b.db"
+    s = Store(db_path)
+    try:
+        assert _mode(db_path.parent) == 0o700
+        assert _mode(db_path) == 0o600
+    finally:
+        s.close()
+
+
+def test_wal_and_shm_sidecars_are_also_locked_down(tmp_path):
+    db_path = tmp_path / "sub" / "b.db"
+    s = Store(db_path)
+    try:
+        for suffix in ("-wal", "-shm"):
+            sidecar = db_path.with_name(db_path.name + suffix)
+            assert sidecar.exists(), f"expected WAL mode to create {sidecar.name}"
+            assert _mode(sidecar) == 0o600
+    finally:
+        s.close()
+
+
+def test_reopening_an_existing_store_corrects_permissions_left_by_an_older_version(
+    tmp_path,
+):
+    """A pre-fix install left its directory and file at the default umask;
+    the fix must correct them on the very next open, not only on first
+    creation."""
+    db_path = tmp_path / "sub" / "b.db"
+    s = Store(db_path)
+    s.close()
+    os.chmod(db_path.parent, 0o755)
+    os.chmod(db_path, 0o644)
+
+    s2 = Store(db_path)
+    try:
+        assert _mode(db_path.parent) == 0o700
+        assert _mode(db_path) == 0o600
+    finally:
+        s2.close()
 
 
 def test_upsert_project_is_idempotent(store):
