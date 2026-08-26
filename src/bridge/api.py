@@ -627,6 +627,7 @@ def create_app(
     try:
         app.state.boot_drain = asdict(spool.drain(store, cfg.spool_dir))
     except OSError as exc:
+        log.warning("boot drain failed: %s", exc)
         app.state.boot_drain = {"error": repr(exc)}
     templates = Jinja2Templates(directory=str(HERE / "templates"))
     register_template_filters(templates.env)
@@ -1111,6 +1112,7 @@ def create_app(
         try:
             spool.journal(h, cfg.spool_dir)
         except Exception:  # noqa: BLE001
+            log.exception("failed to journal handoff %r", h.id)
             journaled = False
         # Resolve through the alias table, then upsert: a handoff may arrive from
         # a project that was never indexed, or from an old ~/Documents path.

@@ -20,7 +20,7 @@
   {
     "name": "remove the boot-time spool drain",
     "file": "src/bridge/api.py",
-    "old": "    try:\n        app.state.boot_drain = asdict(spool.drain(store, cfg.spool_dir))\n    except OSError as exc:\n        app.state.boot_drain = {\"error\": repr(exc)}",
+    "old": "    try:\n        app.state.boot_drain = asdict(spool.drain(store, cfg.spool_dir))\n    except OSError as exc:\n        log.warning(\"boot drain failed: %s\", exc)\n        app.state.boot_drain = {\"error\": repr(exc)}",
     "new": "    app.state.boot_drain = {\"skipped\": True}",
     "tests": [
       "tests/test_api.py::test_boot_drain_ingests_a_spooled_handoff_before_serving"
@@ -29,8 +29,8 @@
   {
     "name": "let a broken spool abort startup",
     "file": "src/bridge/api.py",
-    "old": "    except OSError as exc:\n        app.state.boot_drain = {\"error\": repr(exc)}",
-    "new": "    except ValueError as exc:\n        app.state.boot_drain = {\"error\": repr(exc)}",
+    "old": "    except OSError as exc:\n        log.warning(\"boot drain failed: %s\", exc)\n        app.state.boot_drain = {\"error\": repr(exc)}",
+    "new": "    except ValueError as exc:\n        log.warning(\"boot drain failed: %s\", exc)\n        app.state.boot_drain = {\"error\": repr(exc)}",
     "tests": [
       "tests/test_api.py::test_an_unreadable_spool_does_not_stop_the_panel_from_starting"
     ]
@@ -38,7 +38,7 @@
   {
     "name": "do not journal a live POST",
     "file": "src/bridge/api.py",
-    "old": "        journaled = True\n        try:\n            spool.journal(h, cfg.spool_dir)\n        except Exception:  # noqa: BLE001\n            journaled = False",
+    "old": "        journaled = True\n        try:\n            spool.journal(h, cfg.spool_dir)\n        except Exception:  # noqa: BLE001\n            log.exception(\"failed to journal handoff %r\", h.id)\n            journaled = False",
     "new": "        journaled = True",
     "tests": [
       "tests/test_api.py::test_a_live_post_is_journaled_so_the_database_stays_disposable"

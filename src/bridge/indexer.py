@@ -6,6 +6,7 @@ aborts a run.
 """
 
 import dataclasses
+import logging
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,6 +18,8 @@ from bridge.models import SessionRecord
 from bridge.registry import display_name, transcript_files
 from bridge.store import Store, now_epoch
 from bridge.transcripts import scan
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -101,7 +104,8 @@ def reindex(
             ran_at=now_epoch(),
             duration_ms=int((time.monotonic() - started) * 1000),
         )
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
+        log.warning("failed to record index run for Diagnostics: %s", exc)
         pass
 
     return stats

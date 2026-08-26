@@ -1,6 +1,7 @@
 """The scheduled-run journal. Mirrors `test_spool.py`; see it for the shape."""
 
 import json
+import logging
 from pathlib import Path
 
 import pytest
@@ -235,6 +236,40 @@ def test_a_corrupt_record_is_quarantined_and_the_replay_continues(store, spool_d
     assert stats.bad == 1
     assert store.get_scheduled_run("good")["status"] == "pending"
     assert (spool_dir / "bad" / "bad.json").exists()
+
+
+def test_quarantining_a_corrupt_schedule_record_logs_a_warning_naming_it(
+    store, spool_dir, caplog
+):
+    schedspool.journal(job("good", scheduled_for=FUTURE), spool_dir)
+    (spool_dir / "schedules" / "bad.json").write_text("{not json")
+
+    with caplog.at_level(logging.WARNING, logger="bridge.schedspool"):
+        stats = schedspool.rebuild_if_empty(store, spool_dir, now=NOW)
+
+    # Behaviour preserved: the good creation replayed, only the bad one quarantined.
+    assert stats.bad == 1
+    assert store.get_scheduled_run("good")["status"] == "pending"
+    assert (spool_dir / "bad" / "bad.json").exists()
+    # ...and the operator now gets a warning that names the offending file.
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("bad.json" in r.getMessage() for r in warnings)
+
+
+def test_quarantining_a_corrupt_status_record_logs_a_warning_naming_it(
+    store, spool_dir, caplog
+):
+    schedspool.journal(job("good", scheduled_for=FUTURE), spool_dir)
+    (spool_dir / "schedules" / "good.500.status.json").write_text("{not json")
+
+    with caplog.at_level(logging.WARNING, logger="bridge.schedspool"):
+        stats = schedspool.rebuild_if_empty(store, spool_dir, now=NOW)
+
+    assert stats.bad == 1
+    assert store.get_scheduled_run("good")["status"] == "pending"
+    assert (spool_dir / "bad" / "good.500.status.json").exists()
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("good.500.status.json" in r.getMessage() for r in warnings)
 
 
 def test_the_journal_survives_a_real_database_deletion(tmp_path, spool_dir):

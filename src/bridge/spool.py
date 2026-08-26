@@ -20,6 +20,7 @@ someone tries.
 
 import dataclasses
 import json
+import logging
 import os
 import tempfile
 from dataclasses import dataclass
@@ -27,6 +28,8 @@ from pathlib import Path
 
 from bridge.models import Handoff
 from bridge.registry import resolve_project
+
+log = logging.getLogger(__name__)
 
 _FIELDS = frozenset(f.name for f in dataclasses.fields(Handoff))
 
@@ -194,7 +197,8 @@ def drain(store, spool_dir: Path, resolve=None) -> DrainStats:
     for path in pending(spool_dir):
         try:
             parsed.append((_load(path), path))
-        except Exception:  # noqa: BLE001 - one bad file must not stop the drain
+        except Exception as exc:  # noqa: BLE001 - one bad file must not stop the drain
+            log.warning("quarantining unparsable spool file %s: %s", path.name, exc)
             _quarantine(path, bad_dir)
             stats.bad += 1
 
@@ -243,7 +247,10 @@ def rebuild_if_empty(store, spool_dir: Path, resolve=None) -> DrainStats:
             if path.name.endswith(STATUS_SUFFIX):
                 try:
                     statuses.append(_load_status(path))
-                except Exception:  # noqa: BLE001 - one bad record cannot stop the replay
+                except Exception as exc:  # noqa: BLE001 - one bad record cannot stop the replay
+                    log.warning(
+                        "quarantining unparsable status record %s: %s", path.name, exc
+                    )
                     _quarantine(path, bad_dir)
                     stats.bad += 1
                 continue

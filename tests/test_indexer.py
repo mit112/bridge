@@ -1,4 +1,5 @@
 import dataclasses
+import logging
 from pathlib import Path
 
 import pytest
@@ -226,6 +227,30 @@ def test_malformed_file_does_not_abort_the_run(env):
     stats = reindex(store, cfg)
     assert stats.parse_errors >= 1
     assert stats.sessions_upserted == 1
+
+
+def test_a_failed_diagnostics_record_is_logged_not_silently_swallowed(
+    env, monkeypatch, caplog
+):
+    """A failed `record_index_run` blinds Diagnostics freshness; the log is the
+    only signal, since the scan itself must still succeed."""
+    cfg, store, projects = env
+    write(projects, "ok.jsonl", transcript_lines())
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("diagnostics table is locked")
+
+    monkeypatch.setattr(store, "record_index_run", boom)
+
+    with caplog.at_level(logging.WARNING, logger="bridge.indexer"):
+        stats = reindex(store, cfg)
+
+    # Behaviour preserved: the scan completed and returned its stats.
+    assert stats.sessions_upserted == 1
+    assert len(store.projects()) == 1
+    # ...and the operator now gets a warning instead of silence.
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("index run" in r.getMessage() for r in warnings)
 
 
 def test_two_projects_are_separated(env):
