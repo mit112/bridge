@@ -154,8 +154,8 @@
   {
     "name": "drop the catch's real-navigation fallback",
     "file": "src/bridge/static/router.js",
-    "old": "  } catch (error) {\n    // Never strand the user on a link that did nothing. A real navigation is\n    // always correct -- it is only ever slower.\n    console.error(\"bridge: swap failed, falling back to a full load\", error);\n    window.location.assign(href);\n  }",
-    "new": "  } catch (error) {\n    // Never strand the user on a link that did nothing. A real navigation is\n    // always correct -- it is only ever slower.\n    console.error(\"bridge: swap failed, falling back to a full load\", error);\n  }",
+    "old": "  } catch (error) {\n    if (epoch !== navEpoch) return;  // a newer navigation already took over\n    // Never strand the user on a link that did nothing. A real navigation is\n    // always correct -- it is only ever slower.\n    console.error(\"bridge: swap failed, falling back to a full load\", error);\n    window.location.assign(href);\n  }",
+    "new": "  } catch (error) {\n    if (epoch !== navEpoch) return;  // a newer navigation already took over\n    // Never strand the user on a link that did nothing. A real navigation is\n    // always correct -- it is only ever slower.\n    console.error(\"bridge: swap failed, falling back to a full load\", error);\n  }",
     "tests": [
       "tests/test_swap_lifecycle.py::test_router_falls_back_to_a_real_navigation_on_a_failed_fetch",
       "tests/test_shell_contract.py::test_router_falls_back_to_a_normal_navigation"

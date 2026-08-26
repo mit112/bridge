@@ -472,6 +472,105 @@ def test_router_falls_back_to_a_real_navigation_on_a_failed_fetch(tmp_path):
     )
 
 
+# --- Codex review finding #13: out-of-order navigation completion -----------
+#
+# navigate() had no cancellation token or generation guard: two rapid
+# navigations (a fast double-click, or a click racing a popstate) can have
+# their fetches resolve in EITHER order, and nothing stopped the OLDER one
+# from applying its (now stale) fragment and URL last, after the newer
+# navigation had already finished. `parseFragment`/`applyFragment` are
+# top-level `function` declarations in router.js -- `load()` runs the file
+# via `vm.runInThisContext` in script mode, so reassigning them on
+# `globalThis` after load redirects the bare-identifier calls navigate()
+# itself makes, letting this isolate the epoch guard from DOMParser/
+# `replaceWith`, neither of which minidom models.
+def test_an_older_navigation_resolving_last_does_not_win(tmp_path):
+    got = run_js(
+        """
+        const applied = [];
+        const pending = [];
+        globalThis.fetch = (url) => new Promise((resolve) => {
+          pending.push({ url, resolve });
+        });
+        globalThis.parseFragment = (html) => ({ marker: html });
+        globalThis.applyFragment = (parsed) => { applied.push(parsed.marker); return true; };
+        globalThis.window.scrollTo = () => {};   // not modeled by minidom; announceArrival() calls it
+        const pushed = [];
+        globalThis.history = { pushState(state, title, url) { pushed.push(url); } };
+
+        function tick() { return new Promise((resolve) => setImmediate(resolve)); }
+
+        (async () => {
+          // Issued one at a time, each given a tick to reach fetch() before
+          // the next starts -- otherwise the SECOND call's epoch bump would
+          // supersede the first before it ever fetches at all, which is a
+          // different (also-handled) case, not the one under test: two
+          // fetches genuinely in flight together, resolving out of order.
+          const first = window.bridgeNavigate("/projects");
+          await tick();
+          const second = window.bridgeNavigate("/schedule");
+          await tick();
+          // The NEWER navigation's fetch resolves FIRST.
+          pending[1].resolve({ ok: true, status: 200, text: async () => "second" });
+          await second;
+          // The OLDER navigation's fetch resolves LAST -- proving completion
+          // order, not issue order, is what the guard keys on.
+          pending[0].resolve({ ok: true, status: 200, text: async () => "first" });
+          await first;
+          report({ applied, pushed });
+        })();
+        """,
+        ["shell.js", "router.js"],
+        tmp_path,
+    )
+    assert got["applied"] == ["second"], (
+        "the older, later-resolving navigation applied its stale fragment "
+        "over the newer one's already-applied result"
+    )
+    assert got["pushed"] == ["http://localhost/schedule"], (
+        "the older navigation pushed its own (stale) URL into history after "
+        "the newer navigation had already navigated there"
+    )
+
+
+def test_a_superseded_navigations_own_failure_does_not_trigger_a_reload(tmp_path):
+    """The older navigation's fetch, once superseded, must not fall back to
+    `location.assign` on its own error either -- the newer navigation is
+    already doing the right thing, and reloading to the OLDER href would
+    yank the user back to a page they already navigated away from."""
+    got = run_js(
+        """
+        const pending = [];
+        globalThis.fetch = (url) => new Promise((resolve, reject) => {
+          pending.push({ url, resolve, reject });
+        });
+        globalThis.parseFragment = (html) => ({ marker: html });
+        globalThis.applyFragment = () => true;
+        globalThis.window.scrollTo = () => {};   // not modeled by minidom; announceArrival() calls it
+        globalThis.history = { pushState() {} };
+        function tick() { return new Promise((resolve) => setImmediate(resolve)); }
+
+        (async () => {
+          const first = window.bridgeNavigate("/projects");
+          await tick();
+          const second = window.bridgeNavigate("/schedule");
+          await tick();
+          pending[1].resolve({ ok: true, status: 200, text: async () => "second" });
+          await second;
+          pending[0].reject(new Error("simulated network failure"));
+          await first;
+          report({ assigned: globalThis.__calls.locationAssign ?? null });
+        })();
+        """,
+        ["shell.js", "router.js"],
+        tmp_path,
+    )
+    assert got["assigned"] is None, (
+        "a superseded navigation's own failure triggered a full-page fallback "
+        "reload to its stale href"
+    )
+
+
 def test_only_one_event_source_across_many_navigations(tmp_path):
     """The surviving SSE connection is the concrete win of the persistent shell.
 

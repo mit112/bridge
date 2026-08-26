@@ -60,7 +60,11 @@
                                                     // refreshRequested stays set
     const versionAtFetch = refreshVersion;
     const generationAtFetch = lastSeenGeneration;
-    const pathAtFetch = window.location.pathname;
+    // Pathname AND query: /schedule?view=upcoming and /schedule?view=history
+    // share a pathname, so a pathname-only check would let an in-flight fetch
+    // for one view morph its stale fragment over the other the instant the
+    // user swaps views while this fetch is in flight.
+    const pathAtFetch = window.location.pathname + window.location.search;
     fetch(window.location.href, { headers: { "X-Bridge-Fragment": "1" }, credentials: "same-origin" })
       .then((response) => {
         if (!response.ok) throw new Error("HTTP " + response.status);
@@ -72,7 +76,7 @@
         // is now on screen, or stamping this fetch's generation onto the new
         // view's baseline, would both be silent corruption. Bail and keep the
         // DOM/baseline exactly as the new view already set them.
-        if (!owned || window.location.pathname !== pathAtFetch) return;
+        if (!owned || window.location.pathname + window.location.search !== pathAtFetch) return;
         const parsed = window.bridgeFragment.parse(html);
         if (!parsed || !parsed.body) throw new Error("unusable fragment");
         const liveBody = document.querySelector(".shell__body");
