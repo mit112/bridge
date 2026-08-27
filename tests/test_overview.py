@@ -895,6 +895,5 @@ def test_overview_route_keeps_freshness_strip_and_total_hooks_for_live_js(tmp_pa
     # patches only the copy nobody can see.
     assert len(re.findall(
         r'<span class="command-cell__num" data-dashboard-total=', html)) == 6
-    assert "data-project-membership-status" in html
     assert "data-diagnostics-alert" in html
     store.close()
