@@ -1892,7 +1892,7 @@ def test_a_single_sample_busy_to_idle_flap_never_reaches_the_wire(
     "running" while a delta told the client "idle", and the two disagreed on the
     same page. `interval=0` puts all three ticks inside the 1.5 s hold.
     """
-    from bridge import agents
+    from bridge import agents, api
     from bridge.models import AgentsState, LiveSession
 
     cfg = load({"db_path": tmp_path / "flap.db", "spool_dir": tmp_path / "spool"})
@@ -1907,6 +1907,15 @@ def test_a_single_sample_busy_to_idle_flap_never_reaches_the_wire(
     states = [session("busy"), session("idle"), session("idle")]
     monkeypatch.setattr(agents, "probe",
                         lambda *a, **k: states.pop(0) if states else session("idle"))
+    # All three ticks pinned inside the hold, the mirror of the sibling test
+    # below, which pins the clock to put the third tick OUTSIDE it. `interval=0`
+    # alone is not enough: `now_epoch()` is whole seconds, so three real ticks
+    # on a loaded machine can span two second-boundaries, expire the hold, and
+    # emit the very delta this asserts never appears. Being fast enough is not
+    # the property under test.
+    clock = iter([1000, 1000, 1000])
+    monkeypatch.setattr(api, "now_epoch", lambda: next(clock, 1000))
+
     c = TestClient(create_app(store, cfg))
     with c.stream("GET", "/events?max_ticks=3&interval=0") as r:
         frames = _frames("".join(r.iter_text()))
