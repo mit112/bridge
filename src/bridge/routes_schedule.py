@@ -41,7 +41,7 @@ def build_router(
     # --- scheduled runs -------------------------------------------------------
     #
     # A schedule is created, listed, edited, cancelled, or fired early -- but
-    # only ever fired FOR REAL by Task 4's background scheduler. `run-now`
+    # only ever fired FOR REAL by the background scheduler. `run-now`
     # exists so the panel can test a schedule (or just stop waiting for it)
     # without a second code path to keep in sync with the scheduler's own.
 

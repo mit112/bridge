@@ -104,9 +104,8 @@ class ScheduleRow:
     `scheduled_for` stays the raw epoch int (the `data-scheduled-for` hook a
     later JS repaints in local time), but a `<time>` needs a readable
     pre-JS/no-JS fallback too -- `scheduled_for_utc`/`scheduled_for_iso` carry
-    exactly what `bridge.filters._schedule_time_fields` already computes for
-    dashboard.html's own scheduled rows, so a Jinja macro rendering this row
-    never has to reformat an epoch itself. Defaulted so existing callers/tests
+    exactly what `bridge.filters._schedule_time_fields` computes, so a Jinja
+    macro rendering this row never has to reformat an epoch itself. Defaulted so existing callers/tests
     constructing a `ScheduleRow` without them keep working.
     """
 

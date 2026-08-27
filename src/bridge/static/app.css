@@ -641,7 +641,7 @@ a { color: var(--text); text-underline-offset: .16em; }
   outline-color: var(--p-nav-focus);
 }
 
-/* Task 5.4: raises the shared --control-min floor to 44px (WCAG touch-target
+/* Raises the shared --control-min floor to 44px (WCAG touch-target
    guidance) at every width where the sidebar is behind the Menu disclosure
    instead of a persistent rail. Every control that sizes off --control-min --
    .menu-toggle, .btn/.btn--primary/.btn--icon, .launch__select, the schedule
@@ -757,7 +757,7 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
 }
 .sessions td { font-variant-numeric: tabular-nums; }
 
-/* --- Phase 2: queued handoff on a card ------------------------------------ */
+/* --- Queued handoff on a card --------------------------------------------- */
 
 .card--queued { border-left-color: var(--handoff-border); }
 
@@ -932,7 +932,7 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
   border: 1px solid var(--rule);
 }
 
-/* --- Phase 3: the launch band ---------------------------------------------- */
+/* --- The launch band ------------------------------------------------------- */
 
 /* Outside the handoff block, so on the card surface rather than --handoff-bg. */
 .launch {
@@ -990,7 +990,7 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
 .status--indeterminate,
 .status--missed { color: var(--risk-fg); font-weight: 700; }
 
-/* --- Phase 5: detail page collects what the card build already probed ------- */
+/* --- Detail page: collects what the card build already probed -------------- */
 
 /* Reuses the card's `.card__git` flex strip; only the page-level spacing and
    the commit line's prominence differ. The commit summary is content, not
@@ -1641,7 +1641,7 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
 .sortable__ind { font-size: .9em; opacity: .45; }
 .sortable--active .sortable__ind { opacity: 1; }
 
-/* Session-meta enrichment (Phase 7): color is decorative only -- the `+`/`-`
+/* Session-meta enrichment: color is decorative only -- the `+`/`-`
    prefixes and the badge text carry the meaning, so nothing here relies on
    color alone (WCAG 2.2). */
 .sessions__meta-detail { display: block; font-size: .8rem; color: var(--muted); }
@@ -1685,7 +1685,7 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
   display: flex; align-items: center; gap: .6rem; padding: .25rem 0;
 }
 
-/* --- Task 5: compose box, schedule form, Scheduled section ----------------- */
+/* --- Compose box, schedule form, Scheduled section ------------------------- */
 
 /* Neutral card surface, distinct from the queued-handoff ledger block: composing is not yet
    queued anything, so it stays visually distinct from `.handoff`. */
@@ -2048,7 +2048,7 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
 .projects-index .project-row {
   grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr) 9ch 16ch;
 }
-/* Target size is padded independently of row height, so Task 2's density pass
+/* Target size is padded independently of row height, so the density pass
    can shrink the row without shrinking the hit areas with it. `min-height`
    rather than a flex/inline-flex display, which would eat the disclosure
    marker in Chrome. */
@@ -2446,7 +2446,7 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
   .continuation-actions [data-handoff-dismiss] { order: 5; }
 }
 
-/* Tablet layer (Task 5.4): closes the 768-1023px dead zone flagged by recon --
+/* Tablet layer: closes the 768-1023px dead zone --
    the sidebar is already behind the Menu disclosure there (see the 1023px
    buckets above) but nothing tuned content spacing down from the desktop
    defaults. Keeps the sticky page-head off (matching the phone layer, and
@@ -2529,7 +2529,7 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
   .live-changed { animation: none; }
 }
 
-/* --- Task 11: update banner -------------------------------------------------
+/* --- Update banner ----------------------------------------------------------
    Server-rendered `hidden`; update.js reveals it only when the checker
    reports `state: "behind"`. Sits above `.shell`, not inside `#main`, so it
    is chrome, not page content -- the same reason it uses `--handoff-*`

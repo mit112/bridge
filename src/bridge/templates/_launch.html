@@ -1,11 +1,12 @@
 {# The continuation surface: compose box, queued-handoff panel, launch band,
-   and the schedule mini-form. Extracted out of `_card.html` (Task 3.3) so the
-   dashboard's per-card surface and the Project workspace's Current tab render
-   the identical markup and `data-*` hooks from ONE place -- `_card.html` and
-   `_workspace_current.html` both call these macros, and neither hand-writes
-   the interactive surface itself. Every extra parameter defaults to the
-   dashboard's original behaviour untouched, so `_card.html`'s calls (which
-   pass none of them) produce byte-identical output to before the extraction.
+   and the schedule mini-form. Every macro here owns its own `data-*` hooks, so
+   the interactive surface is never hand-written by a caller.
+
+   `_workspace_current.html` is the only caller left. These macros were
+   extracted when the retired per-card dashboard rendered the same surface and
+   the two had to agree byte-for-byte; that second caller is gone, which is why
+   several parameters below exist only to reproduce a default no live caller
+   ever overrides. Do not read the defaults as configurability someone wanted.
    Autoescape stays on; nothing here is ever marked `safe`. #}
 
 {% macro schedule_form(panel_id, project_path, prompt_id, totals, handoff_id=none) -%}
@@ -186,12 +187,11 @@
    in Terminal" when a handoff is queued, "Start session" when nothing is.
    `collapse_options` wraps the model/effort/permission selects in a
    `<details>` ("Change options"), leaving the button itself outside so it
-   stays visible without opening the disclosure. Neither is passed by
-   `_card.html`, so its band is unchanged. #}
+   stays visible without opening the disclosure. #}
 {# The three launch-option selects (model, effort, permission). Shared by
    `launch_band` (per-handoff, or the no-handoff "Start session" band) and
-   `compose_box` (the ad hoc "New session" box) -- extracted in Task 5 fix
-   round 2, when `compose_box`'s Run-now button (`data-compose-launch`) lost
+   `compose_box` (the ad hoc "New session" box) -- extracted when
+   `compose_box`'s Run-now button (`data-compose-launch`) lost
    the ONE launch band it used to be able to point at: once any handoff is
    queued, every rendered band is keyed off that handoff's own id, and no
    band keyed off the project id exists on the page at all, so the compose

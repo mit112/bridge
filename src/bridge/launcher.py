@@ -116,7 +116,7 @@ def new_session_id() -> str:
 def validate_prompt(prompt: str) -> None:
     """Raise `LaunchError` if `prompt` cannot survive the trip to argv.
 
-    Called before anything is constructed, and before Task 3 writes the prompt
+    Called before anything is constructed, and before the prompt file is written
     file, so a rejected launch has no side effects at all.
     """
     nul = prompt.find("\x00")
@@ -418,7 +418,7 @@ def resolve_short_id(short_id: str, claude: str, run) -> str | None:
     Confirmed live: `"id": "00b31445"` sits alongside
     `"sessionId": "00b31445-a2d0-4d3b-878b-e37f81284385"`. When this cannot
     answer — the subcommand changed, the output is not JSON, the agent has not
-    registered yet — the launch keeps its `short_id` alone and Task 7's unique
+    registered yet — the launch keeps its `short_id` alone and the unique
     prefix backfill closes the loop on the next index. Guessing here would bind
     a launch to the wrong session, which is worse than waiting.
     """
@@ -554,7 +554,7 @@ def _launch_terminal(store, cfg, spec, prompt, project_id, handoff_id, claude, r
         if proc.returncode == 0:
             # No `set_launch_session` here: the row already holds the id it was
             # inserted with, and `short_id` is `session_id[:8]` by construction —
-            # a terminal launch never needs the prefix backfill Task 7 does for
+            # a terminal launch never needs the prefix backfill done for
             # background, so writing it would be a second UPDATE for nothing.
             return _started(store, cfg, launch_id, handoff_id,
                             session_id=session_id, short_id=session_id[:8])

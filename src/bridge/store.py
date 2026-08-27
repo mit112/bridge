@@ -913,7 +913,7 @@ class Store:
 
     # --- git_cache ----------------------------------------------------------
     #
-    # The table has existed since Phase 1 and nothing ever read or wrote it.
+    # The table existed from the first schema and nothing ever read or wrote it.
     # Only `status == "ok"` is written and only `status == "unavailable"` reads
     # it back: `unavailable` is the one genuinely transient outcome (timeout,
     # disk asleep), while `not_a_repo` is stable truth and must be allowed to
