@@ -83,6 +83,18 @@ class HandoffIn(BaseModel):
     suggested_effort: str | None = None
     created_at: int | None = None
 
+    @field_validator("id")
+    @classmethod
+    def _usable_as_a_filename(cls, value: str) -> str:
+        # The id becomes the journal file's stem, so a `/` or `..` in it would
+        # aim an accepted handoff at a path outside the spool. `spool` refuses
+        # it as well -- that is the chokepoint every writer shares -- but
+        # `post_handoff` swallows a journal failure on purpose, so without this
+        # the POST would 201 with `journaled: false` and leave a row the
+        # journal can never rebuild. Here it is a 422 with nothing stored.
+        spool.check_record_id(value)
+        return value
+
 
 class HandoffPatch(BaseModel):
     """`status`, `next_prompt`, or both — but never neither.

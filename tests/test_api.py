@@ -591,6 +591,24 @@ def test_post_from_a_path_with_no_project_row_creates_one(handoff_app):
     assert row["name"] == "brand-new"
 
 
+def test_posting_a_handoff_id_that_carries_path_meaning_is_refused(handoff_app):
+    """The id becomes the journal file's stem, so `..` in it would aim an
+    accepted handoff outside the spool.
+
+    `spool` refuses it too, but that alone is not enough: `post_handoff`
+    deliberately swallows a journal failure so a write error cannot cost the
+    user their prompt, so the request would still 201 with `journaled: false`
+    and leave a handoff in the database that no journal can rebuild. Rejecting
+    at the edge is what makes it a 422 with nothing stored at all."""
+    c, store, cfg = handoff_app
+
+    r = c.post("/api/handoff", json=body("../../pwn"))
+
+    assert r.status_code == 422
+    assert store.project_by_path(DEMO) is None
+    assert not (cfg.spool_dir.parent.parent / "pwn.json").exists()
+
+
 def test_posting_the_same_id_twice_yields_one_row(handoff_app):
     """A spool drain and a live POST of the same handoff cannot both insert."""
     c, store, _ = handoff_app
