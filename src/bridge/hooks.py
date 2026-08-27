@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 
 # `Notification` carries the distinction we want in `notification_type`, and
 # unlike `PermissionRequest` it cannot block a turn. These are the values
-# extracted from the 2.1.220 binary.
+# observed from `claude` 2.1.220; treat the set as version-specific.
 NEEDS_INPUT_TYPES = frozenset({"permission_prompt", "agent_needs_input", "idle_prompt"})
 
 # The status a waiting session reports. It sits at the top of the attention

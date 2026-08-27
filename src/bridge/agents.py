@@ -49,7 +49,7 @@ SESSIONS_DIR = Path.home() / ".claude" / "sessions"
 # oversight the next reader has to rediscover.
 DAEMON_ROSTER = Path.home() / ".claude" / "daemon" / "roster.json"
 
-# Extracted from the 2.1.220 binary. A background agent in one of these has
+# Confirmed against `claude` 2.1.220. A background agent in one of these has
 # stopped and is not occupying anything, so the live band must not show it as
 # work in progress.
 TERMINAL_STATES = frozenset({"done", "failed", "stopped"})
