@@ -80,7 +80,26 @@ Each unit has one job, a typed interface, and independent tests.
   `foreign_keys=ON`, `busy_timeout`. Migrations are additive only.
 - **`registry`** — discovers and classifies projects (opt-out, not opt-in), then
   auto-hides known-noise transcript directories. Archives, never deletes.
-- **`api`** — FastAPI routes plus the SSE stream.
+- **`api`** — the app factory. Owns the collaborators every route closes over
+  (store, config, injected launcher, notifier), hosts the middlewares, the SSE
+  stream, and the page routes, and mounts the routers below.
+- **`schemas`** — the Pydantic request bodies and the status vocabularies. Kept
+  out of `api` so a router can import the model it validates without importing
+  the module that mounts it; inline, every route split would be a cycle.
+- **`routes_handoffs` / `routes_schedule`** — the write surfaces, as
+  `build_router(*, store, cfg, launch_fn, notify)` factories rather than
+  module-level routers, because each handler needs what `api` owns. Capture and
+  launch share a module: `POST /api/launch` is the only consumer of a handoff.
+- **`firing`** — the shared tail from an already-chosen prompt to a spawned
+  session. `POST /api/launch`, `run-now`, and `scheduler.tick` all end here, so
+  the scheduler needs it without needing a FastAPI app.
+- **`diagnostics`** — what the diagnostics surface reports and what counts as
+  degraded. Only `collect` needs the app's collaborators; the rest is pure.
+- **`http_policy`** — policy about a *request* rather than about Bridge's data:
+  static-asset caching, the fragment header the shell swaps on, and the host
+  check that keeps a loopback-bound panel unreachable from elsewhere.
+- **`filters`** — the Jinja filters and globals every render surface shares, so
+  a caller that only formats a value never imports the route module.
 - **`launcher`** — `(project, prompt, model, effort, mode)` → a spawned session.
 - **`cli` / `__main__`** — the `bridge` CLI: a thin, stateless HTTP client.
 - **`spool` / `schedspool`** — on-disk durability queues (see *Durability*).
