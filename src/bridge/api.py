@@ -1,8 +1,12 @@
-"""FastAPI application. Read-only in Phase 1; Phase 2 adds handoff capture.
+"""FastAPI application: the panel's routes, and the app factory that wires them.
 
-This process stays the sole writer. The `bridge` CLI speaks HTTP to it and never
-opens the database. Phase 3 makes it the sole *spawner* too: the card and the CLI
-are both thin clients of `POST /api/launch`, and neither imports `launcher`.
+This process is the sole writer and the sole spawner. The `bridge` CLI speaks
+HTTP to it and never opens the database; the panel and the CLI are both thin
+clients of `POST /api/launch`, and neither imports `launcher`.
+
+The route groups themselves live in `routes_*` modules and are mounted here --
+`create_app` owns the collaborators they close over (store, config, injected
+launcher, notifier) and nothing else can hand those out.
 """
 
 import json

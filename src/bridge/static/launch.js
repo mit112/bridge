@@ -279,7 +279,7 @@ function saveComposeDraft(field) {
 // Restores a compose draft after a router swap re-renders the field empty.
 // Only fires for a field that is CURRENTLY empty -- the server-rendered
 // default always wins over a stale draft if the field already carries text
-// (e.g. Task 5's prefill), and this never overwrites something the user is
+// (e.g. a server-side prefill), and this never overwrites something the user is
 // mid-edit on. Re-applies the launch button's enable rule so a restored
 // non-empty draft does not leave the primary action looking disabled.
 function restoreComposeDrafts() {
@@ -353,7 +353,7 @@ document.addEventListener("click", async (event) => {
     // The launch band that was driving THIS handoff -- matched by
     // `data-launch-handoff`, not by the band's own id, since the band's id is
     // keyed off the handoff, not the project. The compose box (always
-    // rendered, per Task 5) is the page's one "start a session" affordance,
+    // rendered) is the page's one "start a session" affordance,
     // so there is nothing left to demote this band to -- it and its dismiss
     // button just hide alongside the section. The status span stays out of
     // this: it is a SIBLING of the button, never inside it, so it is left in

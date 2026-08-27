@@ -13,10 +13,10 @@
 
 {# Colour plus a word, never colour alone. These leaves are always present so
    a live tick can patch an ended or unavailable state without building a
-   subtree and without disturbing an in-progress handoff edit. Shared by
-   `_card.html` (the dashboard) and `_workspace_current.html` (Task 3.3) so
-   the live-state read is the SAME projection in both places, never a second
-   probe through a divergent path. #}
+   subtree and without disturbing an in-progress handoff edit. Every surface
+   that shows live state renders it through this macro, so the read is the
+   SAME projection everywhere, never a second probe through a divergent
+   path. #}
 {% macro live_status(card) %}
 {% set state = card.live.status if card.live else ("unknown" if card.live_unavailable else "ended") %}
 <p class="live live--{{ state }}" data-live-parent="{{ card.path }}">
@@ -166,21 +166,20 @@
 {% endmacro %}
 
 {# The shared schedule row: Overview's "Up next" preview calls this with
-   `interactive=False` (the default); the `/schedule` route (Task 4.2) passes
-   `interactive=True` to light up the action controls below. `data-scheduled-for`
-   is the exact hook name `schedule.js`'s `paintScheduledTimes` already looks
-   for on the dashboard's own scheduled rows -- keep it unchanged so that
-   wiring keeps working once this macro replaces the hand-written markup there.
-   The visible text and `datetime` attribute mirror dashboard.html's own
-   scheduled `<time>`: a readable UTC string plus a machine-readable `datetime`,
-   both computed once server-side by `bridge.api._schedule_time_fields` and
-   carried on `ScheduleRow` -- never the bare epoch int -- so a screen reader or
-   a JS-disabled load never sees "1735700000".
+   `interactive=False` (the default); the `/schedule` route passes
+   `interactive=True` to light up the action controls below.
 
-   Interactive controls below are PORTED from dashboard.html's own scheduled
-   `<li>` (see its `data-scheduled-*` hooks) rather than reinvented, so
-   `schedule.js`'s existing delegated listeners -- written against that
-   markup -- work here unchanged. `data-scheduled-job` is the row-lookup hook
+   `data-scheduled-for` is the hook `schedule.js`'s `paintScheduledTimes`
+   repaints in local time, and the `data-scheduled-*` hooks on the controls
+   below are what its delegated listeners bind against -- both names predate
+   this macro and are kept verbatim, so the JS needed no change when this
+   replaced the hand-written markup it was written for.
+
+   The visible text and `datetime` attribute are a readable UTC string plus a
+   machine-readable `datetime`, both computed once server-side by
+   `bridge.filters._schedule_time_fields` and carried on `ScheduleRow` -- never
+   the bare epoch int -- so a screen reader or a JS-disabled load never sees
+   "1735700000". `data-scheduled-job` is the row-lookup hook
    those listeners use (distinct from this macro's own `data-schedule-row`,
    which nothing reads); `scheduled__job`/`scheduled__job--{status}` are the
    exact classes `settleRow` rewrites onto a row it settles in place, so a

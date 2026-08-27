@@ -50,9 +50,9 @@ DEFAULT_MODELS = [
     ModelChoice("fable", "fable — latest (Fable 5)"),
     ModelChoice("claude-fable-5", "Fable 5"),
 ]
-# The full set `claude --effort` accepts. Phase 3 is the first phase to surface
-# the list in the UI, so the two values nothing read before are added here rather
-# than left implicit. Spec line 377 puts this list in `config.toml`; it has not
+# The full set `claude --effort` accepts. Listed in full rather than left
+# implicit, because surfacing the list in the UI is what made the two values
+# nothing had read before reachable. Spec line 377 puts this list in `config.toml`; it has not
 # moved, and the module docstring records that as an open decision.
 DEFAULT_EFFORTS = ["low", "medium", "high", "xhigh", "max"]
 
@@ -238,7 +238,7 @@ class Config:
     # state and not a degraded one.
     aliases: dict[str, str]
     archived_paths: tuple[str, ...]
-    # Whether the bounded background worker (Task 7) polls GitHub for a newer
+    # Whether the bounded background worker polls GitHub for a newer
     # SHA. Configured via [update] enabled in config.toml.
     update_check_enabled: bool
 

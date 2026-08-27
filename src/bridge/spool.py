@@ -6,12 +6,12 @@ edge case, so it is treated as load-bearing rather than as a fallback.
 
 **Journal.** A drained file is *moved* to `drained/`, never deleted. Handoffs
 are the first data Bridge stores that cannot be regenerated from transcripts, so
-Phase 1's "the database is a pure derived cache; delete it and re-index" is no
+the original "the database is a pure derived cache; delete it and re-index" is no
 longer true of the `handoffs` table on its own. The retained files are what keep
 it true of the system: they can rebuild the table, so `rm ~/.bridge/bridge.db`
-stays a safe operation. Phase 3 journals status *changes* alongside creations,
-so a rebuild restores the state each handoff ended in rather than showing every
-one of them as queued again.
+stays a safe operation. Status *changes* are journalled alongside creations, so a
+rebuild restores the state each handoff ended in rather than showing every one of
+them as queued again.
 
 Any change that unlinks a spool file on successful drain forfeits that property.
 `test_drained_files_are_retained_and_can_rebuild_the_table` exists to fail if
@@ -84,8 +84,8 @@ def journal(h: Handoff, spool_dir: Path) -> Path:
 def journal_status(handoff_id: str, status: str, at: int, spool_dir: Path) -> Path:
     """Record a handoff's *status change*, so a rebuild replays where it ended up.
 
-    Phase 2 journalled creations only, which cost nothing while nothing consumed
-    a handoff. Once ▶ exists it costs the panel's most load-bearing signal:
+    Creations alone were journalled at first, which cost nothing while nothing
+    consumed a handoff. Once ▶ exists it costs the panel's most load-bearing signal:
     launch a prompt, `rm ~/.bridge/bridge.db`, re-index, and a creations-only
     journal puts the prompt you already ran back at the top of the dashboard.
 

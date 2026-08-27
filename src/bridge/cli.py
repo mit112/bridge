@@ -221,7 +221,7 @@ def cmd_launch(args, cfg) -> int:
         # would otherwise have to guess.
         payload["handoff_id"] = args.handoff
     else:
-        # The server no longer auto-picks (Task 3 removed that fallback), so
+        # The server no longer auto-picks -- that fallback was removed -- so
         # the one auto-pick left lives here, and only for the unambiguous case.
         query = urllib.parse.urlencode({"project_path": project})
         try:

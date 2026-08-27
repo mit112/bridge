@@ -42,7 +42,7 @@ def fire(
 ) -> launcher.LaunchResult:
     """Resolve the alias table, build a `LaunchSpec`, and spawn it.
 
-    The one tail `POST /api/launch` and Task 3's scheduler both need: neither
+    The one tail `POST /api/launch` and the scheduler both need: neither
     caller does prompt/handoff selection or journalling here -- those stay
     inside `launcher.launch` -- this is only the part that turns an already-
     chosen prompt into a spawn. A caller with no route in front of it (the
@@ -78,7 +78,7 @@ def _row_to_scheduled_run(row) -> ScheduledRun:
 
 def _fire_claimed_job(store: Store, cfg: Config, row, launch_fn: LaunchFn):
     """The shared tail after a scheduled run is claimed -- `POST
-    /api/schedule/{id}/run-now` and Task 4's scheduler both end here, with
+    /api/schedule/{id}/run-now` and the background scheduler both end here, with
     nothing else between "claimed" and "fired".
 
     `row` is the just-claimed snapshot (from `claim_specific` or

@@ -88,8 +88,8 @@ class AgentsState:
 
     status: str
     sessions: list[LiveSession] = field(default_factory=list)
-    # Which sensor answered, and what `claude` version it reported. Task 7's
-    # diagnostics reads both: when the schema next drifts, this is the
+    # Which sensor answered, and what `claude` version it reported.
+    # `diagnostics` reads both: when the schema next drifts, this is the
     # difference between a diagnosis and a bisect.
     source: str = "registry"
     version: str | None = None

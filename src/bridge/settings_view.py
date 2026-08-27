@@ -53,8 +53,8 @@ class HookStatus:
 
 @dataclass(frozen=True)
 class LaunchDefaults:
-    """The launch-band catalogs Task 5.2's safe-launch-default selectors
-    populate from. Pass-through copies of `Config`'s lists: `permission_modes`
+    """The catalogs the launch band's safe-launch-default selectors populate
+    from. Pass-through copies of `Config`'s lists: `permission_modes`
     keeps whatever order `Config` declares, which puts "Ask as usual" (the
     empty, no-flag value) first."""
 
@@ -161,8 +161,8 @@ def _hook_status(cfg: Config, settings_path: Path) -> HookStatus:
 
 def _event_installed(entry: object, expected_url: str) -> bool:
     """One event is installed when it has an `http` handler pointed at this
-    port's `/api/hooks` -- the exact shape Task 9 of the phase-4 amendments
-    wrote (recon §3b): `{"hooks": [{"type": "http", "url": ..., "timeout": 2}]}`.
+    port's `/api/hooks` -- the exact shape `bridge setup` writes:
+    `{"hooks": [{"type": "http", "url": ..., "timeout": 2}]}`.
     """
     if not isinstance(entry, dict):
         return False

@@ -102,7 +102,7 @@
   <a class="skip-link" href="#main">Skip to content</a>
   {# Persistent shell chrome, not page content: sits OUTSIDE `.shell`/`#main`,
      so it is never touched by a router.js content swap. Server-rendered
-     `hidden`; update.js (Task 11) is the only thing that ever reveals it, and
+     `hidden`; update.js is the only thing that ever reveals it, and
      only once `GET /api/diagnostics`'s `update.state` is "behind". The
      "bridge update" fallback line ships unconditionally -- inside the hidden
      markup -- so it is on the page (and in `view-source`) even before any

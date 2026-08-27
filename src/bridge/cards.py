@@ -1,9 +1,9 @@
 """Assemble one Card per project and order them by actionability.
 
-Rank -1 is the most demanding of attention. Phase 2 added queued handoffs above
-rank 0 and Phase 4 added running sessions, each by shifting these values;
-`sort_key` returning a rank-first tuple is the contract that made both a local
-change.
+Rank -1 is the most demanding of attention. Queued handoffs and then running
+sessions were each inserted above rank 0 later, by shifting these values;
+`sort_key` returning a rank-first tuple is the contract that kept both of those
+a local change.
 
 A queued handoff still outranks a running session, and that ordering is not the
 obvious one: a running session needs nothing from you, while a queued one is
