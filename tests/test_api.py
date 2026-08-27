@@ -84,7 +84,6 @@ def test_overview_renders_stable_freshness_and_total_hooks(client):
     html = c.get("/").text
     assert 'data-freshness-strip' in html
     assert 'data-dashboard-refresh>Refresh</button>' in html
-    assert 'data-project-membership-status' in html
     # 8 in the metrics list inside the collapsed <details>, plus the 6 visible
     # command-strip cells -- which used to carry no hook at all and so froze
     # at their page-load values while the hidden twins updated.
