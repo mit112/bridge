@@ -31,7 +31,7 @@
   },
   {
     "name": "the creation journal is dropped, so a database failure right after loses the schedule entirely",
-    "file": "src/bridge/api.py",
+    "file": "src/bridge/routes_schedule.py",
     "old": "            schedspool.journal(job, cfg.spool_dir)",
     "new": "            pass",
     "tests": [

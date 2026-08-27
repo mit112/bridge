@@ -21,7 +21,7 @@
   },
   {
     "name": "widen the status vocabulary to any string, so a typo hides a project forever",
-    "file": "src/bridge/api.py",
+    "file": "src/bridge/schemas.py",
     "old": "ProjectStatus = Literal[\"active\", \"hidden\", \"archived\"]",
     "new": "ProjectStatus = str",
     "tests": [
@@ -31,7 +31,7 @@
   },
   {
     "name": "accept an empty project patch, so PATCH {} is a 200 that changes nothing",
-    "file": "src/bridge/api.py",
+    "file": "src/bridge/schemas.py",
     "old": "        if self.status is None and self.pinned is None:\n            raise ValueError(\"supply status, pinned, or both\")",
     "new": "        pass",
     "tests": [
