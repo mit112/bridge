@@ -100,6 +100,10 @@ def journal_status(handoff_id: str, status: str, at: int, spool_dir: Path) -> Pa
     collision either way — every status that can collide here is terminal and
     non-queued, so a launched prompt still never replays as queued.
     """
+    # Checked here as well as inside `_atomic_write`: the stem below is
+    # *composed*, so `""` or `"."` would pass the composed check as
+    # `.1000.status` and still write a file named after nothing.
+    check_record_id(handoff_id)
     _, drained_dir, _ = _dirs(spool_dir)
     return _atomic_write(
         {"handoff_id": handoff_id, "status": status, "at": at},
@@ -126,6 +130,22 @@ def fsync_dir(directory: Path) -> None:
         os.close(fd)
 
 
+def check_record_id(stem: str) -> None:
+    """Reject a filename stem that would escape `directory` once joined.
+
+    Every stem here derives from a handoff id, and a handoff id arrives over
+    the wire on `POST /api/handoff`. `directory / f"{stem}.json"` treats a
+    leading `/` as an absolute path and `..` as a parent, so an unchecked id
+    turns a journal write into a write anywhere the panel's user can reach.
+    Ids are minted as uuid4 in practice; this only rules out the characters
+    that carry path meaning, so existing non-uuid ids keep working.
+    """
+    if not stem or stem == ".":
+        raise ValueError(f"unusable record id {stem!r}")
+    if ".." in stem or any(c in stem for c in ("/", "\\", "\x00")):
+        raise ValueError(f"record id {stem!r} may not contain a path separator")
+
+
 def _atomic_write(payload: dict, stem: str, directory: Path) -> Path:
     """Serialize one record durably enough that a reader never sees a partial file.
 
@@ -133,6 +153,7 @@ def _atomic_write(payload: dict, stem: str, directory: Path) -> Path:
     atomic rename rather than a cross-filesystem copy, and its name is
     dot-prefixed so `pending()` cannot pick it up mid-write.
     """
+    check_record_id(stem)
     live = directory
     live.mkdir(parents=True, exist_ok=True)
     body = json.dumps(payload, indent=2, ensure_ascii=False)

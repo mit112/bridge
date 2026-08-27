@@ -504,3 +504,41 @@ def test_quarantining_a_corrupt_status_record_logs_a_warning_naming_it(
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
     assert any("h1.500.status.json" in r.getMessage() for r in warnings)
     s.close()
+
+
+# --- record id safety --------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "bad", ["../pwn", "a/b", "..", ".", "", "/etc/passwd", "x\\y", "a\x00b"]
+)
+def test_a_record_id_that_carries_path_meaning_is_refused(spool_dir, bad):
+    """`_atomic_write` resolves `<stem>.json` against the spool directory, so an
+    id holding a separator would land the file outside it. The id arrives over
+    the wire on `POST /api/handoff`, so this is the chokepoint every writer --
+    `write`, `journal`, `journal_status` -- has to share."""
+    with pytest.raises(ValueError):
+        spool.journal(h(bad), spool_dir)
+    with pytest.raises(ValueError):
+        spool.write(h(bad), spool_dir)
+    with pytest.raises(ValueError):
+        spool.journal_status(bad, "launched", 1000, spool_dir)
+
+
+def test_a_refused_record_id_writes_nothing_anywhere(spool_dir, tmp_path):
+    """The guard has to run *before* the temp file, or a rejected id still
+    leaves a `.tmp` behind -- and a traversal id must not create the directory
+    it points at either."""
+    escape = tmp_path / "escape"
+    with pytest.raises(ValueError):
+        spool.journal(h(f"../../{escape.name}/pwn"), spool_dir)
+    assert not escape.exists()
+    assert not list(spool_dir.rglob("*")) or spool.pending(spool_dir) == []
+
+
+def test_an_ordinary_non_uuid_id_still_journals(spool_dir):
+    """The guard rules out path characters, not ids that merely aren't uuids --
+    `deadbeef`-style ids predate it and must keep working."""
+    written = spool.journal(h("deadbeef"), spool_dir)
+    assert written.name == "deadbeef.json"
+    assert json.loads(written.read_text())["id"] == "deadbeef"
