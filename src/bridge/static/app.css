@@ -96,9 +96,9 @@
   /* Component layer: named per-component slots, always pointing at the
      semantic layer above -- never a primitive or a raw colour. */
   --btn-bg: var(--surface); --btn-fg: var(--text); --btn-border: var(--rule);
-  --btn-bg-hover: var(--surface); --btn-border-hover: var(--work);
-  --btn-primary-bg: var(--work); --btn-primary-fg: var(--surface);
-  --btn-primary-bg-hover: var(--work);
+  --btn-bg-hover: var(--surface); --btn-border-hover: var(--text);
+  --btn-primary-bg: var(--text); --btn-primary-fg: var(--surface);
+  --btn-primary-bg-hover: var(--text);
   --field-bg: var(--surface); --field-border: var(--field-line);
   --pill-work-bg: var(--work-soft); --pill-work-fg: var(--work);
   --pill-risk-bg: var(--risk-soft); --pill-risk-fg: var(--risk);
@@ -436,7 +436,7 @@ body {
 ::view-transition-group(root),
 ::view-transition-group(app-masthead),
 ::view-transition-group(app-rail-status) { animation: none; }
-a { color: var(--accent); text-underline-offset: .16em; }
+a { color: var(--text); text-underline-offset: .16em; }
 :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 
 .visually-hidden {
@@ -668,7 +668,7 @@ a { color: var(--accent); text-underline-offset: .16em; }
 }
 .page-eyebrow {
   margin: 0 0 var(--space-2);
-  color: var(--work);
+  color: var(--text-secondary);
   font-family: var(--font-mono);
   font-size: var(--text-xs);
   letter-spacing: .2em;
@@ -1349,12 +1349,28 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
    reverse margin. */
 .overview-section-head p.overview-section-head__num {
   margin: 0 0 var(--space-1);
-  color: var(--work);
+  color: var(--text-secondary);
   font-family: var(--font-mono);
   font-size: var(--text-xs);
   font-variant-numeric: tabular-nums lining-nums;
   letter-spacing: .2em;
 }
+/* "Up next" is a companion aside, not a numbered spine section, so it carries
+   no numeral -- the numbered sequence deliberately marks the main column only.
+   Without one its <h2> sat 22px higher than "Recent projects" in the column
+   beside it. This reserves the numeral's box (its line height, plus the same
+   margin) so the two headings align without claiming Up Next is part of the
+   sequence. Empty `content` rather than a blank <p>: there is nothing here for
+   a screen reader to reach, and no numeral to read out. */
+.overview-section-head--unnumbered > div::before {
+  content: "";
+  display: block;
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  height: 1.5em;
+  margin: 0 0 var(--space-1);
+}
+
 /* `.overview-section-head__hint` deliberately carries NO `font-style: italic`.
    It inherits `--font-sans` (Atkinson Hyperlegible), which ships no italic
    face, so the browser would synthesize a sheared oblique rather than draw a
@@ -1394,7 +1410,7 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
 .attention-primary__top > div { min-width: 0; }
 .attention-kicker {
   margin: 0;
-  color: var(--work);
+  color: var(--text-secondary);
   font-size: var(--text-xs);
   font-weight: 700;
   letter-spacing: .05em;
@@ -1522,7 +1538,7 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
 .overview-recent .project-row__action .btn {
   min-height: auto;
   padding: var(--space-1) var(--space-2);
-  color: var(--work);
+  color: var(--text);
   background: transparent;
   border-color: transparent;
   font-family: var(--font-mono);
