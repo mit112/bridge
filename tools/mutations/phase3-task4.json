@@ -1,7 +1,7 @@
 [
   {
     "name": "PATCH ignores next_prompt, so the edit is a silent no-op",
-    "file": "src/bridge/api.py",
+    "file": "src/bridge/routes_handoffs.py",
     "old": "            store.update_handoff_prompt(handoff_id, body.next_prompt)",
     "new": "            pass",
     "tests": [
@@ -22,7 +22,7 @@
   },
   {
     "name": "skip alias resolution, splitting a launch's history across the old path",
-    "file": "src/bridge/api.py",
+    "file": "src/bridge/routes_handoffs.py",
     "old": "        canonical = store.alias_map().get(body.project_path, body.project_path)",
     "new": "        canonical = body.project_path",
     "tests": [
@@ -32,7 +32,7 @@
   },
   {
     "name": "raise 500 on a failed spawn, so the response carries no prompt to copy",
-    "file": "src/bridge/api.py",
+    "file": "src/bridge/routes_handoffs.py",
     "old": "        except launcher.LaunchError as exc:\n            raise HTTPException(status_code=422, detail=str(exc)) from exc\n",
     "new": "        except launcher.LaunchError as exc:\n            raise HTTPException(status_code=422, detail=str(exc)) from exc\n        if result.outcome == \"failed\":\n            raise HTTPException(status_code=500, detail=result.error or \"failed\")\n",
     "tests": [
@@ -63,7 +63,7 @@
   },
   {
     "name": "let LaunchError escape as a 500 instead of a 422",
-    "file": "src/bridge/api.py",
+    "file": "src/bridge/routes_handoffs.py",
     "old": "            raise HTTPException(status_code=422, detail=str(exc)) from exc",
     "new": "            raise",
     "tests": [
@@ -73,7 +73,7 @@
   },
   {
     "name": "accept a made-up handoff id, surfacing a foreign-key traceback",
-    "file": "src/bridge/api.py",
+    "file": "src/bridge/routes_handoffs.py",
     "old": "            raise HTTPException(status_code=404, detail=\"unknown handoff\")\n        if prompt is None:\n            prompt = handoff[\"next_prompt\"]",
     "new": "            pass\n        if prompt is None:\n            prompt = handoff[\"next_prompt\"]",
     "tests": [

@@ -74,7 +74,7 @@
   },
   {
     "name": "never pass the requested mode into the LaunchSpec, so the whole control is decorative",
-    "file": "src/bridge/api.py",
+    "file": "src/bridge/routes_handoffs.py",
     "old": "            permission_mode=body.permission_mode,",
     "new": "            permission_mode=None,",
     "tests": [
