@@ -32,7 +32,14 @@ class FileWatcher:
         self._thread: threading.Thread | None = None
 
     def start(self) -> None:
-        self._thread = threading.Thread(target=self._run, daemon=True)
+        # The baseline is taken HERE, not on the thread. `start()` returning has
+        # to mean "everything from now on counts as a change": the thread can be
+        # descheduled between `Thread.start()` and its first statement, and any
+        # write that lands in that gap would otherwise be absorbed into the
+        # baseline and never fire. On a loaded machine that silently drops the
+        # first transcript written after `bridge serve` boots.
+        baseline = self._snapshot()
+        self._thread = threading.Thread(target=self._run, args=(baseline,), daemon=True)
         self._thread.start()
 
     def stop(self, join_timeout: float = 5.0) -> None:
@@ -56,8 +63,7 @@ class FileWatcher:
             pass
         return out
 
-    def _run(self) -> None:
-        last = self._snapshot()
+    def _run(self, last: dict[str, tuple[float, int]]) -> None:
         pending_since: float | None = None
         while not self._stop.wait(self._poll_s):
             current = self._snapshot()
