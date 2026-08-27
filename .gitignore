@@ -14,3 +14,4 @@ reasonix.toml
 
 # Internal SDD plans/specs — not for the public repo
 docs/superpowers/
+/.codex-review-verification.md
