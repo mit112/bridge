@@ -1,7 +1,7 @@
 [
   {
     "name": "POST skips alias resolution and upserts the raw path",
-    "file": "src/bridge/api.py",
+    "file": "src/bridge/routes_handoffs.py",
     "old": "        project_id = resolve_project(store, h.project_path)",
     "new": "        project_id = store.upsert_project(\n            h.project_path, h.project_path.rsplit(\"/\", 1)[-1])",
     "tests": [
@@ -10,7 +10,7 @@
   },
   {
     "name": "POST 404s on an unindexed project instead of creating it",
-    "file": "src/bridge/api.py",
+    "file": "src/bridge/routes_handoffs.py",
     "old": "        # Resolve through the alias table, then upsert: a handoff may arrive from\n        # a project that was never indexed, or from an old ~/Documents path.\n        project_id = resolve_project(store, h.project_path)",
     "new": "        if store.project_by_path(h.project_path) is None:\n            raise HTTPException(status_code=404, detail=\"unknown project\")\n        project_id = resolve_project(store, h.project_path)",
     "tests": [
@@ -37,7 +37,7 @@
   },
   {
     "name": "do not journal a live POST",
-    "file": "src/bridge/api.py",
+    "file": "src/bridge/routes_handoffs.py",
     "old": "        journaled = True\n        try:\n            spool.journal(h, cfg.spool_dir)\n        except Exception:  # noqa: BLE001\n            log.exception(\"failed to journal handoff %r\", h.id)\n            journaled = False",
     "new": "        journaled = True",
     "tests": [
@@ -55,7 +55,7 @@
   },
   {
     "name": "truncate the prompt on the way in",
-    "file": "src/bridge/api.py",
+    "file": "src/bridge/routes_handoffs.py",
     "old": "            project_path=body.project_path,\n            next_prompt=body.next_prompt,",
     "new": "            project_path=body.project_path,\n            next_prompt=body.next_prompt[:1000],",
     "tests": [
@@ -64,7 +64,7 @@
   },
   {
     "name": "GET returns 200/null instead of 204 when nothing is queued",
-    "file": "src/bridge/api.py",
+    "file": "src/bridge/routes_handoffs.py",
     "old": "    def get_handoff(project_id: int):\n        row = store.queued_handoff(project_id)\n        if row is None:\n            return Response(status_code=204)",
     "new": "    def get_handoff(project_id: int):\n        row = store.queued_handoff(project_id)\n        if row is None:\n            return None",
     "tests": [
@@ -73,7 +73,7 @@
   },
   {
     "name": "PATCH does not 404 an unknown handoff id",
-    "file": "src/bridge/api.py",
+    "file": "src/bridge/routes_handoffs.py",
     "old": "        row = store.get_handoff(handoff_id)\n        if row is None:\n            raise HTTPException(status_code=404, detail=\"unknown handoff\")",
     "new": "        row = store.get_handoff(handoff_id)\n        if False:\n            raise HTTPException(status_code=404, detail=\"unknown handoff\")",
     "tests": [
@@ -82,7 +82,7 @@
   },
   {
     "name": "server rewrites the CLI-minted id, breaking POST idempotency",
-    "file": "src/bridge/api.py",
+    "file": "src/bridge/routes_handoffs.py",
     "old": "            id=body.id,",
     "new": "            id=__import__(\"uuid\").uuid4().hex,",
     "tests": [
