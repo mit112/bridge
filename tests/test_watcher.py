@@ -59,3 +59,38 @@ def test_a_raising_callback_does_not_kill_the_thread(tmp_path):
     finally:
         w.stop()
     assert state["n"] >= 2, "thread died after the first raising callback"
+
+def test_a_write_racing_start_is_still_seen(tmp_path, monkeypatch):
+    """`start()` returning must mean "everything from now on is a change".
+
+    The watcher thread can be descheduled between `Thread.start()` and its
+    first statement. If the baseline snapshot is taken *there*, a write landing
+    in that gap is absorbed into the baseline and never fires -- which on a
+    loaded machine silently drops the first transcript written after `bridge
+    serve` boots, and is what made
+    `test_a_raising_callback_does_not_kill_the_thread` flaky on CI.
+
+    The gap is forced here rather than waited for, so this fails every time
+    against a thread-side baseline instead of once in a hundred runs.
+    """
+    import threading as _threading
+
+    calls = []
+    real_start = _threading.Thread.start
+
+    def start_then_write(self):
+        # Stand in for an arbitrarily long deschedule: the file appears after
+        # `Thread.start()` is called but before the thread body can run.
+        (tmp_path / "raced.jsonl").write_text("{}")
+        real_start(self)
+
+    monkeypatch.setattr(_threading.Thread, "start", start_then_write)
+    w = FileWatcher(tmp_path, on_change=lambda: calls.append(1),
+                    poll_s=0.02, quiet_s=0.02)
+    w.start()
+    monkeypatch.undo()
+    try:
+        time.sleep(0.4)
+    finally:
+        w.stop()
+    assert calls, "a write racing start() was swallowed into the baseline"
