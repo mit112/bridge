@@ -42,7 +42,7 @@
   },
   {
     "name": "never pass the handoff id to the launcher, so nothing is ever consumed",
-    "file": "src/bridge/api.py",
+    "file": "src/bridge/firing.py",
     "old": "    return launch_fn(store, cfg, spec, handoff_id)",
     "new": "    return launch_fn(store, cfg, spec, None)",
     "tests": [

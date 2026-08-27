@@ -2944,10 +2944,10 @@ def test_running_a_schedule_now_journals_the_claim_before_firing(
     records land in distinct files, which is what lets this test observe both
     without asserting anything about wall-clock timing.
     """
-    from bridge import api as api_module
+    from bridge import firing as firing_module
 
     ticks = iter(range(2_000_000_100, 2_000_000_200))
-    monkeypatch.setattr(api_module, "now_epoch", lambda: next(ticks))
+    monkeypatch.setattr(firing_module, "now_epoch", lambda: next(ticks))
 
     c, _, _, _fake = launch_app
     sid = c.post("/api/schedule", json={

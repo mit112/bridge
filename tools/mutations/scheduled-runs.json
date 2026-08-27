@@ -41,7 +41,7 @@
   },
   {
     "name": "invert _fire_claimed_job's started check, so a returned failure is recorded as fired",
-    "file": "src/bridge/api.py",
+    "file": "src/bridge/firing.py",
     "old": "if result.outcome == \"started\":",
     "new": "if result.outcome != \"started\":",
     "tests": [

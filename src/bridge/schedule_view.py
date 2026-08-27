@@ -21,6 +21,7 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass, field
 
+from bridge.filters import _schedule_time_fields
 from bridge.overview import ScheduleRow
 from bridge.registry import display_name
 from bridge.store import Store
@@ -138,12 +139,6 @@ def build_schedule(
 def _schedule_row(
     store: Store, row: sqlite3.Row, alias: dict[str, str], retried: set[str]
 ) -> ScheduleRow:
-    # Imported lazily, not at module scope: `api.py` will (Task 4.2) import
-    # THIS module for its `/schedule` route, so a top-level `from bridge.api
-    # import ...` here would be a cycle. Mirrors the same lazy import
-    # `overview._schedule_row` already uses for the identical reason.
-    from bridge.api import _schedule_time_fields
-
     project_path = row["project_path"]
     # `project_by_path` (not the alias-resolved path) -- the same lookup
     # `overview._schedule_row` falls back to for a row whose card is gone,

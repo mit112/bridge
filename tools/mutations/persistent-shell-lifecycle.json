@@ -204,7 +204,7 @@
   },
   {
     "name": "_layout_for always returns the fragment layout, even without the header",
-    "file": "src/bridge/api.py",
+    "file": "src/bridge/http_policy.py",
     "old": "return \"_fragment.html\" if request.headers.get(FRAGMENT_HEADER) else \"base.html\"",
     "new": "return \"_fragment.html\"",
     "tests": [
