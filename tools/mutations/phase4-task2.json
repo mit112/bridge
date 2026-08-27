@@ -64,7 +64,7 @@
   },
   {
     "name": "drop the API validator, so an unknown mode reaches the launcher instead of being refused at the edge",
-    "file": "src/bridge/api.py",
+    "file": "src/bridge/schemas.py",
     "old": "        if value and value not in launcher.PERMISSION_MODES:\n            raise ValueError(\n                f\"permission_mode must be one of \"\n                f\"{sorted(launcher.PERMISSION_MODES)}\"\n            )\n        return value",
     "new": "        return value",
     "tests": [

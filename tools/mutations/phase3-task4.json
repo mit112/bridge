@@ -12,7 +12,7 @@
   },
   {
     "name": "drop the empty-body validator, so a PATCH with neither field returns 200",
-    "file": "src/bridge/api.py",
+    "file": "src/bridge/schemas.py",
     "old": "        if self.status is None and self.next_prompt is None:",
     "new": "        if False:",
     "tests": [
@@ -53,7 +53,7 @@
   },
   {
     "name": "drop mode validation, so an unknown mode reaches the launcher",
-    "file": "src/bridge/api.py",
+    "file": "src/bridge/schemas.py",
     "old": "        if value not in launcher.MODES:",
     "new": "        if False:",
     "tests": [
