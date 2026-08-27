@@ -1,9 +1,9 @@
 [
   {
     "name": "index [0] of the runs instead of handling none, so a fresh install 500s",
-    "file": "src/bridge/api.py",
-    "old": "        last_index = dict(run) if run is not None else None",
-    "new": "        last_index = dict(run)",
+    "file": "src/bridge/diagnostics.py",
+    "old": "    last_index = dict(run) if run is not None else None",
+    "new": "    last_index = dict(run)",
     "tests": [
       "tests/test_api.py::test_diagnostics_survives_never_having_indexed"
     ],
@@ -31,9 +31,9 @@
   },
   {
     "name": "always show the diagnostics affordance, so the one signal that something is wrong becomes furniture",
-    "file": "src/bridge/api.py",
-    "old": "        return bool(_attention_items(diag))",
-    "new": "        return True",
+    "file": "src/bridge/diagnostics.py",
+    "old": "    return bool(attention_items(diag))",
+    "new": "    return True",
     "tests": [
       "tests/test_api.py::test_the_header_links_to_diagnostics_only_when_something_is_wrong"
     ],
@@ -41,9 +41,9 @@
   },
   {
     "name": "never show the diagnostics affordance, so parse errors are silent",
-    "file": "src/bridge/api.py",
-    "old": "        return bool(_attention_items(diag))",
-    "new": "        return False",
+    "file": "src/bridge/diagnostics.py",
+    "old": "    return bool(attention_items(diag))",
+    "new": "    return False",
     "tests": [
       "tests/test_api.py::test_the_header_links_to_diagnostics_only_when_something_is_wrong"
     ],
@@ -81,9 +81,9 @@
   },
   {
     "name": "drop the sensor provenance, losing the difference between a diagnosis and a bisect",
-    "file": "src/bridge/api.py",
-    "old": "            \"live_source\": live.source,\n            \"claude_version\": live.version,",
-    "new": "            \"live_source\": \"\",",
+    "file": "src/bridge/diagnostics.py",
+    "old": "        \"live_source\": live.source,\n        \"claude_version\": live.version,",
+    "new": "        \"live_source\": \"\",",
     "tests": [
       "tests/test_api.py::test_diagnostics_records_which_sensor_answered_and_what_version"
     ],
@@ -91,9 +91,9 @@
   },
   {
     "name": "count terminal background agents as running, so finished work inflates the count forever",
-    "file": "src/bridge/api.py",
-    "old": "                1 for s in live.sessions if not agents.is_terminal(s.status)",
-    "new": "                1 for s in live.sessions",
+    "file": "src/bridge/diagnostics.py",
+    "old": "            1 for s in live.sessions if not agents.is_terminal(s.status)",
+    "new": "            1 for s in live.sessions",
     "tests": [
       "tests/test_api.py::test_diagnostics_reports_terminal_agents_as_not_running"
     ],
