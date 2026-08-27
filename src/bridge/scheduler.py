@@ -8,7 +8,7 @@ no test spawns it or fires a real session). `tick` is the unit under test;
 import logging
 
 from bridge import launcher
-from bridge.api import _fire_claimed_job
+from bridge.firing import _fire_claimed_job
 from bridge.store import now_epoch
 
 log = logging.getLogger(__name__)

@@ -5,16 +5,13 @@ opens the database. Phase 3 makes it the sole *spawner* too: the card and the CL
 are both thin clients of `POST /api/launch`, and neither imports `launcher`.
 """
 
-import dataclasses
 import json
 import logging
 import secrets
 import threading
 import time
-from collections.abc import Callable
 from dataclasses import asdict
 from dataclasses import replace as dataclasses_replace
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 from urllib.parse import urlsplit
@@ -23,7 +20,6 @@ from uuid import uuid4
 from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
-from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, field_validator, model_validator
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -34,14 +30,23 @@ from bridge.cards import (
     GitProbeCache,
     LivenessDebouncer,
     build_cards,
-    spark_points,
 )
 from bridge.config import Config
 from bridge.dashboard import DashboardBuilder
+from bridge.filters import register_template_filters
+from bridge.firing import LaunchFn, _fire_claimed_job, _row_to_scheduled_run, fire
+from bridge.http_policy import (
+    FRAGMENT_HEADER,
+    LOOPBACK_HOSTNAMES,
+    UNSAFE_METHODS,
+    CachedStaticFiles,
+    _hostname,
+    _layout_for,
+)
 from bridge.models import AgentsState, Handoff, ScheduledRun
 from bridge.notify import ChangeNotifier
 from bridge.overview import build_overview
-from bridge.projects_view import build_projects, group_projects, status_label
+from bridge.projects_view import build_projects
 from bridge.refresh import RefreshCoordinator
 from bridge.registry import display_name, resolve_project
 from bridge.schedule_view import build_schedule
@@ -61,13 +66,6 @@ HandoffStatus = Literal["queued", "consumed", "dismissed", "superseded"]
 # `active` -- the distinction is a record of who decided, and that is what makes
 # the seed-versus-override rule in `indexer.reindex` legible.
 ProjectStatus = Literal["active", "hidden", "archived"]
-
-# The spawner, injected into `create_app` with a default. Not testability polish:
-# `launcher.launch` shells out to `/usr/bin/osascript`, which opens a real
-# Terminal window running a real, token-burning session whose transcript the
-# indexer then ingests. Injection is what makes it impossible for a route test to
-# spawn one by accident, and it is why no test monkeypatches a module global.
-LaunchFn = Callable[..., launcher.LaunchResult]
 
 
 class HandoffIn(BaseModel):
@@ -328,222 +326,6 @@ class UpdateIn(BaseModel):
         if len(v) != 40 or any(c not in "0123456789abcdef" for c in v):
             raise ValueError("target_sha must be a 40-char lowercase hex SHA")
         return v
-
-
-def fire(
-    store: Store,
-    cfg: Config,
-    *,
-    project_path: str,
-    prompt: str,
-    mode: str,
-    model: str | None,
-    effort: str | None,
-    permission_mode: str | None,
-    title: str | None,
-    handoff_id: str | None,
-    launch_fn: LaunchFn,
-) -> launcher.LaunchResult:
-    """Resolve the alias table, build a `LaunchSpec`, and spawn it.
-
-    The one tail `POST /api/launch` and Task 3's scheduler both need: neither
-    caller does prompt/handoff selection or journalling here -- those stay
-    inside `launcher.launch` -- this is only the part that turns an already-
-    chosen prompt into a spawn. A caller with no route in front of it (the
-    scheduler) has nothing else that resolves an aliased path, so that
-    resolution lives here rather than being duplicated at every call site.
-    """
-    effective_path = store.alias_map().get(project_path, project_path)
-    spec = launcher.LaunchSpec(
-        project_path=effective_path,
-        prompt=prompt,
-        model=model,
-        effort=effort,
-        title=title,
-        mode=mode,
-        permission_mode=permission_mode,
-    )
-    return launch_fn(store, cfg, spec, handoff_id)
-
-
-def _row_to_scheduled_run(row) -> ScheduledRun:
-    """Rebuild the dataclass from a `sqlite3.Row` so it can be journalled.
-
-    `retry_terminal` and the fire path both hand back rows rather than models;
-    the journal stores `dataclasses.asdict`, so it needs the dataclass.
-    `retry_of` must survive. Dropping it would let `retry_terminal`'s
-    `NOT EXISTS (... retry_of = orig.id)` guard stop seeing the retry that
-    already exists, so after a database loss the user could retry the same
-    original a second time and launch the work twice.
-    """
-    fields = {f.name for f in dataclasses.fields(ScheduledRun)}
-    return ScheduledRun(**{k: row[k] for k in row.keys() if k in fields})
-
-
-def _fire_claimed_job(store: Store, cfg: Config, row, launch_fn: LaunchFn):
-    """The shared tail after a scheduled run is claimed -- `POST
-    /api/schedule/{id}/run-now` and Task 4's scheduler both end here, with
-    nothing else between "claimed" and "fired".
-
-    `row` is the just-claimed snapshot (from `claim_specific` or
-    `claim_one_due`): its own prompt/mode/handoff, not values re-read or
-    reconstructed elsewhere, is what gets fired, so a concurrent edit to the
-    still-pending original (impossible; claiming is what makes editing fail)
-    can never race the run that already started.
-
-    A schedule has no `title` column -- `summary` stands in for it, exactly as
-    a handoff's summary stands in for `LaunchIn.title` in `post_launch`, and
-    falls back to the same `launcher.default_title` call with the same
-    arguments, so a scheduled and a manual launch title identically.
-    """
-    id = row["id"]
-    # The claim record is what stops a duplicate launch. `claim_specific` has no
-    # `scheduled_for` guard, so run-now can claim a job scheduled for tomorrow;
-    # without this record a database lost mid-launch replays that job as
-    # `pending` and the scheduler fires it again. Unlike every other journal
-    # call here, a failure ABORTS -- firing without the record is exactly the
-    # scenario this exists to prevent.
-    try:
-        schedspool.journal_status(id, "launching", now_epoch(), cfg.spool_dir)
-    except OSError as exc:
-        # Marking this `failed` would be a WORSE outcome than the filesystem
-        # hiccup that caused it: `failed` is terminal, so a job still owed
-        # tomorrow would never fire again over a transient write error today.
-        # Handing the claim back to `pending` costs nothing the claim itself
-        # hadn't already cost -- fire() was never called, so no launch was
-        # skipped -- and leaves the job exactly where a retry (this run-now,
-        # or the scheduler's own next tick past its time) can claim it again.
-        log.exception("failed to journal claim of scheduled run %r", id)
-        store.unclaim(id)
-        return store.get_scheduled_run(id)
-    effective_path = store.alias_map().get(row["project_path"], row["project_path"])
-    title = row["summary"] or launcher.default_title(
-        row["summary"], display_name(effective_path)
-    )
-    try:
-        result = fire(
-            store, cfg,
-            project_path=row["project_path"],
-            prompt=row["prompt"],
-            mode=row["mode"],
-            model=row["model"],
-            effort=row["effort"],
-            permission_mode=row["permission_mode"],
-            title=title,
-            handoff_id=row["source_handoff_id"],
-            launch_fn=launch_fn,
-        )
-    except launcher.LaunchError as exc:
-        store.finish_scheduled_run(id, status="failed", error=str(exc))
-    except Exception as exc:  # noqa: BLE001 - see docstring below
-        # Anything that is not a `LaunchError` -- a bare `sqlite3.IntegrityError`
-        # from `create_launch` if the handoff was deleted between schedule and
-        # fire, or any other bug -- must not 500 `run-now` or leave the row
-        # stuck `launching` until the next boot's reconcile. `indeterminate` is
-        # the honest answer: the claim already happened, so we genuinely do not
-        # know whether a session spawned, and unlike `failed` it is never
-        # re-claimed, preserving the no-auto-retry guarantee.
-        log.exception(
-            "scheduled run %r raised an unexpected exception while firing", id
-        )
-        store.finish_scheduled_run(id, status="indeterminate", error=str(exc))
-    else:
-        if result.outcome == "started":
-            store.finish_scheduled_run(
-                id, status="fired", launch_id=result.launch_id, fired_at=now_epoch()
-            )
-        else:
-            store.finish_scheduled_run(
-                id, status="failed", launch_id=result.launch_id, error=result.error
-            )
-    final = store.get_scheduled_run(id)
-    if final is not None:
-        # One call for all three outcomes rather than three at each
-        # `finish_scheduled_run`: the row's own status is the authority, and a
-        # journal failure here is demoted because a launched session is not
-        # undone by a filesystem error.
-        try:
-            schedspool.journal_status(
-                id, final["status"], now_epoch(), cfg.spool_dir
-            )
-        except OSError:
-            log.exception("failed to journal terminal status of %r", id)
-    return final
-
-
-class CachedStaticFiles(StaticFiles):
-    """`StaticFiles` that answers with a `Cache-Control`, which it otherwise omits.
-
-    Starlette sends only `etag`/`last-modified`, which gives the browser no
-    freshness lifetime at all -- so every navigation re-requests the
-    render-blocking 95KB `/static/app.css` AND all six woff2 faces just to be
-    told 304. Seven conditional round trips in front of first paint, for bytes
-    already on disk.
-
-    The max-ages are deliberately SHORT because these URLs are unversioned and
-    Bridge is a local panel whose only user edits this CSS by hand. `immutable`
-    or a multi-day age would mean an `app.css` edit stops appearing until a hard
-    reload -- exactly the trap already recorded against this repo ("browsers
-    cache app.css even though the server re-reads it"). A minute covers a burst
-    of clicks through the nav and expires well inside an edit-and-reload cycle;
-    `must-revalidate` forbids ever serving it stale past that.
-
-    Fonts get a day: their content genuinely never changes -- a different weight
-    is a different filename, so a stale hit is impossible rather than merely
-    unlikely. Still revalidatable, not `immutable`, for the same reason as
-    above: nothing here is worth a cache that cannot be cleared by a reload.
-    """
-
-    ASSET_CACHE_CONTROL = "public, max-age=60, must-revalidate"
-    FONT_CACHE_CONTROL = "public, max-age=86400, must-revalidate"
-
-    def file_response(self, full_path, stat_result, scope, status_code=200):
-        response = super().file_response(full_path, stat_result, scope, status_code)
-        # Set after `super()` so the 304 branch is covered too: `cache-control`
-        # is one of the headers Starlette carries onto a `NotModifiedResponse`,
-        # and a revalidation that answered without one would re-arm the same
-        # header-less loop on the very next navigation.
-        response.headers["cache-control"] = (
-            self.FONT_CACHE_CONTROL
-            if Path(full_path).suffix == ".woff2"
-            else self.ASSET_CACHE_CONTROL
-        )
-        return response
-
-
-FRAGMENT_HEADER = "x-bridge-fragment"
-
-# The methods a cross-origin form post can reach with side effects. GET and
-# HEAD are excluded because every one of Bridge's is a read.
-UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
-
-# The only hostnames a browser can address a panel bound to 127.0.0.1 with,
-# absent an attacker-controlled DNS record. `::1` appears unbracketed because
-# `_hostname` strips the brackets a Host header is required to carry.
-LOOPBACK_HOSTNAMES = frozenset({"127.0.0.1", "localhost", "::1"})
-
-
-def _hostname(host: str) -> str:
-    """The host part of a `Host` header, with any port removed.
-
-    Split on the LAST colon and only when what follows is a port, so
-    `evil.example:127.0.0.1` does not read as the host `evil.example:127.0.0.1`
-    being compared away to something loopback-looking. IPv6 is only recognised
-    bracketed, which is what RFC 3986 requires of a Host header anyway.
-    """
-    if host.startswith("["):
-        return host.partition("]")[0].lstrip("[").lower()
-    name, sep, port = host.rpartition(":")
-    return name.lower() if sep and port.isdigit() else host.lower()
-
-
-def _layout_for(request: Request) -> str:
-    """Which layout a page template extends.
-
-    A request without the header renders exactly what it always did, which is
-    what keeps the existing route tests a true statement about the app.
-    """
-    return "_fragment.html" if request.headers.get(FRAGMENT_HEADER) else "base.html"
 
 
 def create_app(
@@ -1540,85 +1322,3 @@ def create_app(
         return asdict(update.run_update(payload.target_sha))
 
     return app
-
-
-def _schedule_time_fields(epoch: int) -> tuple[str | None, str]:
-    """The dashboard's UTC fallback for `job.scheduled_for`, guarded against a
-    row that predates `ScheduleIn`'s epoch-seconds bound. `ScheduleIn` refuses
-    an out-of-range value at creation, but a row seeded before that check
-    existed (or straight through the store, bypassing the API) can still
-    carry one, and `datetime.fromtimestamp` raises rather than clamping --
-    which must degrade this one row's display, not 500 the whole page.
-    """
-    try:
-        dt = datetime.fromtimestamp(epoch, tz=timezone.utc)
-    except (OverflowError, OSError, ValueError):
-        return None, str(epoch)
-    return dt.isoformat(), dt.strftime("%Y-%m-%d %H:%M UTC")
-
-
-def _ago(iso: str | None) -> str:
-    """Compact relative time: 4m, 3h, 2d. Empty when unknown."""
-    from bridge.store import now_epoch, to_epoch
-
-    epoch = to_epoch(iso)
-    if epoch is None:
-        return ""
-    secs = max(0, now_epoch() - epoch)
-    if secs < 3600:
-        return f"{secs // 60}m"
-    if secs < 86400:
-        return f"{secs // 3600}h"
-    return f"{secs // 86400}d"
-
-
-def _ago_epoch(epoch: int | None) -> str:
-    """Same shape as `ago`, for the epoch ints GitState carries."""
-    from bridge.store import now_epoch
-
-    if not epoch:
-        return ""
-    secs = max(0, now_epoch() - int(epoch))
-    if secs < 3600:
-        return f"{secs // 60}m"
-    if secs < 86400:
-        return f"{secs // 3600}h"
-    return f"{secs // 86400}d"
-
-
-def _kilo(n: int | None) -> str:
-    """Token counts as absolute magnitudes; never a percentage of a limit."""
-    n = n or 0
-    if n < 1000:
-        return str(n)
-    if n < 1_000_000:
-        return f"{n / 1000:.0f}k"
-    return f"{n / 1_000_000:.1f}M"
-
-
-def register_template_filters(env) -> None:
-    """Register every Jinja filter Bridge's templates use, onto any env.
-
-    `create_app` calls this for its own `Jinja2Templates` env; the handful of
-    tests that build a bare `Environment` to render one template in isolation
-    call it too, so their filter set can never drift from the app's -- add a
-    filter here once and every render surface has it.
-
-    `shell_freshness` rides along for the same reason. It is a global rather
-    than a filter, but it is the one thing besides the filters that EVERY page
-    template needs -- `base.html`'s shell readout calls it, and so does the one
-    page that overrides that block -- so an env that can render a template's
-    filters but not its shell is not actually able to render the template.
-    The stub answers "no index run yet"; `create_app` replaces it immediately
-    below its own call with the coordinator-backed one.
-    """
-    env.filters["ago"] = _ago
-    env.filters["ago_epoch"] = _ago_epoch
-    env.filters["kilo"] = _kilo
-    env.filters["spark_points"] = spark_points
-    env.filters["group_projects"] = group_projects
-    env.filters["status_label"] = status_label
-    env.globals["shell_freshness"] = lambda: {
-        "server": "available", "index_at": None, "index_age_seconds": None,
-    }
-    env.globals["update_token"] = lambda: ""

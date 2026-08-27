@@ -20,6 +20,7 @@ from bridge import agents
 from bridge.cards import build_cards
 from bridge.config import Config
 from bridge.dashboard import DashboardBuilder
+from bridge.filters import _schedule_time_fields
 from bridge.models import AgentsState, Card
 from bridge.refresh import RefreshCoordinator
 from bridge.registry import display_name
@@ -103,7 +104,7 @@ class ScheduleRow:
     `scheduled_for` stays the raw epoch int (the `data-scheduled-for` hook a
     later JS repaints in local time), but a `<time>` needs a readable
     pre-JS/no-JS fallback too -- `scheduled_for_utc`/`scheduled_for_iso` carry
-    exactly what `bridge.api._schedule_time_fields` already computes for
+    exactly what `bridge.filters._schedule_time_fields` already computes for
     dashboard.html's own scheduled rows, so a Jinja macro rendering this row
     never has to reformat an epoch itself. Defaulted so existing callers/tests
     constructing a `ScheduleRow` without them keep working.
@@ -398,7 +399,7 @@ def project_summary(card: Card, now: int) -> ProjectSummary:
         branch=card.git.branch,
         dirty_count=card.git.dirty_count,
         last_session_title=card.session.title if card.session else None,
-        # Floored the same way bridge.api._ago/_ago_epoch floor their own
+        # Floored the same way bridge.filters._ago/_ago_epoch floor their own
         # `now - epoch`: a poll/write race or clock skew can put `ended` at or
         # after `now`, and a negative age would render as "-2m ago" rather
         # than "0m ago".
@@ -424,15 +425,6 @@ def _status_word(card: Card) -> str:
 
 
 def _schedule_row(row, by_path: dict[str, Card], store: Store) -> ScheduleRow:
-    # Imported lazily rather than at module scope: `bridge.api` will (as of
-    # the Projects route) import `bridge.projects_view`, which imports THIS
-    # module for `ProjectSummary`/`project_summary` -- a top-level `from
-    # bridge.api import ...` here would make that a cycle. This is the only
-    # symbol overview.py needs from api.py, so a local import breaks the cycle
-    # for every future consumer without costing anything at call time (Python
-    # caches the module after the first import).
-    from bridge.api import _schedule_time_fields
-
     card = by_path.get(row["project_path"])
     if card is not None:
         project_id, project_name = card.project_id, card.name
