@@ -19,7 +19,7 @@ from jinja2 import Environment, FileSystemLoader
 
 from bridge.api import register_template_filters
 from bridge.config import ModelChoice, PermissionChoice
-from bridge.models import Card
+from bridge.models import Card, SessionRecord
 
 TPL = Path(__file__).resolve().parent.parent / "src" / "bridge" / "templates"
 
@@ -74,6 +74,30 @@ def test_handoff_block_renders_from_the_passed_handoff_not_a_card_singleton():
 
     assert 'data-handoff-section="h2"' in html2
     assert 'data-handoff-section="h1"' not in html2
+
+
+def test_handoff_block_title_is_its_own_sessions_not_the_cards_singleton():
+    """The h2 title comes off `handoff.session_title`, not `card.session.title`.
+
+    `card.session` is the project's overall latest session, which is a
+    DIFFERENT session than either handoff's own source here -- pinning the
+    fix for a bug where every queued handoff on a project showed whichever
+    session most recently started, regardless of which session wrote it.
+    """
+    card = _card(session=SessionRecord(
+        session_id="latest", transcript_path="/t/latest", title="unrelated later work",
+    ))
+    mod = _module()
+
+    html1 = mod.handoff_block(card, _handoff("h1", session_title="earlier work"), None)
+    html2 = mod.handoff_block(card, _handoff("h2", session_title="later work"), None)
+
+    assert "earlier work" in html1
+    assert "unrelated later work" not in html1
+    assert "later work" not in html1  # substring of "earlier work" would be a false pass
+
+    assert "later work" in html2
+    assert "unrelated later work" not in html2
 
 
 def test_handoff_block_renders_nothing_for_a_falsy_handoff():
