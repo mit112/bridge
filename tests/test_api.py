@@ -590,6 +590,27 @@ def test_post_from_a_path_with_no_project_row_creates_one(handoff_app):
     assert row["name"] == "brand-new"
 
 
+def test_post_to_an_archived_project_restores_it(handoff_app):
+    """A handoff is proof the project is alive again; leaving it archived hides the prompt.
+
+    The indexer archives a project the first run it sees the directory gone --
+    after a machine reset, every project is gone until it is restored -- and
+    deliberately never un-archives it. A later `/handoff` from that directory
+    then 201s, queues, and is invisible: the dashboard lists only active
+    projects, so the prompt sits under a card the user cannot see.
+    """
+    c, store, _ = handoff_app
+    pid = store.upsert_project("/Users/you/dev/reset-then-restored", "reset-then-restored")
+    store.archive_missing(pid, at=1_000)
+
+    r = c.post("/api/handoff", json=body(path="/Users/you/dev/reset-then-restored"))
+
+    assert r.status_code == 201
+    assert r.json()["project_id"] == pid
+    assert store.get_project(pid)["status"] == "active"
+    assert [dict(p)["id"] for p in store.projects()] == [pid]
+
+
 def test_posting_a_handoff_id_that_carries_path_meaning_is_refused(handoff_app):
     """The id becomes the journal file's stem, so `..` in it would aim an
     accepted handoff outside the spool.
