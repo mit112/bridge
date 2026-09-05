@@ -247,8 +247,7 @@ def _attention_from_cards(cards: list[Card]) -> list[AttentionItem]:
                 items.append(AttentionItem(
                     kind="handoff",
                     project_id=card.project_id,
-                    title=(card.session.title if card.session and card.session.title
-                           else card.name),
+                    title=(h.get("session_title") or card.name),
                     summary=(h.get("summary") or h.get("next_prompt", "")),
                     primary_action=Action(
                         "Continue in Terminal",

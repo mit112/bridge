@@ -438,7 +438,23 @@ def _session(store: Store, project_id: int) -> SessionRecord | None:
 
 
 def _handoffs(store: Store, project_id: int) -> list[dict]:
-    return [dict(row) for row in store.queued_handoffs(project_id)]
+    """Each handoff's own source session's title, not the project's latest one.
+
+    A project can have several handoffs queued at once, from different
+    sessions; `card.session` is whichever session is now most recent for the
+    project, so stamping that title onto every handoff mislabels all but
+    (coincidentally) the one whose source session happens to still be latest.
+    """
+    out = []
+    for row in store.queued_handoffs(project_id):
+        h = dict(row)
+        session = (
+            store.session_row(h["source_session_id"])
+            if h.get("source_session_id") else None
+        )
+        h["session_title"] = session["title"] if session else None
+        out.append(h)
+    return out
 
 
 def _is_stale(git: GitState, stale_hours: int, now: int) -> bool:

@@ -603,6 +603,44 @@ def test_card_carries_all_queued_handoffs(store, tmp_path):
     assert card.handoff["id"] == "h2"
 
 
+def test_each_handoff_carries_its_own_source_sessions_title(store, tmp_path):
+    """A handoff's displayed title is ITS OWN source session's, not whichever
+    session is now latest for the project.
+
+    `sess-2` started after `sess-1`'s handoff was queued, so `sess-2` is
+    `card.session` (the project's latest) by the time both handoffs render.
+    Stamping `card.session.title` onto every handoff would show "later work"
+    on `h1` too -- the bug this pins.
+    """
+    pid = store.upsert_project("/proj/a", "a")
+    store.upsert_session(
+        SessionRecord(session_id="sess-1", transcript_path="/t/sess-1",
+                      project_path="/proj/a", title="earlier work",
+                      ended_at="2026-09-04T20:00:00.000Z"),
+        pid,
+    )
+    store.create_handoff(
+        Handoff(id="h1", project_path="/proj/a", next_prompt="plan",
+                source_session_id="sess-1", created_at=1), pid)
+    store.upsert_session(
+        SessionRecord(session_id="sess-2", transcript_path="/t/sess-2",
+                      project_path="/proj/a", title="later work",
+                      ended_at="2026-09-04T21:00:00.000Z"),
+        pid,
+    )
+    store.create_handoff(
+        Handoff(id="h2", project_path="/proj/a", next_prompt="ui",
+                source_session_id="sess-2", created_at=2), pid)
+    cfg = load({"db_path": tmp_path / "c.db"})
+    cards = build_cards(store, cfg, probe_fn=lambda p: GitState(status="ok"))
+    card = next(c for c in cards if c.path == "/proj/a")
+
+    assert card.session.title == "later work"  # sanity: sess-2 is latest
+    by_id = {h["id"]: h for h in card.handoffs}
+    assert by_id["h1"]["session_title"] == "earlier work"
+    assert by_id["h2"]["session_title"] == "later work"
+
+
 def test_card_no_handoffs_is_empty_list(store, tmp_path):
     store.upsert_project("/proj/b", "b")
     cfg = load({"db_path": tmp_path / "c.db"})

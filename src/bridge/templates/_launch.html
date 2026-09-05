@@ -106,7 +106,7 @@
       <div class="handoff__top">
         <div>
           <p class="handoff__kicker">Queued handoff · {{ handoff.created_at | ago_epoch }} ago</p>
-          <h2 class="handoff__title" id="{{ hid }}-title" title="{{ card.session.title if card.session and card.session.title else card.name ~ ' is ready to continue' }}">{{ card.session.title if card.session and card.session.title else card.name ~ " is ready to continue" }}</h2>
+          <h2 class="handoff__title" id="{{ hid }}-title" title="{{ handoff.session_title or card.name ~ ' is ready to continue' }}">{{ handoff.session_title or card.name ~ " is ready to continue" }}</h2>
           <p class="handoff__summary" title="{{ handoff.summary or 'Continue from the exact saved prompt.' }}">{{ handoff.summary or "Continue from the exact saved prompt." }}</p>
         </div>
         <span class="pill pill--work continuation-status">Ready</span>
