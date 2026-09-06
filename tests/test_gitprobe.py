@@ -185,3 +185,64 @@ def test_unstaged_modified_file_is_included_in_age(repo):
     assert g.status == "ok"
     assert g.dirty_count == 1
     assert g.oldest_uncommitted_at == old, "unstaged-modified file was dropped"
+
+
+def test_non_ascii_path_reaches_the_age_computation(repo):
+    """core.quotepath makes the default porcelain lie about non-ASCII paths.
+
+    With git's default `core.quotepath=true`, `café.txt` is reported as the
+    literal `"caf\\303\\251.txt"`. Stripping the surrounding quotes leaves the
+    octal escapes, `stat()` raises, and the file drops out of
+    `oldest_uncommitted_at` while still counting in `dirty_count` -- the
+    staleness signal silently goes blind. `-z` reports raw bytes instead.
+
+    The non-ASCII file is made the OLDEST and an ASCII file is dirtied
+    alongside it, so dropping the quoted one yields the ASCII file's mtime
+    rather than None: a test that only asserted `is not None` would pass
+    against the bug.
+    """
+    run(repo, "config", "core.quotepath", "true")
+    oldest, newer = 1_400_000_000, 1_500_000_000
+    (repo / "café.txt").write_text("unicode\n")
+    os.utime(repo / "café.txt", (oldest, oldest))
+    (repo / "a.txt").write_text("changed\n")
+    os.utime(repo / "a.txt", (newer, newer))
+
+    g = probe(repo)
+    assert g.status == "ok"
+    assert g.dirty_count == 2
+    assert g.oldest_uncommitted_at == oldest, "the quoted path was dropped"
+
+
+def test_path_with_a_space_reaches_the_age_computation(repo):
+    """A space in a path also triggers quoting, and `-z` also fixes it."""
+    run(repo, "config", "core.quotepath", "true")
+    oldest, newer = 1_400_000_000, 1_500_000_000
+    (repo / "two words.txt").write_text("spaced\n")
+    os.utime(repo / "two words.txt", (oldest, oldest))
+    (repo / "a.txt").write_text("changed\n")
+    os.utime(repo / "a.txt", (newer, newer))
+
+    g = probe(repo)
+    assert g.dirty_count == 2
+    assert g.oldest_uncommitted_at == oldest, "the quoted path was dropped"
+
+
+def test_rename_counts_once_and_ages_the_new_path(repo):
+    """A `-z` rename is `R  new\\0origin\\0` -- no ` -> ` arrow to split on.
+
+    The origin no longer exists on disk, so treating it as its own entry both
+    inflates `dirty_count` and feeds `stat()` a path that can only fail. The
+    renamed file is non-ASCII so the old arrow-then-unquote parse drops it.
+    """
+    run(repo, "config", "core.quotepath", "true")
+    (repo / "café.txt").write_text("unicode\n")
+    run(repo, "add", "café.txt")
+    run(repo, "commit", "-q", "-m", "add unicode")
+    run(repo, "mv", "café.txt", "renommé.txt")
+    old = 1_400_000_000
+    os.utime(repo / "renommé.txt", (old, old))
+
+    g = probe(repo)
+    assert g.dirty_count == 1, "a rename must count once, not twice"
+    assert g.oldest_uncommitted_at == old

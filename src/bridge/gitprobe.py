@@ -22,10 +22,18 @@ def _git(path: Path, *args: str, timeout: float) -> tuple[int, str]:
 
     Deliberately unstripped: `git status --porcelain` encodes status in the
     first two columns, and an unstaged modification is ' M path'. Stripping
-    the whole output shifts that line left and corrupts the path.
+    the whole output shifts that line left and corrupts the path. The
+    NUL-separated `-z` form is byte-exact for the same reason and must not be
+    touched either.
+
+    `surrogateescape` because `-z` emits real filesystem bytes rather than
+    git's ASCII-safe quoted form: a path that is not valid UTF-8 would
+    otherwise raise `UnicodeDecodeError` here and cost the whole probe. The
+    surrogates round-trip back through `stat()` unchanged.
     """
     proc = subprocess.run(
-        [GIT, *args], cwd=path, capture_output=True, text=True, timeout=timeout
+        [GIT, *args], cwd=path, capture_output=True, text=True,
+        errors="surrogateescape", timeout=timeout,
     )
     return proc.returncode, proc.stdout
 
@@ -43,8 +51,8 @@ def probe(path: Path, timeout: float = 2.0) -> GitState:
         _, branch_out = _git(path, "rev-parse", "--abbrev-ref", "HEAD", timeout=timeout)
         g.branch = branch_out.strip()
 
-        _, porcelain = _git(path, "status", "--porcelain", timeout=timeout)
-        entries = [l for l in porcelain.splitlines() if l.strip()]
+        _, porcelain = _git(path, "status", "--porcelain", "-z", timeout=timeout)
+        entries = _porcelain_paths(porcelain)
         g.dirty_count = len(entries)
         g.oldest_uncommitted_at = _oldest_mtime(path, entries)
 
@@ -67,14 +75,40 @@ def probe(path: Path, timeout: float = 2.0) -> GitState:
         return GitState(status="unavailable")
 
 
-def _oldest_mtime(root: Path, porcelain_lines: list[str]) -> int | None:
+def _porcelain_paths(raw: str) -> list[str]:
+    """One path per changed entry, from `git status --porcelain -z`.
+
+    `-z` is the only form that round-trips a path faithfully. In the default
+    text form git applies `core.quotepath`, so `café.txt` comes back as the
+    literal `"caf\\303\\251.txt"`: stripping the quotes leaves the octal
+    escapes, `stat()` fails, and the file silently drops out of the
+    uncommitted-age computation while still counting toward `dirty_count`.
+    `-z` emits raw bytes, NUL-separated and never quoted, so a non-ASCII path,
+    a path containing a space and a path containing a newline all survive.
+
+    A rename or copy is TWO consecutive records -- the new path first, then the
+    origin -- with no ` -> ` arrow to split on. The origin record is consumed
+    here so it neither inflates the count nor gets `stat()`ed at a path that no
+    longer exists.
+    """
+    records = [r for r in raw.split("\0") if r]
+    paths: list[str] = []
+    i = 0
+    while i < len(records):
+        rec = records[i]
+        i += 1
+        if len(rec) < 4:
+            continue  # not an `XY <path>` record; nothing addressable
+        if rec[0] in ("R", "C") or rec[1] in ("R", "C"):
+            i += 1  # skip the origin-path record that follows
+        paths.append(rec[3:])
+    return paths
+
+
+def _oldest_mtime(root: Path, rel_paths: list[str]) -> int | None:
     """Oldest mtime among changed files: how long work has sat uncommitted."""
     oldest: int | None = None
-    for line in porcelain_lines:
-        rel = line[3:].strip()
-        if " -> " in rel:  # rename
-            rel = rel.split(" -> ", 1)[1]
-        rel = rel.strip().strip('"')
+    for rel in rel_paths:
         try:
             mt = int((root / rel).stat().st_mtime)
         except OSError:
