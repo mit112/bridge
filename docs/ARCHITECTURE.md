@@ -128,14 +128,26 @@ not to the corpus size**, and there is a test that asserts exactly that.
 
 ## The gitprobe porcelain gotcha
 
+Every failure mode here is the same one: a mangled path fails `stat()`, the file
+drops out of the uncommitted-age computation while still counting in
+`dirty_count`, and the staleness signal silently goes blind rather than erroring.
+
 `git status --porcelain` encodes status in the first two columns, so an unstaged
 modification is `` M path`` — a leading space. **Never strip the porcelain output
-as a whole**: stripping shifts that line left, a fixed `line[3:]` slice then
-mangles the path, `stat()` raises, and the file is silently dropped from the
-uncommitted-age computation while still counted in `dirty_count` — corrupting the
-staleness signal for the most common git state there is. Strip only where a scalar
-is wanted (branch, counts, log); split porcelain raw. Rename entries
-(`R old -> new`) must have the arrow split off *before* quotes are stripped.
+as a whole**: stripping shifts that line left and a fixed `line[3:]` slice then
+mangles the path. Strip only where a scalar is wanted (branch, counts, log).
+
+The text form is unparseable in general anyway, so the probe asks for
+`--porcelain -z`. With git's default `core.quotepath=true` a non-ASCII path comes
+back quoted and octal-escaped (`?? "caf\303\251.txt"`), and unquoting it needs a
+full C-escape decoder, not `.strip('"')`. `-z` emits raw path bytes,
+NUL-separated and never quoted, so non-ASCII paths, spaces and even newlines all
+survive verbatim; stdout is decoded with `surrogateescape` so a path that is not
+valid UTF-8 round-trips through `stat()` instead of raising. Records are split on
+`\0` and each is `XY<space>path`. A rename or copy is **two consecutive records**
+— new path first, then the origin — with no ` -> ` arrow; the origin record is
+consumed by the parser, so it neither doubles `dirty_count` nor gets `stat()`ed
+at a path that no longer exists.
 
 ## The store and additive migrations
 
