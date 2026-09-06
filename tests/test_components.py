@@ -310,3 +310,23 @@ def test_schedule_row_interactive_terminal_non_retryable_omits_retry():
     )
     html = _module().schedule_row(row, interactive=True)
     assert "data-scheduled-retry=" not in html
+
+
+def test_schedule_row_is_keyed_on_its_id_for_the_live_morph():
+    """Same reason the handoff section carries a key: this row's edit panel and
+    toggle are `data-live-preserve`, so morph.js's positional fallback for an
+    unkeyed child would leave one run's open editor attached to another run's
+    id after the schedule list changes underneath an open page."""
+    row = ScheduleRow(
+        id="s3",
+        project_id=7,
+        project_name="Demo",
+        prompt_preview="go",
+        scheduled_for=1735700000,
+        status="pending",
+        error=None,
+        scheduled_for_utc="2025-01-01 00:00 UTC",
+        scheduled_for_iso="2025-01-01T00:00:00+00:00",
+        mode="terminal",
+    )
+    assert 'data-key="s3"' in _module().schedule_row(row, interactive=True)

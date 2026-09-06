@@ -185,7 +185,12 @@
    exact classes `settleRow` rewrites onto a row it settles in place, so a
    server-rendered row and a JS-settled one always agree on shape. #}
 {% macro schedule_row(row, interactive=False) %}
+{# data-key for the same reason the handoff section carries one: this row's
+   edit panel and its toggle are `data-live-preserve`, so an unkeyed
+   position-matched morph would leave one row's open editor attached to
+   another row's id. #}
 <li class="schedule-row{% if interactive %} scheduled__job scheduled__job--{{ row.status }}{% endif %}"
+    data-key="{{ row.id }}"
     data-schedule-row="{{ row.id }}"{% if interactive %}
     data-scheduled-job="{{ row.id }}"
     data-scheduled-retry-label="Retry {{ row.project_name }} run scheduled for {{ row.scheduled_for_utc }}"{% endif %}>
