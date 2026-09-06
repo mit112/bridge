@@ -259,3 +259,46 @@ def test_update_banner_scaffold_and_copy_command_ship_in_base():
     assert "bridge update" in html                  # copy-able fallback command
     assert 'name="bridge-update-token"' in html     # token available to the JS
     assert '<script src="/static/update.js"' in html
+
+
+def test_the_narrow_nav_is_collapsed_by_default_and_only_when_js_can_reopen_it():
+    """Below 1024px the nav used to render fully expanded above the content on
+    every load, with a "Menu" button beside the already-open menu it claimed to
+    control.
+
+    Pinned in CSS and in the server-rendered markup because that is where the
+    default lives -- shell.js only handles the click. Three halves have to
+    agree or the disclosure is broken in a way no JS test would show: the
+    stylesheet collapses the nav below 1024px, the button ships
+    `aria-expanded="false"` (the state that rule reads), and the collapse is
+    gated on `data-js` so a load without JS -- where nothing could reopen it --
+    keeps the nav visible.
+    """
+    css = (STATIC / "app.css").read_text()
+    base = (TEMPLATES / "base.html").read_text()
+
+    blocks = [b for b in css.split("@media") if b.lstrip().startswith("(max-width: 1023px)")]
+    collapse = [b for b in blocks if ".sidebar__nav" in b and "display: none" in b]
+    assert collapse, (
+        "app.css has no max-width:1023px rule collapsing .sidebar__nav, so the "
+        "narrow nav still renders open above the content on every load"
+    )
+    rule = collapse[0]
+    assert '.menu-toggle[aria-expanded="false"]' in rule, (
+        "the collapse must key off the button's own aria-expanded, or the "
+        "button and what is on screen can disagree"
+    )
+    assert "[data-js]" in rule, (
+        "an ungated collapse hides the nav on a no-JS load with nothing able "
+        "to bring it back"
+    )
+
+    assert "setAttribute('data-js'" in base, (
+        "nothing sets the data-js the collapse is gated on, so the nav is "
+        "never collapsed at all"
+    )
+    button = base[base.index('class="menu-toggle"'):]
+    button = button[:button.index(">")]
+    assert 'aria-expanded="false"' in button, (
+        "the Menu button ships expanded over a nav CSS has collapsed"
+    )

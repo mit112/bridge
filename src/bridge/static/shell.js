@@ -1,15 +1,17 @@
-// The sidebar nav's two disclosures. Progressive: the nav is server-rendered
-// fully visible with no `hidden` attribute, and this file does nothing until
-// a click -- with no JS (or before this loads) the nav stays exactly as
-// rendered, never collapsed out of reach.
+// The sidebar nav's two disclosures. Progressive: this file does nothing until
+// a click, and every collapse it can produce is gated in CSS on `data-js`, so
+// with no JS the nav stays exactly as the server rendered it -- visible, never
+// collapsed out of reach.
 //
-// `.menu-toggle` (below 1024px) hides the nav via the `hidden` attribute.
+// `.menu-toggle` (below 1024px) flips its own `aria-expanded`, which app.css
+// reads to collapse the nav (the `hidden` attribute it also sets keeps the
+// node out of the accessibility tree while collapsed).
 // `.sidebar-toggle` (1024px and up) collapses the whole rail via a `data-nav`
-// attribute on <html> that CSS reads, and persists the choice -- Bridge is
-// server-rendered, so every nav click is a full page load and an in-memory
-// collapse would spring back open each time. base.html's inline head script
-// applies the stored value before first paint; this file only handles the
-// click and keeps the button's own state in step.
+// attribute on <html> that CSS reads, and persists the choice -- a collapse
+// that lived only in memory would be lost on the next full page load (a
+// reload, or any navigation the router cannot swap). base.html's inline head
+// script applies the stored value before first paint; this file only handles
+// the click and keeps the button's own state in step.
 (function () {
   if (!document.addEventListener) return;
 
