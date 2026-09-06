@@ -61,10 +61,6 @@ function setTotal(name, value) {
   }
 }
 
-function bandFor(path) {
-  return query(`[data-live-path="${cssValue(path)}"]`);
-}
-
 function setBandState(band, status) {
   if (!band) return;
   const state = LIVE_STATES.includes(status) ? status : "unknown";
@@ -73,24 +69,6 @@ function setBandState(band, status) {
   if (target.classList && target.classList.remove) {
     target.classList.remove(...LIVE_STATES.map((name) => `live--${name}`));
     target.classList.add(`live--${state}`);
-  }
-}
-
-function applyLegacyLive(live) {
-  for (const [path, state] of Object.entries(live || {})) {
-    const band = bandFor(path);
-    setBandState(band, state.status);
-    // Kept as a leaf-only compatibility path for the pre-schema tombstone
-    // tests. It cannot reach a card subtree or a handoff textarea.
-    if (band) band.textContent = state.status;
-  }
-}
-
-function applyRemoved(removed) {
-  for (const path of removed || []) {
-    const band = bandFor(path);
-    setBandState(band, "ended");
-    if (band) band.textContent = "ended";
   }
 }
 
@@ -332,13 +310,7 @@ function connect() {
     frames += 1;
     emitFrame(payload);
     if (healthy(frames, openedAt)) backoffMs = BACKOFF_MIN_MS;
-    if (payload.schema === 1) applyDashboardUpdate(payload);
-    else {
-      // Compatibility with the pre-schema event shape. New server frames never
-      // take this branch, but retaining it makes old clients/tests fail safe.
-      applyLegacyLive(payload.live);
-      applyRemoved(payload.removed);
-    }
+    applyDashboardUpdate(payload);
   };
 
   source.addEventListener("snapshot", handle);

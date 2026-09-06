@@ -123,8 +123,8 @@
   {
     "name": "patch the card by innerHTML, silently discarding whatever the user was typing",
     "file": "src/bridge/static/live.js",
-    "old": "    if (band) band.textContent = state.status;",
-    "new": "    if (band) band.parentNode.innerHTML = state.status;",
+    "old": "  setText(band, status);",
+    "new": "  band.parentNode.innerHTML = status;",
     "tests": [
       "tests/test_api.py::test_live_js_never_touches_the_prompt_textarea"
     ],
@@ -151,32 +151,22 @@
     "expect_count": 1
   },
   {
-    "name": "ignore the tombstone in the client, so the band never clears",
+    "name": "ignore the end of a session, so the band never clears",
     "file": "src/bridge/static/live.js",
-    "old": "    if (band) band.textContent = \"ended\";",
-    "new": "    if (false) band.textContent = \"ended\";",
+    "old": "  const status = live.status || (live.available ? \"unknown\" : \"ended\");",
+    "new": "  const status = live.status;",
     "tests": [
-      "tests/test_static_js.py::test_live_js_clears_a_band_on_a_tombstone"
+      "tests/test_static_js.py::test_live_js_clears_a_band_when_a_session_goes_away"
     ],
     "expect_count": 1
   },
   {
     "name": "leave the live band's visual state stale when its status word changes",
     "file": "src/bridge/static/live.js",
-    "old": "    setBandState(band, state.status);",
-    "new": "    if (false) setBandState(band, state.status);",
+    "old": "  setBandState(band, status);",
+    "new": "  if (false) setBandState(band, status);",
     "tests": [
       "tests/test_static_js.py::test_live_js_patches_a_band_from_a_snapshot"
-    ],
-    "expect_count": 1
-  },
-  {
-    "name": "leave a removed session styled as active after showing that it ended",
-    "file": "src/bridge/static/live.js",
-    "old": "    setBandState(band, \"ended\");",
-    "new": "    if (false) setBandState(band, \"ended\");",
-    "tests": [
-      "tests/test_static_js.py::test_live_js_clears_a_band_on_a_tombstone"
     ],
     "expect_count": 1
   }
