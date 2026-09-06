@@ -124,3 +124,18 @@ def test_launch_band_with_no_handoff_renders_disabled_start_session():
     assert "data-launch-handoff" not in band
     button = band.split('data-launch-button="', 1)[1]
     assert "disabled" in button.split(">", 1)[0]
+
+
+def test_handoff_block_keys_the_section_on_the_handoff_id_for_the_morph():
+    """morph.js matches children by `id`/`data-key` and falls back to POSITION.
+
+    Without a key the live morph reconciled a replaced handoff into the old
+    section, and `data-live-preserve` on the prompt `<details>` stopped the
+    walk before the textarea -- so the visible title changed while the textarea
+    kept the previous handoff's id and text, and Save PATCHed that stale row.
+    """
+    card = _card()
+    mod = _module()
+
+    assert 'data-key="h1"' in mod.handoff_block(card, _handoff("h1"), None)
+    assert 'data-key="h2"' in mod.handoff_block(card, _handoff("h2"), None)

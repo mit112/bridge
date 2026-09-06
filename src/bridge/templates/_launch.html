@@ -101,7 +101,15 @@
 {% macro handoff_block(card, handoff, totals, collapse_prompt=False, show_span_line=False) %}
   {% if handoff %}
     {% set hid = "handoff-" ~ handoff.id %}
+    {# data-key: morph.js reconciles unkeyed children BY POSITION, and the
+       `data-live-preserve` <details>/<textarea> below stop its walk -- so when
+       the project's queued handoffs change under an open page, the title above
+       updated while the textarea kept the OLD handoff's id and text, and Save
+       PATCHed a row the user was no longer looking at. Keyed on the handoff id,
+       a different handoff is a different node: it is REPLACED wholesale, while
+       the same id still morphs in place and keeps its preserve semantics. #}
     <section class="handoff" aria-labelledby="{{ hid }}-title"
+             data-key="{{ handoff.id }}"
              data-handoff-section="{{ handoff.id }}">
       <div class="handoff__top">
         <div>

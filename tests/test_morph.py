@@ -188,3 +188,83 @@ def test_ignored_node_is_neither_morphed_nor_removed(tmp_path):
     """, tmp_path)
     assert got["kept"] is True
     assert got["text"] == "user typing", "an ignored node must not be morphed"
+
+
+# --- C7: a replaced handoff must not be morphed into the old section ---------
+#
+# The workspace renders each queued handoff as one <section>, with the prompt
+# <textarea> (and the <details> wrapping it) marked `data-live-preserve` so an
+# in-flight edit survives a live refresh. Those markers also stop the morph
+# walk -- so an unkeyed section matched by POSITION kept the OLD textarea (id,
+# `data-prompt-handoff`, and text) under the NEW handoff's title, and Save
+# PATCHed a row the user was no longer looking at.
+
+HANDOFF_PRELUDE = PRELUDE + """
+// The shape _launch.html renders: a keyed section whose prompt subtree is
+// preserved from the morph.
+function handoffSection(id, prompt) {
+  const section = make("section", { "data-key": id, "data-handoff-section": id });
+  const details = make("details", { class: "handoff__edit", "data-live-preserve": "" });
+  const textarea = make("textarea", {
+    id: "handoff-" + id, "data-prompt-handoff": id, "data-live-preserve": "",
+  }, prompt);
+  details.append(textarea);
+  section.append(make("h2", {}, "title " + id));
+  section.append(details);
+  return section;
+}
+// liverefresh.js's own ignoreNode, which is what makes this the real case.
+const ignore = (el) => Boolean(el.hasAttribute && el.hasAttribute("data-live-preserve"));
+"""
+
+
+def test_a_different_handoff_id_replaces_the_preserved_prompt_subtree(tmp_path):
+    got = _run(HANDOFF_PRELUDE + """
+        const live = make("div"); live.append(handoffSection("h1", "old prompt"));
+        const inc = make("div"); inc.append(handoffSection("h2", "new prompt"));
+        window.bridgeMorph(live, inc, { ignore });
+        const ta = live.querySelector("[data-prompt-handoff]");
+        report({
+          sections: live.children.map((el) => el.getAttribute("data-handoff-section")),
+          handoff: ta.getAttribute("data-prompt-handoff"),
+          text: ta.textContent,
+        });
+    """, tmp_path)
+    assert got["sections"] == ["h2"]
+    assert got["handoff"] == "h2", (
+        "the prompt editor still points at the handoff that is no longer on "
+        "screen -- saving would PATCH the wrong row"
+    )
+    assert got["text"] == "new prompt"
+
+
+def test_an_unkeyed_handoff_section_reproduces_the_stale_prompt_editor(tmp_path):
+    """The negative control for the test above: strip the key and the exact
+    bug comes back, so the assertion there is measuring the key and not some
+    other property of the morph."""
+    got = _run(HANDOFF_PRELUDE + """
+        function unkeyed(id, prompt) {
+          const s = handoffSection(id, prompt); s.removeAttribute("data-key"); return s;
+        }
+        const live = make("div"); live.append(unkeyed("h1", "old prompt"));
+        const inc = make("div"); inc.append(unkeyed("h2", "new prompt"));
+        window.bridgeMorph(live, inc, { ignore });
+        const ta = live.querySelector("[data-prompt-handoff]");
+        report({ handoff: ta.getAttribute("data-prompt-handoff"), text: ta.textContent });
+    """, tmp_path)
+    assert got["handoff"] == "h1"
+    assert got["text"] == "old prompt"
+
+
+def test_the_same_handoff_id_still_keeps_an_in_flight_edit(tmp_path):
+    """The other half of the contract: a same-id node keeps preserve semantics,
+    so a live refresh never clobbers text the user is typing."""
+    got = _run(HANDOFF_PRELUDE + """
+        const live = make("div"); live.append(handoffSection("h1", "user typing"));
+        const inc = make("div"); inc.append(handoffSection("h1", "SERVER VALUE"));
+        window.bridgeMorph(live, inc, { ignore });
+        const ta = live.querySelector("[data-prompt-handoff]");
+        report({ handoff: ta.getAttribute("data-prompt-handoff"), text: ta.textContent });
+    """, tmp_path)
+    assert got["handoff"] == "h1"
+    assert got["text"] == "user typing"
