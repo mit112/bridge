@@ -1,3 +1,4 @@
+import asyncio
 import json
 import re
 import tempfile
@@ -3687,6 +3688,45 @@ def test_a_rebound_host_cannot_read_either(client):
 
     assert c.get("/api/projects", headers={"Host": "evil.example"}).status_code == 403
     assert c.get("/", headers={"Host": "evil.example"}).status_code == 403
+
+
+def test_a_request_with_no_host_header_is_refused(client):
+    """Absent is not loopback.
+
+    The check read the one header it exists to inspect and, finding it missing,
+    allowed the request -- so anything that could omit `Host` was exempt from
+    the guard entirely. HTTP/1.0 does not require the header and a raw socket
+    need not send it; every sibling check in `api.py` fails closed, and so must
+    this one.
+    """
+    c, _, _ = client
+
+    # Driven as raw ASGI rather than through the test client: httpx fills in a
+    # `Host` from the URL on the way out, so no HTTP client in this suite can
+    # produce the request being defended against. The scope below is what the
+    # server hands the app when the header genuinely is not there.
+    scope = {
+        "type": "http", "asgi": {"version": "3.0", "spec_version": "2.3"},
+        "http_version": "1.0", "method": "GET", "scheme": "http",
+        "path": "/api/projects", "raw_path": b"/api/projects",
+        "query_string": b"", "root_path": "", "headers": [],
+        "client": ("127.0.0.1", 54321), "server": ("127.0.0.1", 8787),
+    }
+    sent = []
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message):
+        sent.append(message)
+
+    asyncio.run(c.app(scope, receive, send))
+
+    start = next(m for m in sent if m["type"] == "http.response.start")
+    assert start["status"] == 403
+    body = b"".join(m.get("body", b"") for m in sent
+                    if m["type"] == "http.response.body")
+    assert json.loads(body)["detail"] == "non-loopback host refused"
 
 
 @pytest.mark.parametrize("host", [
