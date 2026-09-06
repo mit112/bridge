@@ -5,7 +5,7 @@
     "old": "              data-compose-launch=\"{{ cid }}\">Run now</button>",
     "new": "              data-compose-launch=\"\">Run now</button>",
     "tests": [
-      "tests/test_api.py::test_a_card_with_no_queued_handoff_still_renders_a_launch_band"
+      "tests/test_workspace.py::test_compose_run_now_has_its_own_selects_when_a_handoff_is_queued"
     ],
     "expect_count": 1
   },
