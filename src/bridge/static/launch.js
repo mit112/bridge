@@ -326,12 +326,55 @@ window.bridgeClearComposeField = function bridgeClearComposeField(field) {
   }
 };
 
-// Dismiss a queued handoff from the workspace's Current tab. Reuses the same
-// PATCH the handoff prompt already saves through — only the body differs —
-// so no new write path is introduced. No reload: the already-rendered
-// handoff section, its launch band, and its dismiss button swap `hidden` in
-// place, and the empty-state paragraph is revealed only once no handoff
-// section remains on the page.
+// Retire one handoff's already-rendered nodes. No reload: the handoff section,
+// its launch band, and its own Dismiss button swap `hidden` in place.
+//
+// The launch band is matched by `data-launch-handoff`, not by the band's own
+// id, since that id is keyed off the handoff, not the project. The compose box
+// (always rendered) is the page's one "start a session" affordance, so there is
+// nothing left to demote this band to. The status span stays out of this: it is
+// a SIBLING of the button, never inside it, so it is left in the accessibility
+// tree for `announce` to reach.
+// `button` is passed by the single-Dismiss handler, which already holds the
+// clicked node; the bulk handler has no click target per row and looks each
+// one up by id instead.
+function hideDismissedHandoff(id, button) {
+  const section = document.querySelector(`[data-handoff-section="${id}"]`);
+  if (section) section.hidden = true;
+  const band = document.querySelector(`[data-launch-handoff="${id}"]`);
+  if (band) band.hidden = true;
+  const control = button || document.querySelector(`[data-handoff-dismiss="${id}"]`);
+  if (control) control.hidden = true;
+}
+
+// The empty-state is only true once every queued handoff is gone -- a sibling
+// handoff still showing means "no queued handoff" would be a lie.
+// `:not([hidden])` is left out of the selector itself (the mini-DOM harness
+// only models tag/class/id/attribute parts, never a pseudo-class) and done
+// instead with a plain array filter.
+function revealEmptyStateIfNothingLeft() {
+  const sections = Array.from(document.querySelectorAll("[data-handoff-section]"));
+  if (sections.every((el) => el.hidden)) {
+    const empty = document.querySelector(`[data-handoff-empty]`);
+    if (empty) empty.hidden = false;
+  }
+}
+
+// Reuses the same PATCH the handoff prompt already saves through — only the
+// body differs — so no new write path is introduced. Resolves to true only on a
+// 2xx: the server 409s a handoff that is no longer `queued`, and a caller that
+// treated that as success would hide a row still sitting in the database.
+async function dismissHandoff(id) {
+  const response = await fetch(`/api/handoff/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ status: "dismissed" }),
+  });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  return true;
+}
+
+// Dismiss a queued handoff from the workspace's Current tab.
 document.addEventListener("click", async (event) => {
   const button = event.target.closest("[data-handoff-dismiss]");
   if (!button) return;
@@ -340,45 +383,61 @@ document.addEventListener("click", async (event) => {
   const key = `[data-handoff-dismiss-status="${id}"]`;
   button.disabled = true;
   try {
-    const response = await fetch(`/api/handoff/${encodeURIComponent(id)}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ status: "dismissed" }),
-    });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-
-    const section = document.querySelector(`[data-handoff-section="${id}"]`);
-    if (section) section.hidden = true;
-
-    // The launch band that was driving THIS handoff -- matched by
-    // `data-launch-handoff`, not by the band's own id, since the band's id is
-    // keyed off the handoff, not the project. The compose box (always
-    // rendered) is the page's one "start a session" affordance,
-    // so there is nothing left to demote this band to -- it and its dismiss
-    // button just hide alongside the section. The status span stays out of
-    // this: it is a SIBLING of the button, never inside it, so it is left in
-    // the accessibility tree for `announce` below to reach.
-    const band = document.querySelector(`[data-launch-handoff="${id}"]`);
-    if (band) band.hidden = true;
-    button.hidden = true;
-
-    // The empty-state is only true once every queued handoff is gone -- a
-    // sibling handoff still showing means "no session in progress" would be
-    // a lie. `:not([hidden])` is left out of the selector itself (the
-    // mini-DOM harness only models tag/class/id/attribute parts, never a
-    // pseudo-class) and done instead with a plain array filter.
-    const sections = Array.from(document.querySelectorAll("[data-handoff-section]"));
-    if (sections.every((el) => el.hidden)) {
-      const empty = document.querySelector(`[data-handoff-empty]`);
-      if (empty) empty.hidden = false;
-    }
-
+    await dismissHandoff(id);
+    hideDismissedHandoff(id, button);
+    revealEmptyStateIfNothingLeft();
     announce(key, "✓ Dismissed");
   } catch (error) {
     console.error("bridge: dismissing the handoff failed", error);
     announce(key, "⚠ Not dismissed — try again");
   } finally {
     button.disabled = false;
+  }
+});
+
+// "Dismiss all N overtaken": one PATCH per handoff the server rendered as
+// overtaken, over the SAME endpoint a single Dismiss uses.
+//
+// Reported honestly rather than optimistically. Each id is settled on its own,
+// only the ones that actually came back 2xx are hidden, and a partial failure
+// says how many did not land — the endpoint 409s any handoff that stopped being
+// `queued` between render and click (consumed by a launch, dismissed in another
+// tab), which is exactly the case a blanket "✓ Dismissed" would paper over.
+// The button stays visible on a partial failure so the remainder can be retried.
+document.addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-handoff-dismiss-all]");
+  if (!button) return;
+
+  const project = button.getAttribute("data-handoff-dismiss-all");
+  const key = `[data-handoff-dismiss-all-status="${project}"]`;
+  const ids = (button.getAttribute("data-handoff-stale-ids") || "")
+    .split(" ")
+    .filter((id) => id !== "");
+  if (ids.length === 0) return;
+
+  button.disabled = true;
+  announce(key, "Dismissing…");
+  const results = await Promise.all(ids.map(async (id) => {
+    try {
+      await dismissHandoff(id);
+      return id;
+    } catch (error) {
+      console.error("bridge: dismissing the handoff failed", id, error);
+      return null;
+    }
+  }));
+
+  const dismissed = results.filter((id) => id !== null);
+  dismissed.forEach((id) => hideDismissedHandoff(id));
+  revealEmptyStateIfNothingLeft();
+
+  const failed = ids.length - dismissed.length;
+  if (failed === 0) {
+    button.hidden = true;
+    announce(key, `✓ Dismissed ${dismissed.length}`);
+  } else {
+    button.disabled = false;
+    announce(key, `⚠ Dismissed ${dismissed.length} of ${ids.length} — ${failed} could not be dismissed`);
   }
 });
 

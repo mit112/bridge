@@ -1299,3 +1299,116 @@ def test_recent_activity_lists_only_things_a_person_did():
     # A cache hit is the only state that ever rendered the line at all.
     html = _render_current("busy", git_state=GitState(status="ok", cached_at=1_780_000_000))
     assert "Project state indexed" not in html
+
+
+# --- Lane D: the stacked-handoff surface on the Current tab ------------------
+
+
+def _client_with_stack(tmp_path, overtaken: int):
+    """A project with three queued handoffs, the oldest `overtaken` of which
+    have a session that started after they were written.
+
+    Handoff `created_at` values straddle the session's `started_at`, so the
+    boundary is set by the DATA rather than by a flag the template is handed.
+    """
+    cfg = load({"db_path": tmp_path / "stack.db", "spool_dir": tmp_path / "spool",
+                "session_meta_dir": tmp_path / "session-meta"})
+    store = Store(cfg.db_path)
+    pid = store.upsert_project("/p/stack", "stack-project")
+    session_epoch = 1_500_000_000
+    # h0 oldest .. h2 newest. The first `overtaken` of them predate the session.
+    created = [session_epoch - 100 + i for i in range(overtaken)]
+    created += [session_epoch + 100 + i for i in range(3 - overtaken)]
+    for i, when in enumerate(created):
+        store.create_handoff(Handoff(
+            id=f"h{i}", project_path="/p/stack", next_prompt=f"prompt {i}",
+            summary=f"Summary {i}", source_session_id=f"s{i}", created_at=when,
+        ), pid)
+    store.upsert_session(SessionRecord(
+        session_id="ran-since", transcript_path="/t/ran-since",
+        title="Ran outside Bridge",
+        started_at=datetime.fromtimestamp(session_epoch, timezone.utc).isoformat(),
+        ended_at=_ended(5),
+    ), pid)
+    return TestClient(create_app(store, cfg)), store, pid
+
+
+def test_every_stacked_handoff_offers_the_same_labelled_launch_control(tmp_path):
+    """Rows 2..n used to get a bare `▶` while row 1 got "Continue in Terminal".
+
+    One action, one affordance, on all three rows -- with a single
+    `btn--primary` so the freshest still reads as the first thing to do.
+    """
+    c, store, pid = _client_with_stack(tmp_path, overtaken=0)
+    html = c.get(f"/project/{pid}?tab=current").text
+
+    assert html.count("Continue in Terminal") == 3
+    assert "▶" not in html
+    # Scoped to the panel: the update banner legitimately uses `btn--icon`.
+    panel = html.split('class="continuation-panel"', 1)[1].split("</section>", 1)[0]
+    assert "btn--icon" not in panel
+    assert html.count("btn--primary") == 1
+    store.close()
+
+
+def test_an_overtaken_handoff_is_demoted_and_the_freshest_is_not(tmp_path):
+    """End to end from the sessions table to the badge: two of three handoffs
+    predate a session that ran afterwards, and only those two are demoted.
+    All three stay queued -- nothing here writes a status."""
+    c, store, pid = _client_with_stack(tmp_path, overtaken=2)
+    html = c.get(f"/project/{pid}?tab=current").text
+
+    assert html.count("A session has run since") == 2
+    assert html.count(">Ready</span>") == 1
+    assert 'data-handoff-stale="h0"' in html
+    assert 'data-handoff-stale="h1"' in html
+    assert 'data-handoff-stale="h2"' not in html
+    for hid in ("h0", "h1", "h2"):
+        assert f'data-handoff-section="{hid}"' in html
+        assert store.get_handoff(hid)["status"] == "queued"
+    store.close()
+
+
+def test_dismiss_all_names_exactly_the_overtaken_handoffs(tmp_path):
+    """The button carries the ids it is allowed to PATCH, so the browser never
+    re-derives staleness -- and a still-fresh handoff can never be swept up by
+    a bulk click."""
+    c, store, pid = _client_with_stack(tmp_path, overtaken=2)
+    html = c.get(f"/project/{pid}?tab=current").text
+
+    assert 'data-handoff-dismiss-all="' in html
+    ids = re.search(r'data-handoff-stale-ids="([^"]*)"', html).group(1).split(" ")
+    assert set(ids) == {"h0", "h1"}
+    assert "Dismiss all 2 overtaken" in html
+    store.close()
+
+
+def test_dismiss_all_is_absent_when_one_or_no_handoff_is_overtaken(tmp_path):
+    """With a single overtaken handoff its own Dismiss button already is the
+    one-click route; a second control for the same one row is noise."""
+    c1, store1, pid1 = _client_with_stack(tmp_path / "one", overtaken=1)
+    assert "data-handoff-dismiss-all" not in c1.get(f"/project/{pid1}?tab=current").text
+    store1.close()
+
+    c0, store0, pid0 = _client_with_stack(tmp_path / "none", overtaken=0)
+    assert "data-handoff-dismiss-all" not in c0.get(f"/project/{pid0}?tab=current").text
+    store0.close()
+
+
+def test_consecutive_handoff_blocks_are_ruled_off_from_each_other():
+    """One block's action row sat flush against the next block's kicker, so a
+    stack of six read as one run-on wall. Each handoff after the first takes a
+    rule and top space from the `.continuation-actions` that precedes it --
+    asserted against the stylesheet because that boundary exists nowhere else.
+    """
+    css = (
+        Path(__file__).resolve().parent.parent
+        / "src" / "bridge" / "static" / "app.css"
+    ).read_text()
+
+    rule = css.split(".continuation-panel .continuation-actions + .handoff", 1)
+    assert len(rule) == 2, "no separator rule between stacked handoff blocks"
+    block = rule[1].split("}", 1)[0]
+    assert "border-top" in block
+    assert "padding-top" in block
+    assert "margin-top" in block

@@ -4768,3 +4768,159 @@ def test_an_accepted_body_without_a_202_status_is_still_treated_as_async(tmp_pat
     )
     assert "reconnect" in got["status"].lower()
     assert got["applyDisabled"] is True
+
+
+# --- Lane D: "Dismiss all N overtaken" --------------------------------------
+#
+# Six overtaken handoffs meant six clicks. The bulk control PATCHes each id the
+# server listed in `data-handoff-stale-ids`, over the SAME endpoint one Dismiss
+# uses. The interesting behaviour is the failure shape: `PATCH /api/handoff/{id}`
+# 409s any handoff that is no longer `queued`, so a row can stop being eligible
+# between render and click, and an optimistic "✓ Dismissed 3" would then hide a
+# handoff still sitting in the database. `failIds` lets the harness make exactly
+# that happen.
+BULK_DISMISS_HARNESS = """
+globalThis.window = globalThis;
+const failIds = JSON.parse(process.argv[3]);
+let clickHandlers = [];
+
+function node() { return { hidden: false }; }
+function status() { return { textContent: "" }; }
+
+const sections = { h1: node(), h2: node(), h3: node() };
+const bands = { h1: node(), h2: node(), h3: node() };
+const rowButtons = { h1: node(), h2: node(), h3: node() };
+const bulkStatus = status();
+const empty = { hidden: true };
+const bulkButton = {
+  disabled: false,
+  hidden: false,
+  getAttribute: (name) => (
+    name === "data-handoff-dismiss-all" ? "42"
+      : name === "data-handoff-stale-ids" ? "h1 h2 h3" : null
+  ),
+  // Only the bulk selector matches: a single-Dismiss handler that also claimed
+  // this click would double-PATCH every id.
+  closest: (sel) => (sel === "[data-handoff-dismiss-all]" ? bulkButton : null),
+};
+
+const nodes = { "[data-handoff-empty]": empty,
+                '[data-handoff-dismiss-all-status="42"]': bulkStatus };
+for (const id of ["h1", "h2", "h3"]) {
+  nodes[`[data-handoff-section="${id}"]`] = sections[id];
+  nodes[`[data-launch-handoff="${id}"]`] = bands[id];
+  nodes[`[data-handoff-dismiss="${id}"]`] = rowButtons[id];
+}
+
+globalThis.document = {
+  addEventListener(type, fn) { if (type === "click") clickHandlers.push(fn); },
+  querySelector: (sel) => nodes[sel] ?? null,
+  querySelectorAll(sel) {
+    if (sel === "[data-handoff-section]") return Object.values(sections);
+    return [];
+  },
+  getElementById: () => null,
+};
+let reloadCalled = false;
+globalThis.location = { reload() { reloadCalled = true; },
+                        get href() { return "http://127.0.0.1:8787/"; },
+                        set href(_v) {} };
+const fetchCalls = [];
+globalThis.fetch = async (url, init) => {
+  fetchCalls.push({ url, method: init.method, body: init.body });
+  const id = url.split("/").pop();
+  if (failIds.includes(id)) {
+    return { ok: false, status: 409, json: async () => ({}) };
+  }
+  return { ok: true, status: 200, json: async () => ({}) };
+};
+const fs = require("fs");
+eval(fs.readFileSync(process.argv[2], "utf8"));
+
+Promise.all(clickHandlers.map((fn) => fn({ target: bulkButton }))).then(() => {
+  console.log(JSON.stringify({
+    fetchCalls,
+    hidden: Object.fromEntries(
+      ["h1", "h2", "h3"].map((id) => [id, sections[id].hidden])),
+    bandHidden: Object.fromEntries(
+      ["h1", "h2", "h3"].map((id) => [id, bands[id].hidden])),
+    rowButtonHidden: Object.fromEntries(
+      ["h1", "h2", "h3"].map((id) => [id, rowButtons[id].hidden])),
+    status: bulkStatus.textContent,
+    bulkHidden: bulkButton.hidden,
+    bulkDisabled: bulkButton.disabled,
+    emptyHidden: empty.hidden,
+    reloadCalled,
+  }));
+});
+"""
+
+
+def _run_bulk_dismiss(tmp_path, fail_ids=()) -> dict:
+    harness = tmp_path / "bulk_dismiss_harness.js"
+    harness.write_text(BULK_DISMISS_HARNESS)
+    proc = subprocess.run(
+        [_node(), str(harness), str(LAUNCH_JS), json.dumps(list(fail_ids))],
+        capture_output=True, text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout)
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_dismiss_all_patches_every_listed_id_over_the_existing_endpoint(tmp_path):
+    got = _run_bulk_dismiss(tmp_path)
+
+    assert [c["url"] for c in got["fetchCalls"]] == [
+        "/api/handoff/h1", "/api/handoff/h2", "/api/handoff/h3",
+    ]
+    for call in got["fetchCalls"]:
+        assert call["method"] == "PATCH"
+        assert json.loads(call["body"]) == {"status": "dismissed"}
+    assert got["reloadCalled"] is False
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_dismiss_all_hides_every_dismissed_row_and_reveals_the_empty_state(tmp_path):
+    got = _run_bulk_dismiss(tmp_path)
+
+    assert got["hidden"] == {"h1": True, "h2": True, "h3": True}
+    assert got["bandHidden"] == {"h1": True, "h2": True, "h3": True}
+    assert got["rowButtonHidden"] == {"h1": True, "h2": True, "h3": True}
+    assert got["emptyHidden"] is False
+    assert got["status"] == "✓ Dismissed 3"
+    assert got["bulkHidden"] is True
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_a_partial_failure_is_reported_honestly_and_hides_only_what_landed(
+    tmp_path,
+):
+    """`h2` 409s -- it stopped being `queued` between render and click.
+
+    The count must say so, the row must stay on screen, and the empty state
+    must stay hidden: a handoff still queued in the database is not "no queued
+    handoff". The button also stays usable so the remainder can be retried.
+    """
+    got = _run_bulk_dismiss(tmp_path, fail_ids=["h2"])
+
+    assert got["hidden"] == {"h1": True, "h2": False, "h3": True}
+    assert got["bandHidden"]["h2"] is False
+    assert got["emptyHidden"] is True
+    assert "2 of 3" in got["status"]
+    assert "1 could not be dismissed" in got["status"]
+    assert got["status"].startswith("⚠")
+    assert got["bulkHidden"] is False
+    assert got["bulkDisabled"] is False
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_dismiss_all_reports_nothing_dismissed_when_every_patch_is_refused(
+    tmp_path,
+):
+    got = _run_bulk_dismiss(tmp_path, fail_ids=["h1", "h2", "h3"])
+
+    assert got["hidden"] == {"h1": False, "h2": False, "h3": False}
+    assert got["emptyHidden"] is True
+    assert "0 of 3" in got["status"]
+    assert got["bulkHidden"] is False
