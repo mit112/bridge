@@ -1,3 +1,4 @@
+import os
 import threading, time
 from pathlib import Path
 from bridge.watcher import FileWatcher
@@ -94,3 +95,105 @@ def test_a_write_racing_start_is_still_seen(tmp_path, monkeypatch):
     finally:
         w.stop()
     assert calls, "a write racing start() was swallowed into the baseline"
+
+
+def _cold_corpus(root: Path, dirs: int, per_dir: int) -> None:
+    """A tree nothing has touched in an hour -- the idle-panel steady state."""
+    old = time.time() - 3600
+    made = [root]
+    for d in range(dirs):
+        sub = root / f"p{d}"
+        sub.mkdir()
+        made.append(sub)
+        for i in range(per_dir):
+            f = sub / f"s{i}.jsonl"
+            f.write_text("{}\n")
+            os.utime(f, (old, old))
+    for d in made:
+        os.utime(d, (old, old))
+
+
+def test_polling_an_idle_corpus_does_not_stat_every_file(tmp_path, monkeypatch):
+    """Per-poll work must be proportional to the change, not to the corpus.
+
+    The naive snapshot stat()ed every *.jsonl on every poll: 9,202 files twice
+    a second, measured at 11.9% CPU over 21h of a panel doing nothing. Here 300
+    untouched files are polled ~20 times; statting them all would be ~6,000
+    stat calls, so a budget well under one full pass proves the walk is gone.
+    """
+    _cold_corpus(tmp_path, dirs=6, per_dir=50)
+
+    calls = {"n": 0}
+    real_stat = os.stat
+
+    def counting_stat(*a, **kw):
+        calls["n"] += 1
+        return real_stat(*a, **kw)
+
+    w = FileWatcher(tmp_path, on_change=lambda: None, poll_s=0.02, quiet_s=0.02)
+    monkeypatch.setattr(os, "stat", counting_stat)
+    w.start()
+    baseline = calls["n"]          # the one full walk start() is entitled to
+    try:
+        time.sleep(0.4)
+    finally:
+        w.stop()
+    monkeypatch.undo()
+
+    polled = calls["n"] - baseline
+    assert polled < 300, f"polling cost {polled} stats over ~20 polls of 300 files"
+
+
+def test_an_append_to_an_active_file_is_still_seen_within_a_second(tmp_path):
+    """Appends do not bump the parent directory, so the hot set must catch them."""
+    f = tmp_path / "live.jsonl"
+    f.write_text("{}\n")
+    ev = threading.Event()
+    w = FileWatcher(tmp_path, on_change=ev.set, poll_s=0.02, quiet_s=0.02)
+    w.start()
+    try:
+        with f.open("a") as fh:
+            fh.write('{"more": 1}\n')
+        assert ev.wait(1.0), "an append to an active transcript was missed"
+    finally:
+        w.stop()
+
+
+def test_a_file_in_a_directory_created_after_start_is_seen(tmp_path):
+    """A new project directory appears between polls; its parent's mtime moves."""
+    ev = threading.Event()
+    w = FileWatcher(tmp_path, on_change=ev.set, poll_s=0.02, quiet_s=0.02)
+    w.start()
+    try:
+        nested = tmp_path / "new-project" / "deeper"
+        nested.mkdir(parents=True)
+        (nested / "s.jsonl").write_text("{}\n")
+        assert ev.wait(1.0), "a transcript in a brand-new directory was missed"
+    finally:
+        w.stop()
+
+
+def test_a_cold_change_is_still_reconciled_by_the_full_walk(tmp_path):
+    """The cheap passes are an optimisation, not the source of truth.
+
+    A file mutated in place with its directory's mtime left alone is invisible
+    to both the directory pass and the hot set; the periodic full walk is what
+    guarantees it is never lost, only late.
+    """
+    _cold_corpus(tmp_path, dirs=1, per_dir=1)
+    target = tmp_path / "p0" / "s0.jsonl"
+    ev = threading.Event()
+    w = FileWatcher(
+        tmp_path, on_change=ev.set, poll_s=0.02, quiet_s=0.02,
+        hot_s=0.0, full_s=0.1,
+    )
+    w.start()
+    try:
+        old = time.time() - 3600
+        target.write_text("{}\n{}\n")
+        os.utime(target, (old, old))
+        os.utime(tmp_path / "p0", (old, old))
+        os.utime(tmp_path, (old, old))
+        assert ev.wait(2.0), "the full walk never reconciled a cold change"
+    finally:
+        w.stop()
