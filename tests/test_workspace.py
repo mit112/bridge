@@ -1416,3 +1416,76 @@ def test_consecutive_handoff_blocks_are_ruled_off_from_each_other():
     assert "border-top" in block
     assert "padding-top" in block
     assert "margin-top" in block
+
+
+def _demoted_actions_rules():
+    """Every `app.css` rule whose selector targets the action row that follows
+    a demoted handoff, keyed by selector."""
+    css = (
+        Path(__file__).resolve().parent.parent
+        / "src" / "bridge" / "static" / "app.css"
+    ).read_text()
+    out = {}
+    for chunk in css.split("}"):
+        selector, _, body = chunk.rpartition("{")
+        selector = selector.rsplit("*/", 1)[-1].strip()
+        if ".handoff--demoted + .continuation-actions" in selector:
+            out[" ".join(selector.split())] = body
+    return out
+
+
+def test_a_demoted_handoffs_action_row_is_quieted_and_restored_on_hover_and_focus():
+    """Six overtaken handoffs meant six action rows at full volume.
+
+    The row is dimmed and scaled down, and BOTH hover and `:focus-within`
+    bring it back -- keyboard users get the same restoration as the pointer,
+    which is the accessibility half of the fork. Asserted against the
+    stylesheet because the behaviour exists nowhere else.
+    """
+    rules = _demoted_actions_rules()
+    quiet = [b for s, b in rules.items()
+             if ":hover" not in s and ":focus-within" not in s and ".btn" in s]
+    assert quiet, "no quiet rule for a demoted handoff's action row"
+    assert any("var(--text-secondary)" in b for b in quiet), (
+        "the quiet colour must be a token test_contrast.py already measures, "
+        "not a hand-written hex"
+    )
+    assert any("font-size" in b for b in quiet), "quieter means smaller too"
+
+    restored = [s for s in rules if ".btn" in s]
+    assert any(":hover" in s for s in restored)
+    assert any(":focus-within" in s for s in restored)
+
+
+def test_quieting_a_demoted_action_row_is_visual_only():
+    """"Quieter" must not mean "harder to use": nothing here may hide a
+    control, take it out of the pointer's reach or shrink it below WCAG 2.2
+    2.5.8's 24x24 target floor."""
+    rules = _demoted_actions_rules()
+    for selector, body in rules.items():
+        for banned in ("display: none", "visibility:", "pointer-events:", "opacity:"):
+            assert banned not in body, f"{selector} uses {banned}"
+    heights = [
+        int(b.split("min-height:", 1)[1].split("px", 1)[0])
+        for b in rules.values() if "min-height:" in b
+    ]
+    assert heights, "the quiet control keeps an explicit target-size floor"
+    assert min(heights) >= 24
+
+
+def test_a_demoted_handoff_keeps_every_control_it_had(tmp_path):
+    """The other half of the same fork, at the markup level: quieting is CSS,
+    so the demoted rows still render Continue in Terminal, Schedule, Copy
+    prompt and Dismiss, and none of them is `disabled`."""
+    c, store, pid = _client_with_stack(tmp_path, overtaken=2)
+    html = c.get(f"/project/{pid}?tab=current").text
+
+    for hid in ("h0", "h1"):
+        row = html.split(f'data-handoff-stale="{hid}"', 1)[1]
+        row = row.split("</section>", 1)[1].split("</div>", 1)[0]
+        assert f'data-launch-button="launch-{hid}"' in row
+        assert f'data-schedule-toggle="schedule-handoff-{hid}"' in row
+        assert f'data-copy-target="handoff-{hid}"' in row
+        assert f'data-handoff-dismiss="{hid}"' in row
+        assert "disabled" not in row
+    store.close()
