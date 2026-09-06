@@ -44,6 +44,17 @@ LAUNCH_SORTS = {
 }
 
 
+def _like_prefix(value: str) -> str:
+    """A LIKE pattern matching `value` as a LITERAL prefix.
+
+    `%` and `_` are wildcards, so a value carrying either would otherwise match
+    more than it should -- and a launch bound to the wrong session shows a
+    session Bridge did not start as one it did.
+    """
+    escaped = value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return escaped + "%"
+
+
 def _order_by(whitelist: dict[str, str], sort: str | None, direction: str | None) -> str:
     """Build a trusted `ORDER BY` clause from a per-table whitelist.
 
@@ -814,6 +825,42 @@ class Store:
                 "UPDATE launches SET session_id=?, short_id=? WHERE id=?",
                 (session_id, short_id, launch_id),
             )
+
+    def unlinked_launches(self, since_epoch: int) -> list[sqlite3.Row]:
+        """Background launches still waiting to be matched to a session.
+
+        One query across every project, and bounded in time: a launch whose
+        session never wrote a transcript stays unlinked forever, so without the
+        `launched_at` floor the correlation pass re-examines a growing set of
+        permanently-hopeless rows on every reindex. Expressed as a WHERE rather
+        than a "gave up" column so there is no migration and no state to get
+        wrong -- the row is simply out of the window.
+        """
+        with self._lock:
+            return list(self.conn.execute(
+                "SELECT id, project_id, short_id FROM launches "
+                "WHERE session_id IS NULL AND short_id IS NOT NULL "
+                "AND launched_at >= ?",
+                (since_epoch,),
+            ))
+
+    def session_ids_with_prefix(
+        self, project_id: int, prefix: str, limit: int = 2
+    ) -> list[str]:
+        """Session ids in one project starting with `prefix`.
+
+        `limit=2` is all the caller needs: it only ever asks whether the match
+        is unique, and reading two rows answers that without loading a
+        project's entire session history to compare in Python.
+        """
+        with self._lock:
+            return [
+                r["id"] for r in self.conn.execute(
+                    "SELECT id FROM sessions WHERE project_id=? AND id LIKE ? "
+                    "ESCAPE '\\' LIMIT ?",
+                    (project_id, _like_prefix(prefix), limit),
+                )
+            ]
 
     def pending_launch_ids(self) -> list[str]:
         """Name the strays `reconcile_pending_launches` would flip, without

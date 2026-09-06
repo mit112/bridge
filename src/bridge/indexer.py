@@ -121,9 +121,12 @@ def reindex(
     return stats
 
 
-# `store.launches`/`store.sessions` are paged for the UI; correlation needs the
-# whole set, so the limit is raised rather than a new query added.
-_ALL = 1_000_000
+# How long a background launch is worth retrying. A launch whose session never
+# wrote a transcript never links, so without a floor the correlation pass grows
+# without bound: every reindex, forever, re-reading every launch ever made. A
+# day is far past the point where a spawn that was going to write a transcript
+# has written one.
+_LINK_WINDOW_S = 24 * 3600
 
 
 def _link_background_launches(store: Store) -> int:
@@ -142,25 +145,20 @@ def _link_background_launches(store: Store) -> int:
     session Bridge did not start as one it did. Zero matches is equally ordinary —
     the session may not have written a transcript yet, or ever — and the launch
     stays visible as what it is.
+
+    The cost is one query for the whole (time-bounded) pending set plus one
+    prefix lookup per pending launch, so it tracks how many launches are
+    actually waiting -- not how many launches or sessions the store holds.
     """
     linked = 0
-    for project in store.projects(include_hidden=True):
-        pid = project["id"]
-        pending = [
-            row
-            for row in store.launches(pid, limit=_ALL)
-            if row["short_id"] and not row["session_id"]
-        ]
-        if not pending:
+    since = now_epoch() - _LINK_WINDOW_S
+    for row in store.unlinked_launches(since):
+        short = row["short_id"]
+        matches = store.session_ids_with_prefix(row["project_id"], short, limit=2)
+        if len(matches) != 1:
             continue
-        session_ids = [s["id"] for s in store.sessions(pid, limit=_ALL)]
-        for row in pending:
-            short = row["short_id"]
-            matches = [sid for sid in session_ids if sid.startswith(short)]
-            if len(matches) != 1:
-                continue
-            store.set_launch_session(row["id"], matches[0], short)
-            linked += 1
+        store.set_launch_session(row["id"], matches[0], short)
+        linked += 1
     return linked
 
 
