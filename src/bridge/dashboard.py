@@ -6,7 +6,7 @@ import dataclasses
 from dataclasses import replace
 from typing import Callable
 
-from bridge import agents, hooks, spool
+from bridge import agents, diagnostics, hooks, spool
 from bridge.cards import FIVE_HOURS, ONE_DAY, build_cards, spark_points
 from bridge.config import Config
 from bridge.models import AgentsState, Card, GitState
@@ -170,8 +170,23 @@ class DashboardBuilder:
                 "last_index": index_at,
             },
             "diagnostics": {
-                "alert": bool(parse_errors or spool.pending_count(self.cfg.spool_dir)
-                              or live_state.status == "unavailable"),
+                # `diagnostics.needs_attention`, not a second copy of its rule.
+                # This re-derived the same three conditions inline, which is
+                # exactly what `attention_items`' own docstring says must not
+                # happen: a fourth condition added there would never have
+                # reached the header this frame patches, and nothing would have
+                # failed.
+                #
+                # The keys are the ones `attention_items` reads -- including
+                # `live_source`, which only its liveness branch touches, to
+                # name the sensor. A full `collect()` would re-probe on every
+                # SSE tick, which is the cost this frame exists to avoid.
+                "alert": diagnostics.needs_attention({
+                    "parse_errors": parse_errors,
+                    "spool_depth": spool.pending_count(self.cfg.spool_dir),
+                    "live": live_state.status,
+                    "live_source": live_state.source,
+                }),
             },
             "card_order": [card.project_id for card in cards],
             "cards": card_data,

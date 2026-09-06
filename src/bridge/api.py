@@ -469,11 +469,14 @@ def create_app(
             "overview.html",
             {
                 "model": model,
-                # `model.diagnostics_alert` IS `diagnostics.needs_attention(diag)` for
-                # this same probe -- both read the same three conditions off
-                # the same snapshot, so reusing it here (rather than calling
-                # `_diagnostics`/`_needs_attention` a second time) cannot let
-                # the header disagree with the model it was computed from.
+                # `model.diagnostics_alert` comes from the live envelope's
+                # `diagnostics.alert`, which IS `diagnostics.needs_attention`
+                # called on this same snapshot -- so reusing it here, rather
+                # than probing a second time, cannot let the header disagree
+                # with the model it was computed from. That was written as an
+                # assertion before it was true: the envelope used to re-derive
+                # the rule inline, and only the /diagnostics page called the
+                # predicate.
                 "diag_alert": model.diagnostics_alert,
                 "active": "overview",
                 "layout": _layout_for(request),
