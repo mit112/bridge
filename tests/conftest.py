@@ -271,6 +271,10 @@ def never_read_the_real_session_registry(tmp_path, monkeypatch):
     empty = tmp_path / "empty-sessions"
     empty.mkdir(exist_ok=True)
     monkeypatch.setattr(agents, "SESSIONS_DIR", empty)
+    # `probe` holds its reading for a second, and that slot is module state
+    # that would otherwise survive into the next test -- a slower, weirder
+    # version of the cross-test leak this fixture exists to prevent.
+    agents.reset_probe_cache()
 
 
 @pytest.fixture

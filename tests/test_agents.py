@@ -327,3 +327,59 @@ def test_the_pid_guard_makes_exactly_one_ps_call_however_many_sessions(tmp_path)
     # And every pid went into that single call.
     assert calls[0].count("-p") == 1
     assert "1011" in calls[0][-1]
+
+
+# --- the probe's TTL cache ---------------------------------------------------
+
+
+def _counting_read_registry(monkeypatch, reads):
+    """Wrap `read_registry` so `probe` still works but every call is counted."""
+    real = agents.read_registry
+
+    def counted(sessions_dir=None, alive_fn=None):
+        reads["n"] += 1
+        return real(sessions_dir, alive_fn=alive_fn or always_alive)
+
+    monkeypatch.setattr(agents, "read_registry", counted)
+
+
+def test_probe_reuses_its_reading_inside_the_ttl(tmp_path, monkeypatch):
+    """One registry read per TTL, however many SSE rebuilds ask for one.
+
+    `probe` runs on every SSE rebuild, and with a 0.2 s rebuild floor a single
+    connected tab could drive five of them a second -- each ~10.9 ms, dominated
+    by spawning `/bin/ps`, for a whole-machine fact that cannot change that
+    fast. The guard is the shape: registry reads must not scale with calls.
+    """
+    d = write_registry(tmp_path, REAL_REGISTRY)
+    reads = {"n": 0}
+    _counting_read_registry(monkeypatch, reads)
+    clock = {"t": 100.0}
+    monkeypatch.setattr(agents.time, "monotonic", lambda: clock["t"])
+    agents.reset_probe_cache()
+
+    first = agents.probe(d)
+    assert [s.session_id for s in first.sessions] == [SID_A]
+    for _ in range(9):
+        clock["t"] += 0.1  # nine more rebuilds, all inside one second
+        assert agents.probe(d) is first
+    assert reads["n"] == 1, f"{reads['n']} registry reads for 10 rebuilds"
+
+    clock["t"] += 1.0  # past the TTL
+    agents.probe(d)
+    assert reads["n"] == 2, "the reading was never refreshed"
+
+
+def test_probe_force_bypasses_the_cache(tmp_path, monkeypatch):
+    """The explicit escape hatch, for a caller that cannot wait out the TTL."""
+    d = write_registry(tmp_path, REAL_REGISTRY)
+    reads = {"n": 0}
+    _counting_read_registry(monkeypatch, reads)
+    monkeypatch.setattr(agents.time, "monotonic", lambda: 100.0)
+    agents.reset_probe_cache()
+
+    agents.probe(d)
+    agents.probe(d)
+    assert reads["n"] == 1
+    agents.probe(d, force=True)
+    assert reads["n"] == 2
