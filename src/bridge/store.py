@@ -1085,6 +1085,23 @@ class Store:
             ).fetchone()
             return row["t"]
 
+    def token_totals_all(self, since_epoch: int) -> int:
+        """`token_totals` summed over every ACTIVE project, in one aggregate.
+
+        Deliberately mirrors `projects()`' default `status='active'` filter:
+        the callers of this are showing the same "across everything you work
+        on" number the dashboard does, and a hidden or archived project is not
+        part of that.
+        """
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT COALESCE(SUM(s.tokens_in + s.tokens_out),0) AS t "
+                "FROM sessions s JOIN projects p ON p.id = s.project_id "
+                "WHERE p.status='active' AND s.ended_epoch >= ?",
+                (since_epoch,),
+            ).fetchone()
+            return row["t"]
+
     # --- scheduled_runs -------------------------------------------------------
     #
     # Every state transition below is one conditional `UPDATE ... WHERE

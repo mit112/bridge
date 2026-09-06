@@ -323,8 +323,17 @@ def model_options(
 
 def build_cards(
     store: Store, cfg: Config, probe_fn=None, agents_fn=None, debouncer=None,
-    hook_state=None, git_cache=None,
+    hook_state=None, git_cache=None, project_ids=None,
 ) -> list[Card]:
+    """`project_ids`, when given, narrows the build to those projects.
+
+    `/project/{id}` wants exactly one card, and building all of them to throw
+    the rest away meant a git probe and five store reads per project on a page
+    that renders one. Filtering here rather than in a parallel single-card
+    assembler keeps one definition of what a card is; a project not in
+    `store.projects()` (hidden, archived) still yields no card, so the caller's
+    "no card means no page" contract is unchanged.
+    """
     # Late-bound default: looked up at call time (not at def time) so tests
     # can monkeypatch `gitprobe.probe` and have callers that omit `probe_fn`
     # (e.g. the API layer) pick up the replacement.
@@ -364,6 +373,9 @@ def build_cards(
             live_state, sessions=debouncer.apply(live_state.sessions, now)
         )
     project_rows = store.projects()
+    if project_ids is not None:
+        wanted = set(project_ids)
+        project_rows = [row for row in project_rows if row["id"] in wanted]
     live_by_path = agents.by_project(
         live_state, store.alias_map(), [row["path"] for row in project_rows]
     )
