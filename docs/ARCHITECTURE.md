@@ -13,7 +13,11 @@ One local server process is the **sole writer** to a SQLite database in WAL mode
 Everything else — the web UI, the `bridge` CLI, the Claude sessions that report
 into it — is a client. Funnelling every write through one process gives zero lock
 contention and no torn state under concurrent multi-session access, and keeps the
-CLI stateless. Most of the database — sessions, git state, token counts — is a
+CLI stateless. The one command that could break that — `bridge index`, which used
+to open its own `Store` — now POSTs `/api/refresh` to a panel answering on the
+configured port and only touches the database when the connection is *refused*,
+so running `index` and `serve` at once still leaves exactly one writer. Most of
+the database — sessions, git state, token counts — is a
 pure derived cache of the transcripts on disk and can be deleted and rebuilt at
 any time. Handoffs and scheduled runs are the exception: they are **authored**
 data with no transcript to rebuild them from, so each is backed by its own
@@ -82,7 +86,9 @@ Each unit has one job, a typed interface, and independent tests.
   auto-hides known-noise transcript directories. Archives, never deletes.
 - **`api`** — the app factory. Owns the collaborators every route closes over
   (store, config, injected launcher, notifier), hosts the middlewares, the SSE
-  stream, and the page routes, and mounts the routers below.
+  stream, and the page routes, and mounts the routers below. Starlette runs
+  middleware in reverse declaration order, so the *last* one registered is the
+  outermost and sees a request first.
 - **`schemas`** — the Pydantic request bodies and the status vocabularies. Kept
   out of `api` so a router can import the model it validates without importing
   the module that mounts it; inline, every route split would be a cycle.
@@ -122,6 +128,10 @@ re-parses only the byte range past `parsed_offset`.
 - Parsing is streaming, line at a time; a whole file is never held in memory.
 - A card needs only the first line plus the trailing lines; a full parse happens
   only on demand for the detail view.
+- **Accepted limit:** a rewrite that lands at exactly the same size within one
+  mtime tick is invisible to the scan, because `(size, mtime)` is the whole
+  change signal. No content fingerprint is taken — transcripts are append-only in
+  practice, so paying to hash every file would buy nothing.
 
 The invariant that keeps this honest: **work done stays proportional to the delta,
 not to the corpus size**, and there is a test that asserts exactly that.
@@ -205,6 +215,17 @@ Every surface stays live without a manual refresh:
 - Freshness is push-based: a notifier fans out changes to connected clients, and a
   filesystem watcher over the transcript directory turns a new transcript line
   into a sub-second update. An active-surface polling cadence backs it up.
+- The watcher's cost scales with the **change**, not the corpus. Stat-ing every
+  `*.jsonl` twice a second cost 11.9% of a core over 21h of an idle panel, so each
+  poll now stats only two cheap tiers: every *directory's* mtime, which is what a
+  created or deleted transcript moves, re-listing just the directories that
+  changed (and any recently-touched one, since a coarse 1s directory mtime can
+  otherwise hide a file created in the same tick); and the *hot set*, the files
+  touched within the last five minutes, which is the only set an active session
+  can be appending to. Neither tier can see a cold file rewritten in place, so the
+  whole tree is re-walked and reconciled every 15s — the same cadence as the
+  reindex tick. A detected change then waits for a quiet lull before firing once,
+  coalescing a burst of writes into one reindex.
 - Navigation uses a persistent shell (no full-page reload between routes); route
   bodies are swapped into a single scroll container.
 
@@ -242,6 +263,11 @@ several failed probes still renders with what it has.
 - Cards sort by **actionability**, not alphabetically: queued handoff → running
   now → dirty and stale → recently active → idle. The first question a card
   answers is *does this want me right now?*
+- A **pinned project outranks every other card, a queued handoff included**, and
+  that is deliberate: every other sort term is something Bridge inferred, while a
+  pin is the one thing the user said outright, and an inference must not overrule
+  an instruction — at the knowingly-accepted cost that the top card is no longer
+  guaranteed to be the one with a next step ready.
 - **Color carries meaning only.** One accent for *running*, one warning treatment
   for *risk*; everything else earns attention through weight and whitespace.
 - **One number per concern, unit implied** (`47 dirty`, not
