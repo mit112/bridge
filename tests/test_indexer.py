@@ -878,3 +878,43 @@ def test_a_real_project_is_still_active(env, tmp_path):
     _transcript(projects, real, "aaaaaaaa-0000-0000-0000-000000000002")
     reindex(store, cfg)
     assert _status(store, real) == "active"
+
+
+def test_a_scratch_directory_inside_a_project_is_hidden(env, tmp_path):
+    cfg, store, projects = env
+    parent = _repo(tmp_path / "dev" / "boardwatch")
+    child = parent / "2026-09-08-session"
+    child.mkdir()
+    _transcript(projects, parent, "aaaaaaaa-0000-0000-0000-000000000003")
+    _transcript(projects, child, "aaaaaaaa-0000-0000-0000-000000000004")
+    reindex(store, cfg)
+    assert _status(store, parent) == "active"
+    assert _status(store, child) == "hidden"
+
+
+def test_two_sibling_projects_are_both_active(env, tmp_path):
+    """Negative control for the nesting rule. Names that share a prefix are the
+    case a string comparison would get wrong."""
+    cfg, store, projects = env
+    apps = tmp_path / "dev" / "Job apps"
+    lily, base = _repo(apps / "instalily"), _repo(apps / "instabase")
+    _transcript(projects, lily, "aaaaaaaa-0000-0000-0000-000000000005")
+    _transcript(projects, base, "aaaaaaaa-0000-0000-0000-000000000006")
+    reindex(store, cfg)
+    assert _status(store, lily) == "active"
+    assert _status(store, base) == "active"
+
+
+def test_restoring_an_auto_hidden_project_survives_the_next_index(env, tmp_path):
+    """Same seed-vs-override rule the auto-archive pass follows: Bridge decides
+    once, the user overrides for good."""
+    cfg, store, projects = env
+    parent = _repo(tmp_path / "dev" / "boardwatch")
+    child = parent / "2026-09-08-session"
+    child.mkdir()
+    _transcript(projects, parent, "aaaaaaaa-0000-0000-0000-000000000007")
+    _transcript(projects, child, "aaaaaaaa-0000-0000-0000-000000000008")
+    reindex(store, cfg)
+    store.set_project_status(store.project_by_path(str(child))["id"], "active")
+    reindex(store, cfg)
+    assert _status(store, child) == "active"
