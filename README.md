@@ -265,8 +265,11 @@ This removes the LaunchAgent. You'll be asked whether to delete `~/.bridge/`
 ## Test
 
 ```bash
-uv run pytest
+make check
 ```
+
+`make check` is the gate: it runs the whole suite and propagates the exit code.
+`uv run pytest` does the same thing when you want pytest's own flags.
 
 A slice of the suite (`test_morph.py`, `test_static_js.py`,
 `test_swap_lifecycle.py`, `test_liverefresh.py`, `test_shell_contract.py`)
