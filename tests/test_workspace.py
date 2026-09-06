@@ -1,6 +1,7 @@
 import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
@@ -1226,3 +1227,53 @@ def test_history_tables_use_tabular_numerals():
         "}"
     ) in css
     assert ".sessions td { font-variant-numeric: tabular-nums; }" in css
+
+
+# --- The Project state card must not show the raw live enum -----------------
+
+
+def _render_current(live_status):
+    """`_workspace_current.html` rendered on its own, the way test_components
+    renders the shared macros: the route reaches this template through
+    `build_workspace`, which takes its live session from the sensor, and the
+    projection under test here is the template's, not the sensor's."""
+    from jinja2 import Environment, FileSystemLoader
+
+    from bridge.config import ModelChoice, PermissionChoice
+    from bridge.filters import register_template_filters
+    from bridge.models import Card, GitState, LiveSession
+
+    templates = Path(__file__).resolve().parent.parent / "src" / "bridge" / "templates"
+    env = Environment(loader=FileSystemLoader(str(templates)), autoescape=True)
+    register_template_filters(env)
+    card = Card(
+        project_id=7, path="/p/demo", name="demo", session=None,
+        git=GitState(status="ok"), tokens_today=0, tokens_5h=0,
+        live=LiveSession(session_id="s1", cwd="/p/demo", kind="interactive",
+                         status=live_status),
+        launch_models=[ModelChoice("sonnet", "Sonnet")],
+        launch_efforts=["medium"],
+        launch_permission_modes=[PermissionChoice("", "Ask as usual")],
+    )
+    model = SimpleNamespace(card=card, git=None)
+    totals = SimpleNamespace(last_5h=0)
+    return env.get_template("_workspace_current.html").render(model=model, totals=totals)
+
+
+def test_the_project_state_card_humanises_the_live_status():
+    """`needs_input` rendered raw in the one place a person reads it. Every
+    other surface passes a status word through `status_label` first; this card
+    hand-rolled its own live block and skipped it."""
+    html = _render_current("needs_input")
+    state = html.split("data-live-status>", 1)[1].split("<", 1)[0]
+    assert state == "Needs input", state
+
+
+def test_the_live_status_class_hook_still_keys_off_the_raw_word():
+    """Only the visible text is humanised: `data-live-path` and the class the
+    live tick writes stay machine-readable, or live.js and the CSS stop
+    agreeing with the template."""
+    html = _render_current("busy")
+    assert 'data-live-path="/p/demo"' in html
+    state = html.split("data-live-status>", 1)[1].split("<", 1)[0]
+    assert state == "Busy"
