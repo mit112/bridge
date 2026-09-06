@@ -3134,7 +3134,16 @@ const row = {
   },
   insertBefore(el) { inserted.push(el); this.note = el; },
 };
-const nodes = { '[data-scheduled-status="sched-5"]': rowStatus };
+// The section's own <summary> -- the focus target every path that removes the
+// control the user just clicked has to fall back to (WCAG 2.4.3). `focused`
+// records the order against the button's removal, so a focus() that lands
+// AFTER the button is gone cannot pass for one that landed before it.
+const events = [];
+const summary = { focus() { events.push("focus"); } };
+const nodes = {
+  '[data-scheduled-status="sched-5"]': rowStatus,
+  "[data-scheduled] summary": summary,
+};
 
 globalThis.document = {
   addEventListener(type, fn) { if (type === "click") clickHandler = fn; },
@@ -3163,7 +3172,7 @@ const retryButton = {
   getAttribute(n) { return this.attrs[n] ?? null; },
   setAttribute(n, v) { this.attrs[n] = v; },
   removed: false,
-  remove() { this.removed = true; },
+  remove() { this.removed = true; events.push("remove"); },
   closest(sel) {
     if (sel === "[data-scheduled-retry]") return this;
     if (sel === "[data-scheduled-job]") return row;
@@ -3181,6 +3190,7 @@ clickHandler({ target: retryButton }).then(() => {
     rowClass: row.className,
     state: state.textContent,
     note: inserted.map((el) => el.textContent),
+    events,
   }));
 });
 """
@@ -3239,6 +3249,26 @@ def test_a_refused_retry_removes_a_button_that_could_only_ever_409(tmp_path):
                      ok=False, code=409)
     assert got["buttonRemoved"] is True
     assert "⚠" in got["rowStatus"]
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_a_refused_retry_hands_focus_on_before_removing_the_clicked_button(tmp_path):
+    """The 409 branch removes the button the user just clicked -- and therefore
+    the focused element -- so focus must land on the section that outlives it
+    first, or it falls to <body> and the keyboard position is lost (WCAG
+    2.4.3). Same fallback `settleRow` and the cancel path already use."""
+    got = _run_retry(tmp_path, {"detail": "only a failed or indeterminate run "
+                                          "can be retried, once"},
+                     ok=False, code=409)
+    assert got["events"] == ["focus", "remove"]
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_a_fired_retry_hands_focus_on_before_removing_the_clicked_button(tmp_path):
+    """The other removal in the same handler: the retry fired, so the control
+    goes -- with the same focus obligation."""
+    got = _run_retry(tmp_path, {"id": "sched-6", "status": "fired"})
+    assert got["events"] == ["focus", "remove"]
 
 
 @pytest.mark.skipif(_node() is None, reason="node is not installed")

@@ -150,6 +150,18 @@ function restateRow(row, status, error) {
   if (note) note.textContent = error || "";
 }
 
+// Where focus goes whenever a path removes the very control that had it
+// (WCAG 2.4.3): the section's own <summary> -- the one node here that outlives
+// every row. The dashboard's `<details>` always has one; `/schedule` has no
+// disclosure at all, so its own section-status paragraph (rendered
+// `tabindex="-1"` there for exactly this) is the fallback when no <summary>
+// exists.
+function focusScheduledSection() {
+  const summary = document.querySelector("[data-scheduled] summary")
+    || document.querySelector("[data-scheduled-section-status]");
+  if (summary) summary.focus();
+}
+
 // After a run-now the row still carries the controls the server rendered for a
 // `pending` job -- Run now, Edit, Cancel -- and every one of them can now only
 // 409. This is what makes the row agree with the database without a reload:
@@ -185,15 +197,8 @@ function settleRow(id, status, error) {
     button.focus();
     return;
   }
-  // Nothing replaced the removed button, so focus falls back to the section's
-  // own <summary> -- the same target the cancel path uses, and the one node
-  // here that outlives every row. The dashboard's `<details>` always has one;
-  // `/schedule` has no disclosure at all, so its own section-status paragraph
-  // (rendered `tabindex="-1"` there for exactly this) is the fallback when no
-  // <summary> exists.
-  const summary = document.querySelector("[data-scheduled] summary")
-    || document.querySelector("[data-scheduled-section-status]");
-  if (summary) summary.focus();
+  // Nothing replaced the removed button, so focus falls back to the section.
+  focusScheduledSection();
 }
 
 // Repaint on every page view, not once per document. Bridge swaps only the
@@ -408,11 +413,8 @@ document.addEventListener("click", async (event) => {
       // Both the focus target and the announcement move to the section
       // itself, which outlives every row in it -- `row` (and the cancel
       // button's own status span inside it) is about to be removed, so
-      // neither can hold either one (WCAG 2.4.3, 4.1.3). Same dashboard
-      // <summary> vs. `/schedule` section-status fallback as `settleRow`.
-      const summary = document.querySelector("[data-scheduled] summary")
-        || document.querySelector("[data-scheduled-section-status]");
-      if (summary) summary.focus();
+      // neither can hold either one (WCAG 2.4.3, 4.1.3).
+      focusScheduledSection();
       announce("[data-scheduled-section-status]", "✓ Cancelled");
       if (row) row.remove();
       bumpScheduledCount(-1);
@@ -486,11 +488,13 @@ document.addEventListener("click", async (event) => {
         announce(key, `⚠ Retry failed — ${data.detail || `HTTP ${status}`}`);
         // 409 is "not retryable, or retried already" -- a permanent no, so the
         // control goes rather than sitting there promising a second attempt.
-        if (status === 409) retryButton.remove();
+        // Focus moves off it first: it is the button that was just clicked.
+        if (status === 409) { focusScheduledSection(); retryButton.remove(); }
         return;
       }
       if (data.status === "fired") {
         announce(key, "✓ Retried — the session is opening in Terminal");
+        focusScheduledSection();   // the clicked button is about to go
         retryButton.remove();
         return;
       }
