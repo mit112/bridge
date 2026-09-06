@@ -1892,6 +1892,15 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* `direction: rtl` moves the clip edge to the left, but it also makes the
+   paragraph direction RTL -- and a leading `/` is bidi-NEUTRAL, so it takes the
+   paragraph's direction and is reordered to the far end: `/Users/mit/dev/bridge`
+   rendered as `Users/mit/dev/bridge/`. Verified in the browser, and shipped that
+   way on the Projects index for as long as it has set `direction: rtl`. The
+   generated LEFT-TO-RIGHT MARK (U+200E) gives the run a strong LTR character to
+   open on, so the slash binds to the text instead of to the paragraph. The clip
+   edge stays on the left; only the character order is corrected. */
+.project-row__path::before { content: "\200E"; }
 .project-row__activity { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); min-width: 0; }
 .project-row__branch, .project-row__dirty, .project-row__session {
   font-size: var(--text-sm);
