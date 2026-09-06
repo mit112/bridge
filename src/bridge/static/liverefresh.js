@@ -56,8 +56,9 @@
   function refreshNow() {
     if (!owned) return;
     if (!refreshRequested) return;
-    if (protectedFocus()) return;                 // defer: retried on the next frame,
-                                                    // refreshRequested stays set
+    if (protectedFocus()) return;                 // defer: refreshRequested stays
+                                                    // set, and the focusout
+                                                    // listener below retries it
     const versionAtFetch = refreshVersion;
     const generationAtFetch = lastSeenGeneration;
     // Pathname AND query: /schedule?view=upcoming and /schedule?view=history
@@ -166,6 +167,18 @@
     owned = false;
     pendingGeneration = null;
     refreshRequested = false;
+  }
+
+  // A refresh deferred because a protected node had focus was only ever
+  // retried by the NEXT trigger -- and the server sends a frame only when the
+  // live signature changes, so a project that then went quiet left the page
+  // stale indefinitely. Blur is the moment the deferral stops applying, so it
+  // is what re-schedules. `focusout` rather than `blur`: blur does not bubble,
+  // and this is one delegated listener for whatever is focused.
+  if (document.addEventListener) {
+    document.addEventListener("focusout", () => {
+      if (refreshRequested && !protectedFocus()) schedule();
+    });
   }
 
   window.bridgeLive.onFrame(onFrame);
