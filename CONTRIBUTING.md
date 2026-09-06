@@ -15,8 +15,11 @@ activate the venv) when working from a clone.
 ## Running tests
 
 ```bash
-uv run pytest
+make check
 ```
+
+`make check` is the gate — it runs the whole suite and propagates its exit
+code. `make mutate` runs the falsification harness over `tools/mutations/`.
 
 The suite is **hermetic** — it must pass under a clean `$HOME` with no real
 Claude Code transcript corpus present. If a test only passes because of your
@@ -30,7 +33,7 @@ the incremental indexer, and the invariants tests rely on.
 
 ## PR expectations
 
-- Tests green (`uv run pytest`), including any you add for the change.
+- Tests green (`make check`), including any you add for the change.
 - One logical change per PR — don't bundle an unrelated fix or refactor in
   with a feature.
 - Match the existing code's voice: comments explain *why*, not what the code
