@@ -9,6 +9,7 @@ The route groups themselves live in `routes_*` modules and are mounted here --
 launcher, notifier) and nothing else can hand those out.
 """
 
+import asyncio
 import json
 import logging
 import secrets
@@ -26,6 +27,7 @@ from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, field_validator, model_validator
+from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from bridge import __version__, agents, hooks, launcher, schedspool, setup, spool, update
@@ -73,6 +75,13 @@ from bridge.workspace import build_workspace
 HERE = Path(__file__).parent
 
 log = logging.getLogger(__name__)
+
+# An idle SSE connection is an awaited future on the event loop, not a pinned
+# threadpool worker, so the cap is no longer rationed against anyio's ~40
+# shared thread tokens. What it still bounds is per-connection memory and the
+# fan-out cost of one rebuild burst per change; 64 is well past any plausible
+# number of open Bridge tabs on one machine.
+MAX_SSE_CONNECTIONS = 64
 
 def create_app(
     store: Store, cfg: Config, launch_fn: LaunchFn = launcher.launch,
@@ -292,9 +301,12 @@ def create_app(
 
     SSE_MAX_SECONDS = 300.0
     REBUILD_FLOOR_S = 0.2      # min seconds between builds; caps probe cost under storms
-    MAX_SSE_CONNECTIONS = 32   # sync SSE connections each pin a threadpool worker
 
-    _sse_connections = {"n": 0}
+    # Published on `app.state` so the cap's tests can wait on the real counter
+    # reaching a known value instead of sleeping and hoping N client threads
+    # got there. `TestClient` buffers a streaming response to completion before
+    # it hands back a status line, so the counter is the only in-flight signal.
+    _sse_connections = app.state.sse_connections = {"n": 0}
     _sse_lock = threading.Lock()
 
     def _frame(event: str, payload: dict) -> str:
@@ -304,8 +316,8 @@ def create_app(
         return f"event: {event}\ndata: {json.dumps(payload)}\n\n"
 
     @app.get("/events")
-    def events(max_ticks: int | None = None, interval: float = 3.0,
-               floor: float = REBUILD_FLOOR_S, max_seconds: float = SSE_MAX_SECONDS):
+    async def events(max_ticks: int | None = None, interval: float = 3.0,
+                     floor: float = REBUILD_FLOOR_S, max_seconds: float = SSE_MAX_SECONDS):
         # `interval` keeps its name (many call sites already use it) but now
         # means the fallback wait timeout: the loop wakes on the notifier
         # instead of sleeping, and `interval` bounds how long it will wait
@@ -346,7 +358,7 @@ def create_app(
                 "refresh": {"error": payload["refresh"]["error"]},
             }
 
-        def stream():
+        async def stream():
             started = time.monotonic()
             ticks = 0
             previous = None
@@ -358,19 +370,19 @@ def create_app(
                     status = refresh_coordinator.status_snapshot()
                     built_at = time.monotonic()
                     if previous is None:
-                        payload = dashboard_builder.full_update()
+                        payload = await run_in_threadpool(dashboard_builder.full_update)
                         yield _frame("snapshot", payload)
                         previous_generation = payload["generation"]
                         previous = payload
                         previous_live_signature = live_signature(payload)
                     elif status.generation != previous_generation:
-                        payload = dashboard_builder.full_update()
+                        payload = await run_in_threadpool(dashboard_builder.full_update)
                         yield _frame("update", payload)
                         previous_generation = payload["generation"]
                         previous = payload
                         previous_live_signature = live_signature(payload)
                     else:
-                        payload = dashboard_builder.live_patch()
+                        payload = await run_in_threadpool(dashboard_builder.live_patch)
                         current_live_signature = live_signature(payload)
                         if current_live_signature != previous_live_signature:
                             yield _frame("update", payload)
@@ -393,10 +405,13 @@ def create_app(
                     # cost above one rebuild per `floor` seconds.
                     elapsed = time.monotonic() - built_at
                     if elapsed < floor:
-                        time.sleep(floor - elapsed)
+                        await asyncio.sleep(floor - elapsed)
                     # Wait for the next change (or the fallback timeout). The
-                    # store lock is NOT held here.
-                    since = app.state.notifier.wait(since=since, timeout=interval)
+                    # store lock is NOT held here, and neither is a threadpool
+                    # worker: an idle connection is parked on a future.
+                    since = await app.state.notifier.wait_async(
+                        since=since, timeout=interval
+                    )
                     yield ": heartbeat\n\n"
             finally:
                 with _sse_lock:

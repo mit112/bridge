@@ -1821,6 +1821,25 @@ def _frames(text: str) -> list[tuple[str, dict]]:
     return out
 
 
+def _wait_for_sse_connections(app, expected: int, timeout: float = 20.0) -> None:
+    """Block until `expected` SSE connections are registered on the server.
+
+    The condition is the counter the cap itself reads, so a test that waits on
+    it is waiting for the exact state under test rather than for a duration.
+    """
+    import time as _time
+
+    deadline = _time.monotonic() + timeout
+    while _time.monotonic() < deadline:
+        if app.state.sse_connections["n"] >= expected:
+            return
+        _time.sleep(0.01)
+    raise AssertionError(
+        f"only {app.state.sse_connections['n']} of {expected} SSE connections "
+        "ever registered -- the endpoint could not even start them"
+    )
+
+
 def test_events_opens_with_a_full_snapshot_in_sse_frame_format(client):
     c, _, _ = client
     with c.stream("GET", "/events?max_ticks=1&interval=0") as response:
@@ -2090,11 +2109,12 @@ def test_the_stream_never_holds_the_store_lock_while_it_sleeps(client, monkeypat
     come from a different thread or it proves nothing.
     """
     import threading
+    import types
 
     c, store, _ = client
     free_during_sleep = []
 
-    def probing_sleep(_seconds):
+    async def probing_sleep(_seconds):
         got = []
 
         def try_acquire():
@@ -2108,7 +2128,10 @@ def test_the_stream_never_holds_the_store_lock_while_it_sleeps(client, monkeypat
         thread.join()
         free_during_sleep.append(bool(got and got[0]))
 
-    monkeypatch.setattr("bridge.api.time.sleep", probing_sleep)
+    # The rebuild floor is an `await asyncio.sleep` now. Swap the module object
+    # api.py holds rather than `asyncio.sleep` itself, so the probe cannot leak
+    # into anything else running on the same loop.
+    monkeypatch.setattr("bridge.api.asyncio", types.SimpleNamespace(sleep=probing_sleep))
     with c.stream("GET", "/events?max_ticks=3&interval=0") as r:
         "".join(r.iter_text())
 
@@ -2252,36 +2275,144 @@ def test_past_the_connection_cap_returns_503_without_leaking_a_slot(client):
     connections would itself exhaust the cap for everyone else.
     """
     import threading
-    import time as _time
+
+    from bridge.api import MAX_SSE_CONNECTIONS
 
     c, _, _ = client
 
-    # Hold 32 connections open concurrently: each sits past its first frame
-    # in the rebuild-floor sleep and then the notifier wait (~2s total), so
-    # none of them has reached its `finally` decrement while the 33rd fires.
+    # Hold the cap open concurrently. `TestClient` buffers a streaming response
+    # to completion before it returns anything to the caller, so the client
+    # side offers no "my slot is taken" signal to wait on -- which is why the
+    # previous version of this test slept 0.5s and hoped. Wait on the SERVER's
+    # own counter instead: the barrier is the exact condition under test, so
+    # this is deterministic rather than timed.
+    #
+    # Each holder parks on the notifier (30s is a runaway guard, not a
+    # cadence); `max_ticks=2` means one bump ends it, and the releaser below
+    # keeps bumping until every holder is gone.
     def hold():
-        with c.stream("GET", "/events?max_ticks=2&interval=1&floor=1") as r:
-            assert r.status_code == 200
-            "".join(r.iter_text())
+        c.get("/events?interval=30&floor=0&max_ticks=2")
 
-    threads = [threading.Thread(target=hold) for _ in range(32)]
+    threads = [threading.Thread(target=hold) for _ in range(MAX_SSE_CONNECTIONS)]
     for t in threads:
         t.start()
-    _time.sleep(0.5)  # let all 32 threads reach the counter increment
 
-    over_cap = c.get("/events?max_ticks=1&interval=0")
-    assert over_cap.status_code == 503
-    assert over_cap.json() == {"detail": "too many live connections"}
+    done = threading.Event()
 
+    def release():
+        while not done.wait(0.05):
+            c.app.state.notifier.bump()
+
+    releaser = threading.Thread(target=release, daemon=True)
+    try:
+        _wait_for_sse_connections(c.app, MAX_SSE_CONNECTIONS)
+
+        over_cap = c.get("/events?max_ticks=1&interval=0")
+        assert over_cap.status_code == 503
+        assert over_cap.json() == {"detail": "too many live connections"}
+    finally:
+        releaser.start()
     for t in threads:
-        t.join(timeout=5)
+        t.join(timeout=20)
         assert not t.is_alive(), "a held-open stream never finished"
+    done.set()
 
-    # The rejected request must not have taken a slot: once the 32 holders
+    # The rejected request must not have taken a slot: once the holders
     # have closed, a fresh request succeeds again.
     with c.stream("GET", "/events?max_ticks=1&interval=0") as r:
         assert r.status_code == 200, "the 503 leaked a slot from the counter"
         "".join(r.iter_text())
+
+
+def test_open_sse_streams_do_not_pin_the_shared_threadpool(client):
+    """An idle SSE connection must cost an awaited future, not a worker thread.
+
+    Every other route in this app is a sync `def`, which Starlette dispatches
+    through anyio's ONE shared threadpool. A sync `/events` generator parked in
+    the notifier wait holds a token of that pool for the life of the browser
+    tab, so a handful of open tabs starves ordinary page loads outright.
+
+    The pool is shrunk to 2 tokens and 8 streams are opened, every one of them
+    parked on the notifier with a 30s fallback. Under the sync generator two
+    parked streams own the entire pool for those 30s and everything else --
+    the other six streams, and any ordinary request -- queues behind them, so
+    the failure mode is "never returns" and every wait below is a deadline
+    rather than a timing margin.
+    """
+    import threading
+
+    import anyio.to_thread
+
+    c, _, _ = client
+    tokens, streams = 2, 8
+
+    async def shrink():
+        anyio.to_thread.current_default_thread_limiter().total_tokens = tokens
+
+    # The connection counter is incremented before the first build, so it says
+    # nothing about whether a stream got far enough to PARK. Count snapshots
+    # instead: `full_update` runs exactly once per stream, on its way into the
+    # wait. Only when all eight have run is the pool in its steady state.
+    builder = c.app.state.dashboard_builder
+    real_full_update = builder.full_update
+    built = threading.Semaphore(0)
+
+    def counting_full_update():
+        try:
+            return real_full_update()
+        finally:
+            built.release()
+
+    # A `with`-entered client keeps ONE portal, so every request in this test
+    # shares a single event loop and therefore a single threadpool -- exactly
+    # the production shape. The bare fixture client spins a fresh portal per
+    # request, which would give each connection its own private pool and make
+    # the whole test vacuous.
+    builder.full_update = counting_full_update
+    with TestClient(c.app) as live:
+        live.portal.call(shrink)
+
+        def hold():
+            live.get("/events?interval=30&floor=0&max_ticks=2")
+
+        holders = [threading.Thread(target=hold) for _ in range(streams)]
+        for t in holders:
+            t.start()
+
+        done = threading.Event()
+
+        def release():
+            while not done.wait(0.05):
+                live.app.state.notifier.bump()
+
+        releaser = threading.Thread(target=release, daemon=True)
+        try:
+            for i in range(streams):
+                assert built.acquire(timeout=15), (
+                    f"only {i} of {streams} streams ever built a snapshot -- "
+                    "already-parked streams are holding the whole threadpool"
+                )
+
+            ordinary = {}
+
+            def plain_request():
+                ordinary["status"] = live.get("/api/projects").status_code
+
+            asker = threading.Thread(target=plain_request)
+            asker.start()
+            asker.join(timeout=15)
+            assert not asker.is_alive(), (
+                "an ordinary GET never returned while SSE streams were open: "
+                "the streams are holding the shared threadpool"
+            )
+            assert ordinary["status"] == 200
+        finally:
+            releaser.start()
+        for t in holders:
+            t.join(timeout=20)
+            assert not t.is_alive(), "a held-open stream never finished"
+        done.set()
+    builder.full_update = real_full_update
 
 
 def test_live_js_never_touches_the_prompt_textarea():
