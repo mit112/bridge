@@ -62,9 +62,8 @@
 <div class="project-row">
   <span class="project-row__identity">
     <span class="project-row__name">{{ summary.name }}</span>
-    {# `title` is the affordance for the left-truncation the Projects index does
-       to this path: the leaf stays visible, the full path is one hover away.
-       Harmless on the Overview's Recent list, which shows the path untruncated. #}
+    {# `title` is the affordance for the left-truncation this path gets on every
+       surface: the leaf stays visible, the full path is one hover away. #}
     <code class="project-row__path" title="{{ summary.path }}">{{ summary.path }}</code>
   </span>
   <span class="project-row__activity">
