@@ -96,6 +96,11 @@
       <span class="projects-group__dot" aria-hidden="true"></span>
       <span class="projects-group__label">{{ g.label }}</span>
       <span class="projects-group__count">{{ g.rows | length }}</span>
+      {# A pinned project keeps its status but is pulled to the Pinned group, so
+         this group can hold fewer rows than the filter chip of the same name
+         counts. Saying so here is what stops "Queued 3" above and "Queued 2"
+         here from being two unexplained numbers for one word. #}
+      {% if g.pinned_elsewhere %}<span class="projects-group__pinned">+{{ g.pinned_elsewhere }} pinned above</span>{% endif %}
     </summary>
     <ul class="projects-list">
       {% for row in g.rows %}
