@@ -136,6 +136,10 @@ def build_workspace(
         debouncer=None,
         hook_state=None,
         git_cache=git_cache,
+        # This page renders ONE card. Building every project's and discarding
+        # the rest cost a git probe and five store reads per project, on a
+        # route that already knows which project it is.
+        project_ids=[project_id],
     )
     card = next((c for c in cards if c.project_id == project_id), None)
     if card is None:

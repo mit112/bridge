@@ -506,15 +506,10 @@ def create_app(
                 "layout": _layout_for(request),
                 # The schedule mini-form's hint line reads the same
                 # across-every-project total the dashboard's own compose box
-                # shows -- summed directly off `store.token_totals`, the exact
-                # read `build_cards` already does per project, rather than
-                # building every card again just to add `tokens_5h` back up.
-                "totals": {
-                    "last_5h": sum(
-                        store.token_totals(p["id"], now - FIVE_HOURS)
-                        for p in store.projects()
-                    ),
-                },
+                # shows -- one SQL aggregate over active projects, rather than
+                # a Python sum of one query per project (or, worse, building
+                # every card again just to add `tokens_5h` back up).
+                "totals": {"last_5h": store.token_totals_all(now - FIVE_HOURS)},
             },
         )
 

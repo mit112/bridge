@@ -1122,6 +1122,94 @@ def test_current_tab_exposes_no_sort_or_filter_state(tmp_path):
     store.close()
 
 
+def test_the_workspace_builds_only_the_project_it_renders(tmp_path):
+    """`/project/{id}` renders ONE card but built every project's.
+
+    Each discarded card cost a git probe plus five store reads (latest session,
+    two token totals, a spark series, queued handoffs), so opening one project
+    on a 36-project index paid for 36.
+    """
+    cfg = _cfg(tmp_path)
+    store = Store(cfg.db_path)
+    ids = [store.upsert_project(f"/p/{i}", f"project-{i}") for i in range(5)]
+    probed = []
+
+    def counting_probe(path):
+        probed.append(str(path))
+        return GitState(status="ok")
+
+    model = build_workspace(
+        store, cfg, ids[2], "current",
+        probe_fn=counting_probe,
+        agents_fn=lambda: AgentsState(status="ok", sessions=[]),
+    )
+
+    assert model is not None
+    assert model.card.project_id == ids[2]
+    assert probed == ["/p/2"], f"probed {len(probed)} projects to render one"
+    store.close()
+
+
+def test_the_five_hour_total_is_one_aggregate_over_every_active_project(tmp_path):
+    """The detail route's hint line summed one query per project in Python.
+
+    The SQL aggregate has to give the same number: every active project's
+    sessions in the window, and nothing from a hidden or archived one -- which
+    is exactly what the `store.projects()` loop it replaces iterated.
+    """
+    cfg = _cfg(tmp_path)
+    store = Store(cfg.db_path)
+    since = 1_780_000_000
+    for i, (tin, tout) in enumerate([(10, 1), (200, 2), (3000, 3)]):
+        pid = store.upsert_project(f"/t/{i}", f"totals-{i}")
+        store.upsert_session(SessionRecord(
+            session_id=f"in-{i}", transcript_path=f"/t/{i}.jsonl",
+            ended_at=_ended(1), tokens_in=tin, tokens_out=tout,
+        ), pid)
+        # Outside the window: must not be counted by either implementation.
+        store.upsert_session(SessionRecord(
+            session_id=f"old-{i}", transcript_path=f"/t/old-{i}.jsonl",
+            ended_at="2020-01-01T00:00:00+00:00", tokens_in=99999, tokens_out=1,
+        ), pid)
+
+    hidden = store.upsert_project("/t/hidden", "hidden")
+    store.upsert_session(SessionRecord(
+        session_id="hidden-1", transcript_path="/t/hidden.jsonl",
+        ended_at=_ended(1), tokens_in=7_000_000, tokens_out=1,
+    ), hidden)
+    store.set_project_status(hidden, "hidden")
+
+    by_project = sum(store.token_totals(p["id"], since) for p in store.projects())
+    assert store.token_totals_all(since) == by_project
+    assert store.token_totals_all(since) == 3216
+    store.close()
+
+
+def test_the_workspace_reads_no_other_projects_rows(tmp_path):
+    """The store reads, not just the probes: a card is five queries deep."""
+    cfg = _cfg(tmp_path)
+    store = Store(cfg.db_path)
+    ids = [store.upsert_project(f"/q/{i}", f"project-{i}") for i in range(5)]
+    seen = []
+    real = store.token_totals
+
+    def counting_token_totals(project_id, since_epoch):
+        seen.append(project_id)
+        return real(project_id, since_epoch)
+
+    store.token_totals = counting_token_totals
+    try:
+        build_workspace(
+            store, cfg, ids[3], "current",
+            agents_fn=lambda: AgentsState(status="ok", sessions=[]),
+        )
+    finally:
+        store.token_totals = real
+
+    assert set(seen) == {ids[3]}, "read token totals for a project it never renders"
+    store.close()
+
+
 def test_history_tables_use_tabular_numerals():
     css = (
         Path(__file__).resolve().parent.parent
