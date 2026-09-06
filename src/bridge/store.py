@@ -1124,11 +1124,35 @@ class Store:
                 "SELECT * FROM scheduled_runs WHERE id=?", (id,)
             ).fetchone()
 
-    def claim_one_due(self, now: int) -> sqlite3.Row | None:
+    def overdue_pending_ids(self, before: int) -> list[str]:
+        """Pending runs whose time passed before `before`. The scheduler's
+        catch-up cutoff: these are too late to fire and become `missed`."""
+        with self._lock:
+            return [
+                r["id"] for r in self.conn.execute(
+                    "SELECT id FROM scheduled_runs WHERE status='pending' "
+                    "AND scheduled_for<? ORDER BY scheduled_for, created_at, id",
+                    (before,),
+                )
+            ]
+
+    def miss_pending(self, id: str, at: int) -> bool:
+        """Retire a pending run that is too late to fire. Conditional on
+        `pending`, like every other transition here, so it cannot clobber a
+        run some other path claimed in the meantime."""
+        with self.transaction():
+            cur = self.conn.execute(
+                "UPDATE scheduled_runs SET status='missed', completed_at=? "
+                "WHERE id=? AND status='pending'", (at, id))
+            return cur.rowcount == 1
+
+    def claim_one_due(self, now: int, not_before: int | None = None) -> sqlite3.Row | None:
         with self.transaction():
             row = self.conn.execute(
                 "SELECT * FROM scheduled_runs WHERE status='pending' AND scheduled_for<=? "
-                "ORDER BY scheduled_for, created_at, id LIMIT 1", (now,)).fetchone()
+                "AND (? IS NULL OR scheduled_for>=?) "
+                "ORDER BY scheduled_for, created_at, id LIMIT 1",
+                (now, not_before, not_before)).fetchone()
             if row is None:
                 return None
             cur = self.conn.execute(

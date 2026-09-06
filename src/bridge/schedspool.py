@@ -16,9 +16,11 @@ Two vocabulary rules that the schema does not enforce and reviewers must:
 - `pruned` is journal-only. Retention deletes a row; replay must skip it rather
   than insert it and mark it, which would put a row back that retention had
   already judged disposable. No database `status` column ever holds `pruned`.
-- `missed` is the opposite: replay-only. It is what a creation with no terminal
-  record and a `scheduled_for` in the past becomes, and nothing else produces
-  it. A missed job never fires -- see `rebuild_if_empty`.
+- `missed` is derived as well as recorded. `rebuild_if_empty` rule 5 turns a
+  creation with no terminal record and a `scheduled_for` in the past into one,
+  and `scheduler._retire_stale` journals one for a live job that fell more than
+  an hour behind. Either way a missed job never fires; recovery is an explicit
+  retry.
 
 `test_a_pruned_job_does_not_come_back_and_a_past_due_one_is_missed` is the
 regression test for both.
@@ -44,9 +46,10 @@ STATUS_SUFFIX = ".status.json"
 # The only statuses `journal_status` writes, and the only ones `_load_status`
 # accepts. Shape validation alone would let a malformed or future-written record
 # claiming `pending` restore a fireable job, which is the one outcome replay must
-# never produce. `missed` is absent on purpose: replay derives it, never records it.
+# never produce. Every value here is terminal or replays to something terminal,
+# so no record can restore a job that fires.
 JOURNALLED_STATUSES = frozenset(
-    {"launching", "fired", "failed", "indeterminate", "cancelled", "pruned"}
+    {"launching", "fired", "failed", "indeterminate", "cancelled", "pruned", "missed"}
 )
 
 
