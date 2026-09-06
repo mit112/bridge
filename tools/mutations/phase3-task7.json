@@ -2,7 +2,7 @@
   {
     "name": "take the first prefix match instead of requiring a unique one",
     "file": "src/bridge/indexer.py",
-    "old": "            if len(matches) != 1:",
+    "old": "        if len(matches) != 1:",
     "new": "            if not matches:",
     "tests": [
       "tests/test_indexer.py::test_two_sessions_sharing_a_short_id_prefix_leave_the_launch_unlinked"
@@ -22,9 +22,9 @@
   },
   {
     "name": "link launches whose session_id is already set, re-binding settled rows",
-    "file": "src/bridge/indexer.py",
-    "old": "            if row[\"short_id\"] and not row[\"session_id\"]",
-    "new": "            if row[\"short_id\"] or row[\"session_id\"]",
+    "file": "src/bridge/store.py",
+    "old": "                \"WHERE session_id IS NULL AND short_id IS NOT NULL \"",
+    "new": "                \"WHERE short_id IS NOT NULL \"",
     "tests": [
       "tests/test_indexer.py::test_a_terminal_launch_joins_to_its_transcript_by_its_pre_assigned_uuid",
       "tests/test_indexer.py::test_two_sessions_sharing_a_short_id_prefix_leave_the_launch_unlinked"

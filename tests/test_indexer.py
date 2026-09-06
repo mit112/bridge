@@ -8,7 +8,7 @@ from bridge import indexer, models
 from bridge.config import load
 from bridge.indexer import reindex
 from bridge.registry import transcript_files
-from bridge.store import Store
+from bridge.store import Store, now_epoch
 from tests.conftest import jline, launch_by_session
 
 SID = "22222222-2222-2222-2222-222222222222"
@@ -428,16 +428,22 @@ DEMO = "/Users/you/dev/demo"  # `transcript_lines`' default cwd
 SID_TWIN = "22222222-9999-9999-9999-999999999999"
 
 
-def make_launch(store, project_id, mode, lid="L1", session_id=None, short_id=None):
+def make_launch(store, project_id, mode, lid="L1", session_id=None, short_id=None,
+                launched_at=None):
     """A launch row as `launcher.launch` would have left it, before any index.
 
     Terminal mode carries `session_id` from the start; background mode carries
     only `short_id`, which `set_launch_session` is what stamps.
+
+    `launched_at` defaults to now, as `launcher.launch` stamps it. A frozen
+    literal would sit outside the correlation pass' retry window and never be
+    considered, which is not what any caller here means to set up.
     """
     store.create_launch(models.Launch(
         id=lid, project_id=project_id, mode=mode, prompt="do the next thing",
         session_id=session_id, model="opus", effort="high",
-        launched_at=1_780_000_000, outcome="started",
+        launched_at=now_epoch() if launched_at is None else launched_at,
+        outcome="started",
     ))
     if short_id is not None:
         store.set_launch_session(lid, session_id, short_id)
@@ -719,3 +725,88 @@ def test_usage_dedup_state_survives_across_index_runs(env):
 
     row = store.latest_session(pid)
     assert (row["tokens_in"], row["tokens_out"]) == (100, 50)
+
+
+def _rows_read_while_linking(store) -> int:
+    """Total rows every store read hands the launch-correlation pass.
+
+    Call COUNT is the wrong meter here: the old loop made three calls per
+    project no matter how big the store was, while the SETS it pulled back --
+    every launch and every session in the project -- grew without bound.
+    """
+    read = {"rows": 0}
+    names = [
+        n for n in
+        ("unlinked_launches", "session_ids_with_prefix", "launches", "sessions",
+         "projects")
+        if hasattr(store, n)
+    ]
+    originals = {n: getattr(store, n) for n in names}
+
+    def counting(real):
+        def wrapper(*a, **kw):
+            out = real(*a, **kw)
+            if isinstance(out, list):
+                read["rows"] += len(out)
+            return out
+        return wrapper
+
+    for name in names:
+        setattr(store, name, counting(originals[name]))
+    try:
+        indexer._link_background_launches(store)
+    finally:
+        for name in names:
+            setattr(store, name, originals[name])
+    return read["rows"]
+
+
+def test_launch_correlation_reads_do_not_grow_with_history(env):
+    """One never-matching background launch made this pass unbounded.
+
+    It stays pending forever, so every reindex re-fetched EVERY launch and
+    EVERY session of its project to try again -- work proportional to the whole
+    history, on a tick that runs every 15 seconds.
+    """
+    cfg, store, projects = env
+    write(projects, "s.jsonl", transcript_lines())
+    reindex(store, cfg)
+    pid = store.projects()[0]["id"]
+
+    make_launch(store, pid, "background", lid="never", short_id="deadbeef")
+    small = _rows_read_while_linking(store)
+
+    for i in range(200):
+        sid = f"{i:08x}-1111-1111-1111-111111111111"
+        store.upsert_session(
+            models.SessionRecord(session_id=sid, transcript_path=f"/t/{i}.jsonl"),
+            pid,
+        )
+        make_launch(store, pid, "terminal", lid=f"L{i}", session_id=sid)
+    large = _rows_read_while_linking(store)
+
+    assert large == small, (
+        f"linking read {large} rows against 200 sessions/launches "
+        f"but {small} against none"
+    )
+
+
+def test_a_background_launch_older_than_a_day_is_not_retried(env):
+    """Retrying forever is what made the pass unbounded; the window is the fix.
+
+    The launch stays visible as the unlinked launch it is -- it is simply no
+    longer re-examined on every tick.
+    """
+    cfg, store, projects = env
+    write(projects, "s.jsonl", transcript_lines())
+    reindex(store, cfg)
+    pid = store.projects()[0]["id"]
+
+    make_launch(store, pid, "background", lid="stale", short_id=SID[:8],
+                launched_at=now_epoch() - 25 * 3600)
+    make_launch(store, pid, "background", lid="fresh", short_id=SID[:8])
+    reindex(store, cfg)
+
+    rows = {r["id"]: r for r in store.launches(pid, limit=100)}
+    assert rows["fresh"]["session_id"] == SID
+    assert rows["stale"]["session_id"] is None
