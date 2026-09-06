@@ -59,6 +59,12 @@ class UpdateResult:
     log_path: str
     error: str | None
     rolled_back: bool
+    # Set when the install landed on a different (newer) commit than the one the
+    # UI offered -- the brew path installs whatever HEAD is at install time, so
+    # `attempted_sha` and the sha the user clicked can legitimately differ.
+    # Defaulted so every existing construction and every JSON consumer keeps
+    # working.
+    note: str | None = None
 
 
 def _read_direct_url() -> str | None:
@@ -377,14 +383,18 @@ def run_update(target_sha: str) -> UpdateResult:
     method = install_method()
     started = _now_iso()
     log_path = _update_dir() / "update.log"
+    # What we will actually verify against, and what to say if it is not the sha
+    # the UI offered. Both are settled below, once the lock is held.
+    install_sha = target_sha
+    note = None
 
     def result(ok, exit_status, error, ended=None, rolled_back=False,
                previous=None):
         return UpdateResult(
-            ok=ok, previous_sha=previous, attempted_sha=target_sha, method=method,
+            ok=ok, previous_sha=previous, attempted_sha=install_sha, method=method,
             started_at=started, ended_at=ended or _now_iso(),
             exit_status=exit_status, log_path=str(log_path), error=error,
-            rolled_back=rolled_back,
+            rolled_back=rolled_back, note=note,
         )
 
     if method in ("dev", "unknown"):
@@ -396,9 +406,23 @@ def run_update(target_sha: str) -> UpdateResult:
         return result(False, None, "an update is already in progress")
 
     previous = installed_sha()
+    # `brew upgrade --fetch-HEAD` names no sha: it installs whatever HEAD is
+    # NOW, so `target_sha` -- resolved when the check ran, possibly hours before
+    # the click -- is not what lands. Verifying against it then failed a
+    # perfectly good newer install and told the user "rollback is unsupported"
+    # about a panel that was working. Re-resolving here, immediately before the
+    # install, makes the verification ask about the commit brew will actually
+    # fetch. None means the resolve failed, in which case `target_sha` remains
+    # the best guess available and the old behaviour stands.
+    if method == "brew":
+        resolved = resolve_remote_sha()
+        if resolved is not None and resolved != target_sha:
+            install_sha = resolved
+            note = (f"installed {resolved[:12]} (newer than the offered "
+                    f"{target_sha[:12]})")
     try:
         try:
-            code = _run_installer(_install_cmd(method, target_sha),
+            code = _run_installer(_install_cmd(method, install_sha),
                                   _install_env(method), log_path)
         except OSError as exc:
             # `uv`/`brew` absent -> FileNotFoundError (an OSError). run_update is
@@ -410,7 +434,7 @@ def run_update(target_sha: str) -> UpdateResult:
         if code != 0:
             return result(False, code, f"installer exited {code}",
                           previous=previous)
-        if _verify_fresh_pid(target_sha):
+        if _verify_fresh_pid(install_sha):
             return result(True, code, None, previous=previous)
         # Mismatch: the freshly installed process does not report target_sha.
         if method == "uv":
