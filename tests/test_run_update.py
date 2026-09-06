@@ -11,6 +11,10 @@ def _stub(monkeypatch, tmp_path, method="uv", verify=True, installer_exit=0):
         return installer_exit
     monkeypatch.setattr(U, "_run_installer", fake_installer)
     monkeypatch.setattr(U, "_verify_fresh_pid", lambda sha: verify)
+    # The brew path re-resolves HEAD before installing; None is the "resolve
+    # failed" answer, which keeps the offered sha and so leaves every test
+    # written before that re-resolve existed asserting what it always did.
+    monkeypatch.setattr(U, "resolve_remote_sha", lambda *a, **k: None)
     return calls
 
 
@@ -120,3 +124,41 @@ def test_run_update_uv_rollback_failure_message(monkeypatch, tmp_path):
     assert res.rolled_back is False        # the rollback attempt itself failed
     assert "7" in (res.error or "")
     assert "fail" in (res.error or "").lower()
+
+
+def test_brew_install_of_a_newer_head_than_the_one_offered_is_a_success(
+    monkeypatch, tmp_path
+):
+    """`brew upgrade --fetch-HEAD` names no sha, so it installs HEAD as it is
+    NOW -- which is not necessarily the sha the check resolved and the UI
+    offered. Verifying against the offered sha reported a working, newer install
+    as a failure, and told the user brew rollback was unsupported.
+
+    A resolves at check time, B by the time the button is clicked; brew installs
+    B; the result must be ok, must name B, and must say the two differ.
+    """
+    offered, actual = "a" * 40, "b" * 40
+    _stub(monkeypatch, tmp_path, method="brew", verify=False)
+    monkeypatch.setattr(U, "resolve_remote_sha", lambda *a, **k: actual)
+    monkeypatch.setattr(U, "_verify_fresh_pid", lambda sha: sha == actual)
+
+    res = U.run_update(offered)
+
+    assert res.ok is True, res.error
+    assert res.attempted_sha == actual
+    assert actual[:12] in (res.note or "") and offered[:12] in (res.note or "")
+
+
+def test_a_brew_resolve_failure_still_verifies_against_the_offered_sha(
+    monkeypatch, tmp_path
+):
+    """None from the resolver means "no better answer", not "install anything"."""
+    _stub(monkeypatch, tmp_path, method="brew", verify=True)
+    seen = []
+    monkeypatch.setattr(U, "_verify_fresh_pid", lambda sha: seen.append(sha) or True)
+
+    res = U.run_update("c" * 40)
+
+    assert res.ok is True
+    assert seen == ["c" * 40]
+    assert res.note is None
