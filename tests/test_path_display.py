@@ -36,3 +36,25 @@ def test_the_project_path_truncates_from_the_left_on_every_surface():
         "parent render as the same string on the Overview"
     )
     assert "text-align: left" in block, "rtl without this right-aligns the run"
+
+
+def test_the_left_clipped_path_still_reads_in_the_right_order():
+    """`direction: rtl` reorders the leading slash to the far end.
+
+    A path opens with `/`, which is bidi-neutral, so under an RTL paragraph it
+    takes the paragraph's direction and renders LAST: `/Users/mit/dev/bridge`
+    reaches the screen as `Users/mit/dev/bridge/`. That shipped on the Projects
+    index and was confirmed in a browser. A generated U+200E (LEFT-TO-RIGHT
+    MARK) opens the run with a strong LTR character, so the slash binds to the
+    text rather than to the paragraph, and the clip edge stays on the left.
+    """
+    match = re.search(
+        r"(?m)^\.project-row__path::before\s*\{(.*?)\}", CSS, re.S
+    )
+    assert match, (
+        "no `.project-row__path::before` rule: the left-clipped path has "
+        "nothing to anchor its direction and renders its leading slash last"
+    )
+    assert r"\200E" in match.group(1), (
+        "the ::before must emit U+200E; anything else does not fix the order"
+    )
