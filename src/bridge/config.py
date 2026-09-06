@@ -141,16 +141,35 @@ def _read_config_file(path: Path) -> dict:
     if not isinstance(paths, list):
         raise ConfigError(f"{path}: archived.paths must be a list of paths")
 
+    def _strings(items, where: str) -> None:
+        """Every element has to be a string before `_absolute` sees it.
+
+        `_absolute` calls `Path()`, which raises a bare `TypeError` on an int --
+        outside the `try` above, so `paths = [123]` escaped as a traceback
+        instead of the `ConfigError` naming the file that a hand-edited config
+        is owed.
+        """
+        for item in items:
+            if not isinstance(item, str):
+                raise ConfigError(
+                    f"{path}: {where} must be strings, got {item!r}"
+                )
+
     values: dict = {}
     if aliases:
+        _strings([*aliases.keys(), *aliases.values()], "alias keys and values")
         values["aliases"] = {_absolute(a): _absolute(c) for a, c in aliases.items()}
     if paths:
+        _strings(paths, "archived.paths entries")
         values["archived_paths"] = tuple(_absolute(p) for p in paths)
     if "hours" in stale:
         hours = stale["hours"]
         # Zero or negative would mark every project stale the instant it went
         # dirty, turning the one warning treatment into permanent furniture.
-        if not isinstance(hours, int) or hours < 1:
+        # `type(...) is not int` rather than `isinstance`, because `bool` is a
+        # subclass of `int` and TOML has a `true` literal: `hours = true` would
+        # otherwise pass as 1 and mark everything stale after an hour.
+        if type(hours) is not int or hours < 1:
             raise ConfigError(f"{path}: stale.hours must be a positive whole number")
         values["stale_hours"] = hours
     discovery = data.get("discovery", {})
@@ -160,13 +179,17 @@ def _read_config_file(path: Path) -> dict:
     if not isinstance(disc_paths, list):
         raise ConfigError(f"{path}: discovery.paths must be a list of paths")
     if disc_paths:
+        _strings(disc_paths, "discovery.paths entries")
         values["discovery_paths"] = tuple(
             Path(_absolute(p)) for p in disc_paths
         )
     # Port from config file (env var BRIDGE_PORT takes precedence in load()).
     if "port" in data:
         port = data["port"]
-        if not isinstance(port, int) or port < 1 or port > 65535:
+        # `type(...) is not int` for the same reason as `stale.hours` above:
+        # `port = true` is a bool, and a bool is an int, so `isinstance` let it
+        # through as port 1.
+        if type(port) is not int or port < 1 or port > 65535:
             raise ConfigError(f"{path}: port must be an integer between 1 and 65535")
         values["port"] = port
     update = data.get("update", {})

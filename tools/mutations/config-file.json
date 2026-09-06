@@ -82,7 +82,7 @@
   {
     "name": "accept a zero or negative stale.hours, making the warning permanent furniture",
     "file": "src/bridge/config.py",
-    "old": "        if not isinstance(hours, int) or hours < 1:\n            raise ConfigError(f\"{path}: stale.hours must be a positive whole number\")",
+    "old": "        if type(hours) is not int or hours < 1:\n            raise ConfigError(f\"{path}: stale.hours must be a positive whole number\")",
     "new": "        pass",
     "tests": ["tests/test_config.py::test_a_zero_or_negative_stale_hours_is_refused"],
     "expect_count": 1
@@ -90,7 +90,7 @@
   {
     "name": "accept a non-numeric stale.hours, which fails later inside the staleness maths",
     "file": "src/bridge/config.py",
-    "old": "        if not isinstance(hours, int) or hours < 1:",
+    "old": "        if type(hours) is not int or hours < 1:",
     "new": "        if False:",
     "tests": ["tests/test_config.py::test_a_non_numeric_stale_hours_is_refused"],
     "expect_count": 1
