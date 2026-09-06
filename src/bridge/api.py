@@ -113,7 +113,12 @@ def create_app(
     @app.middleware("http")
     async def _loopback_host_only(request: Request, call_next):
         host = request.headers.get("host")
-        if host is not None and _hostname(host) not in LOOPBACK_HOSTNAMES:
+        # No `Host` at all is refused too. It is the header this check exists to
+        # read, so treating "absent" as "fine" made the guard optional to whoever
+        # was attacking it -- HTTP/1.0 has no required Host, and a raw socket can
+        # simply omit it. Every sibling check in this file fails closed; this one
+        # failed open.
+        if host is None or _hostname(host) not in LOOPBACK_HOSTNAMES:
             log.warning("refused non-loopback %s %s for host %r",
                         request.method, request.url.path, host)
             return JSONResponse({"detail": "non-loopback host refused"},
