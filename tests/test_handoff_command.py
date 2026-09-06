@@ -38,12 +38,20 @@ __pycache__ or stale bytecode keeps running. Costs: $(echo "not expanded") and
 `backticks` and ${BRACES} must survive verbatim."""
 
 
-def free_port() -> int:
+def bound_port() -> tuple[socket.socket, int]:
+    """A listening socket and its port, handed to uvicorn as-is.
+
+    Asking the kernel for a free port, closing it, and letting uvicorn bind the
+    same number a moment later is a TOCTOU race: anything else on the machine
+    can take the port in the gap and the fixture fails for a reason that has
+    nothing to do with Bridge. Keeping the socket open means the port cannot be
+    taken, because we never let go of it.
+    """
     s = socket.socket()
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     s.bind(("127.0.0.1", 0))
-    port = s.getsockname()[1]
-    s.close()
-    return port
+    s.listen(128)
+    return s, s.getsockname()[1]
 
 
 def command_template() -> str:
@@ -62,26 +70,27 @@ def live_server(tmp_path):
     """A real server on a real port, not a TestClient transport."""
     import uvicorn
 
+    sock, port = bound_port()
     cfg = load({
         "db_path": tmp_path / "live.db",
         "spool_dir": tmp_path / "spool",
-        "port": free_port(),
+        "port": port,
     })
     store = Store(cfg.db_path)
     server = uvicorn.Server(
         uvicorn.Config(create_app(store, cfg), host="127.0.0.1",
                        port=cfg.port, log_level="error")
     )
-    thread = threading.Thread(target=server.run, daemon=True)
+    thread = threading.Thread(target=server.run, kwargs={"sockets": [sock]},
+                              daemon=True)
     thread.start()
 
+    # The socket is already listening, so a connect() probe would succeed
+    # before uvicorn has accepted anything. `started` is the flag uvicorn sets
+    # once it is actually serving on it.
     deadline = time.time() + 15
     while time.time() < deadline:
-        probe = socket.socket()
-        probe.settimeout(0.2)
-        ok = probe.connect_ex(("127.0.0.1", cfg.port)) == 0
-        probe.close()
-        if ok:
+        if server.started:
             break
         time.sleep(0.05)
     else:
@@ -91,6 +100,7 @@ def live_server(tmp_path):
 
     server.should_exit = True
     thread.join(timeout=10)
+    sock.close()
     store.close()
 
 
