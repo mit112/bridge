@@ -389,3 +389,73 @@ def test_a_debounced_burst_schedules_only_one_refresh(tmp_path):
         report({ scheduled });
     """, tmp_path)
     assert got["scheduled"] == 1, "a burst of bumps within the debounce window must schedule once"
+
+
+def test_a_refresh_deferred_by_focus_is_retried_on_focusout(tmp_path):
+    """The server only sends a frame when the live signature changes, so a
+    refresh deferred while a protected node had focus was retried by nothing:
+    a project that then went quiet left the page stale until the next
+    navigation. Blur is when the deferral stops applying, so it retries.
+
+    minidom models neither real focus nor the focusout a removal emits; this
+    drives `document.activeElement` and the event by hand, which is exactly
+    what the controller reads.
+    """
+    got = _run("""
+        (async () => {
+        setPath("/project/12");
+        const body = shellBody();
+        const ta = document.createElement("textarea");
+        ta.setAttribute("data-live-preserve", ""); body.append(ta);
+        document.activeElement = ta;                     // focus inside the editor
+        const inc = document.createElement("div"); inc.setAttribute("class", "shell__body");
+        inc.append(document.createElement("p")); window.__parsed = { body: inc };
+
+        window.bridgePage.enter();
+        window.bridgeLiveRefresh._onFrame({ generation: 1 });
+        window.bridgeLiveRefresh._onFrame({ generation: 2 });   // bump -> deferred by focus
+        const deferred = globalThis.__calls.fetch.length;
+
+        // Only now: minidom's default setTimeout never runs its callback, so
+        // the debounce the listener goes through would swallow the retry and
+        // nothing downstream would be observable at all. Installed AFTER the
+        // frame above so that first schedule() still uses the inert one --
+        // otherwise it would run the debounce body while focus is still held.
+        globalThis.setTimeout = (fn) => { fn(); return 1; };
+
+        document.activeElement = null;                   // focus leaves the editor
+        ta.dispatchEvent({ type: "focusout" });          // bubbles to document
+        await new Promise((resolve) => setImmediate(resolve));
+        report({ deferred, after: globalThis.__calls.fetch.length });
+        })();
+    """, tmp_path)
+    assert got["deferred"] == 0, "must not refresh while a protected node has focus"
+    assert got["after"] == 1, (
+        "the deferred refresh was never retried after blur -- with no further "
+        "frame on the wire the page stays stale indefinitely"
+    )
+
+
+def test_focusout_while_focus_is_still_protected_does_not_refresh(tmp_path):
+    """Moving between two nodes inside the same preserved subtree fires
+    focusout too. The retry must check where focus landed, not just that one
+    fired, or it clobbers the editor the user is still in."""
+    got = _run("""
+        setPath("/project/12");
+        const body = shellBody();
+        const ta = document.createElement("textarea");
+        ta.setAttribute("data-live-preserve", ""); body.append(ta);
+        const other = document.createElement("input");
+        other.setAttribute("data-live-preserve", ""); body.append(other);
+        document.activeElement = ta;
+        window.__parsed = { body: document.createElement("div") };
+        globalThis.setTimeout = (fn) => { fn(); return 1; };
+
+        window.bridgePage.enter();
+        window.bridgeLiveRefresh._onFrame({ generation: 1 });
+        window.bridgeLiveRefresh._onFrame({ generation: 2 });   // deferred
+        document.activeElement = other;                  // still inside a preserved node
+        ta.dispatchEvent({ type: "focusout" });
+        report({ fetches: globalThis.__calls.fetch.length });
+    """, tmp_path)
+    assert got["fetches"] == 0
