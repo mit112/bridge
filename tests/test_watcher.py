@@ -25,16 +25,33 @@ def test_a_new_file_triggers_on_change(tmp_path):
     assert calls
 
 def test_a_burst_within_the_quiet_window_coalesces_to_one_call(tmp_path):
+    """The quiet window is driven by the injected clock, not by wall time.
+
+    Writing five times 0.03s apart against a 0.15s real-time debounce only
+    coalesces if no scheduling hiccup ever stretches a gap past the window --
+    thin enough to fail on a loaded machine for reasons that have nothing to do
+    with the watcher. Freezing the clock makes the window unclosable no matter
+    how long the burst actually takes; advancing it afterwards is what releases
+    the single call.
+    """
     calls = []
-    def cb(): calls.append(1)
-    w = FileWatcher(tmp_path, on_change=cb, poll_s=0.02, quiet_s=0.15)
+    fired = threading.Event()
+    def cb():
+        calls.append(1); fired.set()
+    now = 0.0
+    w = FileWatcher(tmp_path, on_change=cb, poll_s=0.02, quiet_s=0.15,
+                    clock=lambda: now)
     w.start()
     try:
         f = tmp_path / "s.jsonl"
         for i in range(5):
             f.write_text("{}" * (i + 1))
-            time.sleep(0.03)          # all within one quiet window's reach
-        time.sleep(0.4)
+            time.sleep(0.03)
+        time.sleep(0.3)               # every write is now in the snapshot
+        assert not calls, "the frozen clock must hold the quiet window open"
+        now = 100.0                   # the window closes; the burst fires once
+        assert fired.wait(2.0), "the coalesced burst never fired"
+        time.sleep(0.2)               # a second call would land in here
     finally:
         w.stop()
     assert len(calls) == 1, f"burst should coalesce to one reindex, got {len(calls)}"
