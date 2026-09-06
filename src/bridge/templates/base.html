@@ -17,11 +17,12 @@
      dependency-free duplicate of settings.js's own apply logic rather than
      loading that file here, since every page (not just /settings) needs this.
 
-     `bridge.nav` is here for a reason specific to this app: Bridge is
-     server-rendered and every nav click is a full page load, so a sidebar
-     collapse that lived only in memory would spring back open on every
-     navigation. Applying it pre-paint is what makes the collapse feel like a
-     persistent layout choice instead of a per-page toggle.
+     `bridge.nav` is here for a reason specific to this app: the router swaps
+     only the content region, but a reload -- or any navigation it cannot swap
+     -- still rebuilds the document, so a sidebar collapse that lived only in
+     memory would spring back open. Applying it pre-paint is what makes the
+     collapse feel like a persistent layout choice instead of a per-page
+     toggle.
 
      `bridge.projectsView` rides along for exactly the same reason. It only
      means anything on /projects, but it has to be applied HERE rather than in

@@ -3,9 +3,12 @@
 {% block title %}Schedule — Bridge{% endblock %}
 {% block page_title %}Schedule{% endblock %}
 {% block page_summary %}
-{# Full page loads, not client routing -- same `?tab=` pattern `project.html`'s
-   `workspace-tabs` already uses, so Back/Forward stay predictable and the URL
-   stays shareable. #}
+{# Same `?tab=`-style pattern `project.html`'s `workspace-tabs` already uses:
+   real links to real URLs, so the view stays shareable and Back/Forward stay
+   predictable. These are NOT full page loads -- router.js's `swappable()`
+   keys on `url.pathname` alone, so `/schedule?view=...` is intercepted and
+   the content region is swapped like any sidebar destination. Only with JS
+   off (or on a swap failure) do they fall back to a real navigation. #}
 <nav class="workspace-tabs" aria-label="Schedule views">
   <a class="workspace-tabs__link" href="/schedule?view=upcoming"
      {% if model.view == "upcoming" %}aria-current="page"{% endif %}>Upcoming</a>
