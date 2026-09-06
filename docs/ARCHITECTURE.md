@@ -226,6 +226,20 @@ Every surface stays live without a manual refresh:
   whole tree is re-walked and reconciled every 15s — the same cadence as the
   reindex tick. A detected change then waits for a quiet lull before firing once,
   coalescing a burst of writes into one reindex.
+- The watcher watches only what the indexer reads. `registry.transcript_files`
+  globs exactly one level under the transcripts root and skips noise
+  directories; the watcher walked the whole subtree, so the nested
+  `<session>/subagents/` transcripts — the most write-active part of a real
+  corpus — each fired a full reindex that by construction could find nothing.
+  A panel with no client open was reindexing about 1.4 times a second, every
+  run scanning zero files. `indexer.indexed_dirs` is the shared predicate that
+  keeps the two scopes identical, and a test pins them together: widening one
+  without the other silently reintroduces the no-op storm.
+- Measured end to end on a real corpus (11,392 transcripts, one directory
+  holding 74% of them), those two changes took an idle panel from 9.1% of a
+  core to 2.2%; one connected client adds roughly two points. The remaining
+  cost is that a reindex still re-examines the whole corpus rather than the
+  files the watcher already knows changed.
 - Navigation uses a persistent shell (no full-page reload between routes); route
   bodies are swapped into a single scroll container.
 
