@@ -493,6 +493,54 @@ def test_the_queued_chip_and_the_queued_group_report_the_same_number(tmp_path):
     assert chip.group(1) == group.group(1) == str(rows) == "1"
 
 
+def test_a_pinned_queued_project_is_reconciled_in_the_queued_group_header(tmp_path):
+    """Pinning is an ordering choice, not a status, so a pinned project holding
+    a handoff sits in Pinned while the Queued chip still counts it and the
+    chip's filter still reveals its row. That left "Queued 2" above "Queued 1"
+    with nothing on screen to explain the gap. The group header now carries the
+    rows Pinned is holding, so the arithmetic is visible."""
+    cfg = _cfg(tmp_path, "pinned-queued")
+    store = Store(cfg.db_path)
+    pinned = store.upsert_project("/p/pinned", "pinned-project")
+    plain = store.upsert_project("/p/plain", "plain-project")
+    store.set_project_pinned(pinned, True)
+    for pid, path in ((pinned, "/p/pinned"), (plain, "/p/plain")):
+        store.create_handoff(Handoff(
+            id=f"h{pid}", project_path=path, next_prompt="go",
+            source_session_id=f"s{pid}", created_at=1,
+        ), pid)
+
+    c = TestClient(create_app(store, cfg))
+    html = c.get("/projects").text
+    store.close()
+
+    chip = re.search(
+        r'data-projects-filter="queued"[^>]*>Queued '
+        r'<span class="projects-filter__count">(\d+)</span>',
+        html,
+    )
+    def header(label):
+        m = re.search(
+            r'<span class="projects-group__label">' + label + r'</span>\s*'
+            r'<span class="projects-group__count">(\d+)</span>(.*?)</summary>',
+            html, re.S,
+        )
+        assert m, (label, html)
+        note = re.search(
+            r'<span class="projects-group__pinned">\+(\d+) pinned above</span>', m.group(2)
+        )
+        return m.group(1), (note.group(1) if note else None)
+
+    assert chip, html
+    # Chip-equals-filter is untouched: both queued rows are still selectable.
+    assert html.count('data-project-state="queued"') == 2
+    assert chip.group(1) == "2"
+    # ...and the group holds one of them, saying on screen where the other went.
+    assert header("Queued") == ("1", "1"), "the Queued header does not reconcile with the chip"
+    # The Pinned group needs no such note: nothing is held above it.
+    assert header("Pinned") == ("1", None)
+
+
 def test_the_needs_attention_chip_marks_the_rows_it_counts(tmp_path):
     """A live session that is merely sitting idle renders as "running" but
     needs nobody -- the Overview ladder has always excluded it. The chip

@@ -33,6 +33,11 @@ class ProjectGroup:
     label: str
     is_open: bool
     rows: list[ProjectSummary]
+    # How many rows with THIS group's status word were pulled into Pinned
+    # instead. The header renders it, because otherwise the group count and the
+    # filter chip above it are two different numbers for the same word with
+    # nothing on screen to reconcile them -- see `group_projects`.
+    pinned_elsewhere: int = 0
 
 
 # One label per status word, shared by every surface so a project reads the
@@ -83,13 +88,27 @@ def group_projects(rows: list[ProjectSummary]) -> list[ProjectGroup]:
     Pinned bucket regardless of its status; every other row groups by its
     `status_word`. Empty groups are dropped so the page shows only the states
     that actually exist right now.
+
+    Pinning is an ORDERING choice, not a status: a pinned project holding a
+    queued handoff is still queued, and the "Queued" chip (which counts
+    `count_summary`'s projects, not this group's rows) still counts it, and the
+    chip's filter still reveals its row -- inside Pinned. So the chip could read
+    3 while the group header under it read 2, with nothing on screen to explain
+    the gap. Rather than break chip-equals-filter (the equality a click can
+    actually check) or duplicate the row into two groups, each status group
+    carries the number of its rows Pinned is holding, and says so in its
+    header. Every number stays true and the arithmetic is visible.
     """
     buckets: dict[str, list[ProjectSummary]] = {key: [] for key, _, _ in _GROUP_ORDER}
+    pinned_elsewhere: dict[str, int] = {}
     for row in rows:
         key = "pinned" if row.pinned else row.status_word
         buckets.get(key, buckets["idle"]).append(row)
+        if row.pinned:
+            word = row.status_word if row.status_word in buckets else "idle"
+            pinned_elsewhere[word] = pinned_elsewhere.get(word, 0) + 1
     return [
-        ProjectGroup(key, label, is_open, buckets[key])
+        ProjectGroup(key, label, is_open, buckets[key], pinned_elsewhere.get(key, 0))
         for key, label, is_open in _GROUP_ORDER
         if buckets[key]
     ]

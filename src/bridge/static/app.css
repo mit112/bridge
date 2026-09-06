@@ -2318,6 +2318,10 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
+/* The reconciliation note beside a status group's count ("+1 pinned above").
+   Muted and lowercase so it reads as a footnote to the count, never as a
+   second count competing with it. */
+.projects-group__pinned { font-size: var(--text-xs); color: var(--muted); }
 .projects-index .projects-list__item { padding-left: var(--space-3); }
 
 /* Deliberately absent: a row hover tint. The hairline rule and the status
