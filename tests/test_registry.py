@@ -184,3 +184,36 @@ def test_nesting_parent_needs_the_ancestor_to_be_a_worktree_root(tmp_path):
     child = container / "widget-app"
     child.mkdir(parents=True)
     assert nesting_parent(child, [str(container)]) is None
+
+
+def test_transcript_files_sorts_without_comparing_path_objects(tmp_path, monkeypatch):
+    """The order is by path string; getting there via `Path.__lt__` is not free.
+
+    Sorting 9,202 `Path` objects cost 8 ms of a ~106 ms reindex on the real
+    corpus, because every comparison drives the pathlib protocol to build and
+    cache a key per element. This asserts the shape -- zero `PurePath`
+    comparisons -- rather than a wall clock, and pins the resulting order to
+    the path strings so the cheap key can never quietly reorder the run.
+    """
+    import os
+    from pathlib import PurePath
+
+    monkeypatch.setenv("HOME", str(HOME))
+    d1 = tmp_path / "-Users-dev-dev-alpha"
+    d2 = tmp_path / "-Users-dev-dev-beta"
+    for d, names in ((d2, ("z.jsonl", "a.jsonl")), (d1, ("m.jsonl", "b.jsonl"))):
+        d.mkdir()
+        for n in names:
+            (d / n).write_text("")
+
+    compares = []
+    original = PurePath.__lt__
+    monkeypatch.setattr(
+        PurePath, "__lt__",
+        lambda self, other: (compares.append(1), original(self, other))[1],
+    )
+    found = transcript_files(tmp_path)
+
+    assert compares == [], f"{len(compares)} Path comparisons during the sort"
+    assert [os.fspath(p) for p in found] == sorted(os.fspath(p) for p in found)
+    assert [p.name for p in found] == ["b.jsonl", "m.jsonl", "a.jsonl", "z.jsonl"]
