@@ -160,7 +160,9 @@ loss for them means replaying their own journal, not re-scanning transcripts.
 
 1. A session ends by asking Claude for a prompt to open the next session.
 2. The `/handoff` slash command writes `{project, session_id, summary,
-   next_prompt, suggested_model, suggested_effort}` to Bridge.
+   next_prompt, suggested_effort}` to Bridge. There is no `suggested_model`:
+   the command has no reliable way to read the running model, so it sends
+   none, and `--model` stays available for a caller that does know.
 3. The prompt now lives in one place, attached to its project and linked to the
    session that produced it. The project card shows it.
 4. The card launches it. The prompt is **editable in the panel before launch** —
