@@ -11,6 +11,11 @@ def _node():
     found = shutil.which("node")
     return found or next((p for p in NODE_CANDIDATES if Path(p).exists()), None)
 
+
+# A node harness that hangs must fail the run, not hang it. These finish in
+# well under a second; the cap only ever fires on a genuinely wedged process.
+NODE_TIMEOUT_S = 60
+
 pytestmark = pytest.mark.skipif(_node() is None, reason="node is not installed")
 
 def _run(body: str, tmp_path):
@@ -21,7 +26,7 @@ def _run(body: str, tmp_path):
         f'load({json.dumps(str(STATIC / "morph.js"))});\n'
         f'{body}\n'
     )
-    proc = subprocess.run([_node(), str(script)], capture_output=True, text=True)
+    proc = subprocess.run([_node(), str(script)], capture_output=True, text=True, timeout=NODE_TIMEOUT_S)
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout)
 
