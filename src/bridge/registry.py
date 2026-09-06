@@ -77,7 +77,7 @@ def nesting_parent(path: Path | str, registered: Iterable[str]) -> str | None:
 
     The rule settled on: an ancestor that is a git worktree root, where `path`
     itself is not one. Comparison is per path component (`is_relative_to`), so
-    two siblings -- `Job apps/instalily` and `Job apps/instabase` -- can never
+    two siblings -- `Job apps/northwind` and `Job apps/northgate` -- can never
     match each other however similar their names. Requiring the ancestor to be
     a worktree root stops a merely-registered container directory swallowing
     everything beneath it. Requiring the descendant NOT to be one keeps a

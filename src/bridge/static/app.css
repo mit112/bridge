@@ -1876,8 +1876,8 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
 .project-row__name { font-weight: 700; }
 /* Truncates from the LEFT, everywhere it appears -- not just on the Projects
    index, which used to be the only place that set `direction: rtl`. Clipping
-   the tail is what makes two paths indistinguishable: `Job apps/instalily` and
-   `Job apps/instabase` both read `/Users/you/dev/Job apps/insta…` when the
+   the tail is what makes two paths indistinguishable: `Job apps/northwind` and
+   `Job apps/northgate` both read `/Users/you/dev/Job apps/north…` when the
    ellipsis is on the right, and the shared `/Users/you/dev/` prefix that
    survives distinguishes nothing. The leaf is the distinguishing part, so the
    leaf is what stays. Full value remains in the row's `title`. */

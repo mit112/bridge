@@ -897,12 +897,12 @@ def test_two_sibling_projects_are_both_active(env, tmp_path):
     case a string comparison would get wrong."""
     cfg, store, projects = env
     apps = tmp_path / "dev" / "Job apps"
-    lily, base = _repo(apps / "instalily"), _repo(apps / "instabase")
-    _transcript(projects, lily, "aaaaaaaa-0000-0000-0000-000000000005")
-    _transcript(projects, base, "aaaaaaaa-0000-0000-0000-000000000006")
+    wind, gate = _repo(apps / "northwind"), _repo(apps / "northgate")
+    _transcript(projects, wind, "aaaaaaaa-0000-0000-0000-000000000005")
+    _transcript(projects, gate, "aaaaaaaa-0000-0000-0000-000000000006")
     reindex(store, cfg)
-    assert _status(store, lily) == "active"
-    assert _status(store, base) == "active"
+    assert _status(store, wind) == "active"
+    assert _status(store, gate) == "active"
 
 
 def test_restoring_an_auto_hidden_project_survives_the_next_index(env, tmp_path):
