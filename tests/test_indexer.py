@@ -918,3 +918,32 @@ def test_restoring_an_auto_hidden_project_survives_the_next_index(env, tmp_path)
     store.set_project_status(store.project_by_path(str(child))["id"], "active")
     reindex(store, cfg)
     assert _status(store, child) == "active"
+
+
+def test_the_watcher_scope_matches_exactly_what_reindex_reads(tmp_path):
+    """`indexed_dirs` is the mirror of `transcript_files`, and must stay one.
+
+    A directory the watcher sees but the indexer never reads is worse than
+    useless: a write there fires a full rescan of the whole corpus that cannot
+    possibly find anything. Measured on the real corpus, nested
+    `<session>/subagents/` transcripts were the most write-active part of the
+    tree and fired ~1.4 no-op reindexes a second on a panel with no client.
+    """
+    from bridge.watcher import FileWatcher
+
+    real = tmp_path / "-Users-you-dev-projectY"
+    (real / "1111" / "subagents").mkdir(parents=True)
+    (real / "top.jsonl").write_text("{}\n")
+    (real / "1111" / "subagents" / "nested.jsonl").write_text("{}\n")
+    noise = tmp_path / "-private-tmp-sandbox"
+    noise.mkdir()
+    (noise / "sandbox.jsonl").write_text("{}\n")
+
+    watcher = FileWatcher(
+        tmp_path, on_change=lambda: None,
+        watch_dir=indexer.indexed_dirs(tmp_path),
+    )
+    _dirs, files = watcher._walk()
+
+    assert set(files) == {str(p) for p in transcript_files(tmp_path)}
+    assert str(real / "top.jsonl") in files

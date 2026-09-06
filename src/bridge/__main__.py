@@ -17,7 +17,7 @@ from pathlib import Path
 
 from bridge import configure_logging, schedspool, spool
 from bridge.config import load
-from bridge.indexer import reindex
+from bridge.indexer import indexed_dirs, reindex
 from bridge.notify import ChangeNotifier
 from bridge.refresh import RefreshCoordinator
 from bridge.store import SCHEDULED_RUN_RETENTION_DAYS, Store, now_epoch
@@ -236,7 +236,13 @@ def run_db_command(argv: list[str] | None = None) -> int:
     # A watcher that fails to start (e.g. the platform's file-events backend is
     # unavailable) must not stop the server -- the periodic refresh thread
     # above still covers changes, just on its ~15s interval instead of instantly.
-    watcher = FileWatcher(cfg.claude_projects_dir, on_change=refresh_coordinator.run_once)
+    watcher = FileWatcher(
+        cfg.claude_projects_dir,
+        on_change=refresh_coordinator.run_once,
+        # Only the directories `reindex` actually reads: a change anywhere else
+        # fires a full rescan that cannot find anything. See `indexed_dirs`.
+        watch_dir=indexed_dirs(cfg.claude_projects_dir),
+    )
     try:
         watcher.start()
     except Exception:  # noqa: BLE001 - the periodic refresh still covers changes
