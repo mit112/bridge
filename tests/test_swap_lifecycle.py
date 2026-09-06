@@ -41,6 +41,11 @@ def _node() -> str | None:
     return next((p for p in NODE_CANDIDATES if Path(p).exists()), None)
 
 
+
+# A node harness that hangs must fail the run, not hang it. These finish in
+# well under a second; the cap only ever fires on a genuinely wedged process.
+NODE_TIMEOUT_S = 60
+
 def run_js(body: str, files: list[str], tmp_path) -> dict:
     """Load `files` from static/ in order into a mini-DOM realm, then run `body`."""
     script = tmp_path / "case.js"
@@ -51,7 +56,7 @@ def run_js(body: str, files: list[str], tmp_path) -> dict:
         f'const {{ makeDocument, load, report }} = require({json.dumps(str(MINIDOM))});\n'
         f'{loads}\n{body}\n'
     )
-    proc = subprocess.run([_node(), str(script)], capture_output=True, text=True)
+    proc = subprocess.run([_node(), str(script)], capture_output=True, text=True, timeout=NODE_TIMEOUT_S)
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout)
 

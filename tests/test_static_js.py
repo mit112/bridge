@@ -43,6 +43,11 @@ def _node() -> str | None:
         return found
     return next((p for p in NODE_CANDIDATES if Path(p).exists()), None)
 
+
+# A node harness that hangs must fail the run, not hang it. These finish in
+# well under a second; the cap only ever fires on a genuinely wedged process.
+NODE_TIMEOUT_S = 60
+
 # `copy.js` registers a delegated listener and assigns onto `window` at load, so
 # both have to exist before it is evaluated. Nothing here simulates a real DOM:
 # the assertion is only about which property `bridgeText` prefers.
@@ -71,7 +76,7 @@ def test_bridge_text_prefers_the_live_value_over_the_rendered_text(tmp_path):
 
     proc = subprocess.run(
         [_node(), str(harness), str(COPY_JS)],
-        capture_output=True, text=True,
+        capture_output=True, text=True, timeout=NODE_TIMEOUT_S,
     )
     assert proc.returncode == 0, proc.stderr
     got = json.loads(proc.stdout)
@@ -147,7 +152,7 @@ def _run_launch_harness(tmp_path, perm_value: str) -> dict:
     harness = tmp_path / "launch_harness.js"
     harness.write_text(LAUNCH_HARNESS.replace("PERM_VALUE", json.dumps(perm_value)))
     proc = subprocess.run(
-        [_node(), str(harness), str(LAUNCH_JS)], capture_output=True, text=True
+        [_node(), str(harness), str(LAUNCH_JS)], capture_output=True, text=True, timeout=NODE_TIMEOUT_S
     )
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout)
@@ -249,7 +254,7 @@ def test_launch_button_click_reads_only_its_own_stacked_band(tmp_path):
     harness = tmp_path / "stacked_harness.js"
     harness.write_text(STACKED_HARNESS)
     proc = subprocess.run(
-        [_node(), str(harness), str(LAUNCH_JS)], capture_output=True, text=True
+        [_node(), str(harness), str(LAUNCH_JS)], capture_output=True, text=True, timeout=NODE_TIMEOUT_S
     )
     assert proc.returncode == 0, proc.stderr
     body = json.loads(proc.stdout)
@@ -345,7 +350,7 @@ def _run_empty_state(tmp_path) -> dict:
     harness = tmp_path / "empty_state_harness.js"
     harness.write_text(EMPTY_STATE_HARNESS)
     proc = subprocess.run(
-        [_node(), str(harness), str(LAUNCH_JS)], capture_output=True, text=True
+        [_node(), str(harness), str(LAUNCH_JS)], capture_output=True, text=True, timeout=NODE_TIMEOUT_S
     )
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout)
@@ -490,7 +495,7 @@ def _run_dismiss_harness(tmp_path) -> dict:
     harness = tmp_path / "dismiss_harness.js"
     harness.write_text(DISMISS_HARNESS)
     proc = subprocess.run(
-        [_node(), str(harness), str(LAUNCH_JS)], capture_output=True, text=True
+        [_node(), str(harness), str(LAUNCH_JS)], capture_output=True, text=True, timeout=NODE_TIMEOUT_S
     )
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout)
@@ -689,7 +694,7 @@ def _run_stacked_dismiss(tmp_path, target: str) -> dict:
     harness = tmp_path / f"stacked_dismiss_{target}.js"
     harness.write_text(STACKED_DISMISS_HARNESS.replace("TARGET", json.dumps(target)))
     proc = subprocess.run(
-        [_node(), str(harness), str(LAUNCH_JS)], capture_output=True, text=True
+        [_node(), str(harness), str(LAUNCH_JS)], capture_output=True, text=True, timeout=NODE_TIMEOUT_S
     )
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout)
@@ -804,7 +809,7 @@ def _run_prompt_save(tmp_path, field_name: str) -> dict:
     harness = tmp_path / f"prompt_save_{field_name}.js"
     harness.write_text(PROMPT_SAVE_HARNESS.replace("FIELD", json.dumps(field_name)))
     proc = subprocess.run(
-        [_node(), str(harness), str(LAUNCH_JS)], capture_output=True, text=True
+        [_node(), str(harness), str(LAUNCH_JS)], capture_output=True, text=True, timeout=NODE_TIMEOUT_S
     )
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout)
@@ -935,7 +940,7 @@ def _run_prompt_race(tmp_path, name: str, script: str) -> dict:
     harness = tmp_path / f"prompt_race_{name}.js"
     harness.write_text(PROMPT_RACE_HARNESS.replace("SCRIPT", script))
     proc = subprocess.run(
-        [_node(), str(harness), str(LAUNCH_JS)], capture_output=True, text=True
+        [_node(), str(harness), str(LAUNCH_JS)], capture_output=True, text=True, timeout=NODE_TIMEOUT_S
     )
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout)
@@ -1075,7 +1080,7 @@ def _run_prompt_draft(
     )
     harness.write_text(text)
     proc = subprocess.run(
-        [_node(), str(harness), str(LAUNCH_JS)], capture_output=True, text=True
+        [_node(), str(harness), str(LAUNCH_JS)], capture_output=True, text=True, timeout=NODE_TIMEOUT_S
     )
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout)
@@ -1198,7 +1203,7 @@ def _run_live(tmp_path, script: str) -> dict:
     harness = tmp_path / "live_harness.js"
     harness.write_text(LIVE_HARNESS.replace("SCRIPT", script))
     proc = subprocess.run(
-        [_node(), str(harness), str(LIVE_JS)], capture_output=True, text=True
+        [_node(), str(harness), str(LIVE_JS)], capture_output=True, text=True, timeout=NODE_TIMEOUT_S
     )
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout)
@@ -1425,7 +1430,7 @@ def _run_freshness(tmp_path, refresh_body):
     harness = tmp_path / "freshness_harness.js"
     harness.write_text("let REFRESH_BODY = " + json.dumps(refresh_body) + ";\n" + FRESHNESS_HARNESS)
     proc = subprocess.run(
-        [_node(), str(harness), str(LIVE_JS)], capture_output=True, text=True
+        [_node(), str(harness), str(LIVE_JS)], capture_output=True, text=True, timeout=NODE_TIMEOUT_S
     )
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout)
@@ -1654,7 +1659,7 @@ def _run_overview_dom(tmp_path, frame_kind: str, frame_generation) -> dict:
         .replace("FRAME_GENERATION", json.dumps(frame_generation))
     )
     proc = subprocess.run(
-        [_node(), str(harness), str(LIVE_JS)], capture_output=True, text=True
+        [_node(), str(harness), str(LIVE_JS)], capture_output=True, text=True, timeout=NODE_TIMEOUT_S
     )
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout)
@@ -1827,7 +1832,7 @@ def _run_projects(
         .replace("OK", "true" if ok else "false")
     )
     proc = subprocess.run(
-        [_node(), str(harness), str(PROJECTS_JS)], capture_output=True, text=True
+        [_node(), str(harness), str(PROJECTS_JS)], capture_output=True, text=True, timeout=NODE_TIMEOUT_S
     )
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout)
@@ -2136,7 +2141,7 @@ def _run_projects_filter(tmp_path, query: str, filter_target, clear_click: bool 
         )
     harness.write_text(script)
     proc = subprocess.run(
-        [_node(), str(harness), str(PROJECTS_JS)], capture_output=True, text=True
+        [_node(), str(harness), str(PROJECTS_JS)], capture_output=True, text=True, timeout=NODE_TIMEOUT_S
     )
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout)
@@ -2290,7 +2295,7 @@ def _run_node(tmp_path, name: str, script: str, target: Path) -> dict:
     harness.write_text(script)
     proc = subprocess.run(
         [_node(), str(harness), str(target)],
-        capture_output=True, text=True, env=UTC_ENV,
+        capture_output=True, text=True, timeout=NODE_TIMEOUT_S, env=UTC_ENV,
     )
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout)
@@ -2647,7 +2652,7 @@ def _run_compose_clear(tmp_path, name: str, target: str) -> dict:
     harness.write_text(COMPOSE_CLEAR_HARNESS.replace("TARGET", target))
     proc = subprocess.run(
         [_node(), str(harness), str(SCHEDULE_JS), str(LAUNCH_JS)],
-        capture_output=True, text=True,
+        capture_output=True, text=True, timeout=NODE_TIMEOUT_S,
     )
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout)
@@ -3382,7 +3387,7 @@ def _run_shell_harness(tmp_path, name, data_nav="{}"):
     harness = tmp_path / name
     harness.write_text(SHELL_HARNESS.replace("__DATA_NAV__", data_nav))
     proc = subprocess.run(
-        [_node(), str(harness), str(SHELL_JS)], capture_output=True, text=True
+        [_node(), str(harness), str(SHELL_JS)], capture_output=True, text=True, timeout=NODE_TIMEOUT_S
     )
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout)
@@ -3582,7 +3587,7 @@ def _run_settings_harness(
     )
     harness.write_text(text)
     proc = subprocess.run(
-        [_node(), str(harness), str(SETTINGS_JS)], capture_output=True, text=True
+        [_node(), str(harness), str(SETTINGS_JS)], capture_output=True, text=True, timeout=NODE_TIMEOUT_S
     )
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout)
@@ -3798,7 +3803,7 @@ def _run_permission_never_persisted_harness(tmp_path) -> dict:
     harness.write_text(PERMISSION_NEVER_PERSISTED_HARNESS)
     proc = subprocess.run(
         [_node(), str(harness), str(SETTINGS_JS), str(LAUNCH_JS)],
-        capture_output=True, text=True,
+        capture_output=True, text=True, timeout=NODE_TIMEOUT_S,
     )
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout)
@@ -3934,7 +3939,7 @@ def _run_launch_prefill_harness(tmp_path) -> dict:
     harness = tmp_path / "launch_prefill_harness.js"
     harness.write_text(LAUNCH_PREFILL_HARNESS)
     proc = subprocess.run(
-        [_node(), str(harness), str(LAUNCH_JS)], capture_output=True, text=True
+        [_node(), str(harness), str(LAUNCH_JS)], capture_output=True, text=True, timeout=NODE_TIMEOUT_S
     )
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout)
@@ -4058,7 +4063,7 @@ def _run_command_strip(tmp_path):
     harness = tmp_path / "command_strip_harness.js"
     harness.write_text(COMMAND_STRIP_HARNESS)
     proc = subprocess.run(
-        [_node(), str(harness), str(LIVE_JS)], capture_output=True, text=True
+        [_node(), str(harness), str(LIVE_JS)], capture_output=True, text=True, timeout=NODE_TIMEOUT_S
     )
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout)
@@ -4162,7 +4167,7 @@ def _run_shell_resize(tmp_path):
     harness = tmp_path / "shell_resize_harness.js"
     harness.write_text(SHELL_RESIZE_HARNESS)
     proc = subprocess.run(
-        [_node(), str(harness), str(SHELL_JS)], capture_output=True, text=True
+        [_node(), str(harness), str(SHELL_JS)], capture_output=True, text=True, timeout=NODE_TIMEOUT_S
     )
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout)
@@ -4305,7 +4310,7 @@ def _run_compose_draft(tmp_path, script: str, preload: dict, throw: bool = False
     )
     harness.write_text(text)
     proc = subprocess.run(
-        [_node(), str(harness), str(LAUNCH_JS)], capture_output=True, text=True
+        [_node(), str(harness), str(LAUNCH_JS)], capture_output=True, text=True, timeout=NODE_TIMEOUT_S
     )
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout)
@@ -4544,7 +4549,7 @@ def _run_update_banner(
     )
     harness = tmp_path / "update_harness.js"
     harness.write_text(script)
-    proc = subprocess.run([_node(), str(harness), str(UPDATE_JS)], capture_output=True, text=True)
+    proc = subprocess.run([_node(), str(harness), str(UPDATE_JS)], capture_output=True, text=True, timeout=NODE_TIMEOUT_S)
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout)
 
