@@ -620,7 +620,10 @@ def _started(store, cfg, launch_id, handoff_id, session_id=None, short_id=None,
             spool.journal_status(handoff_id, "consumed", now_epoch(), cfg.spool_dir)
         except Exception as exc:  # noqa: BLE001 - a running session is not undone
             note = f"{note + '; ' if note else ''}status journal failed: {exc!r}"
-        store.set_handoff_status(handoff_id, "consumed")
+        # `launch()` claimed this handoff before spawning, so `launching` is
+        # the only state it can legitimately be in; anything else means
+        # something else moved the row and consumption must not clobber it.
+        store.set_handoff_status(handoff_id, "consumed", expect="launching")
     return LaunchResult(launch_id, "started", session_id, short_id, None, note)
 
 

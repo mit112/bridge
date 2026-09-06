@@ -717,15 +717,40 @@ class Store:
                 (handoff_id,),
             )
 
-    def set_handoff_status(self, handoff_id: str, status: str) -> None:
-        """`consumed_at` is stamped only on the transition that earns it."""
+    def set_handoff_status(
+        self, handoff_id: str, status: str, *, expect: str | None = None
+    ) -> None:
+        """`consumed_at` is stamped only on the transition that earns it.
+
+        `expect` narrows the `WHERE` to the status the caller believes the row
+        is in, making the write conditional the way every `scheduled_runs`
+        transition already is. The launcher passes `launching`, the state
+        `claim_queued_handoff` left the row in, so a handoff dismissed from the
+        panel while a spawn was in flight is no longer silently marked
+        `consumed`. A lost race is logged rather than raised, exactly as
+        `finish_scheduled_run` does: the session is already running and cannot
+        be undone, so the write is discarded but must not be invisible.
+
+        Callers that legitimately do not know the current status -- the journal
+        replay, which applies whatever the record says -- omit `expect` and get
+        the unconditional update as before.
+        """
         with self._lock:
-            self.conn.execute(
+            sql = (
                 "UPDATE handoffs SET status=?, "
                 "consumed_at=CASE WHEN ?='consumed' THEN ? ELSE consumed_at END "
-                "WHERE id=?",
-                (status, status, now_epoch(), handoff_id),
+                "WHERE id=?"
             )
+            params: list = [status, status, now_epoch(), handoff_id]
+            if expect is not None:
+                sql += " AND status=?"
+                params.append(expect)
+            cur = self.conn.execute(sql, params)
+            if expect is not None and cur.rowcount != 1:
+                logger.warning(
+                    "set_handoff_status(%r, status=%r): no row in %r state; "
+                    "write discarded", handoff_id, status, expect,
+                )
 
     def update_handoff_prompt(self, handoff_id: str, next_prompt: str) -> None:
         """Persist an inline edit. `status` is deliberately left alone.

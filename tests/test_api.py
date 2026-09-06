@@ -746,6 +746,49 @@ def test_patch_sets_status_and_rejects_unknown_ids_and_statuses(handoff_app):
     assert c.patch("/api/handoff/h1", json={"status": "banana"}).status_code == 422
 
 
+def test_patch_refuses_to_move_a_consumed_handoff_back_to_queued(handoff_app):
+    """A terminal handoff is done. Re-queueing one would put a prompt the user
+    already ran back at the top of the card, ready to be launched a second
+    time -- the exact failure `schedspool`'s `missed` rule refuses elsewhere."""
+    c, store, _ = handoff_app
+    c.post("/api/handoff", json=body("h1"))
+    c.patch("/api/handoff/h1", json={"status": "consumed"})
+
+    r = c.patch("/api/handoff/h1", json={"status": "queued"})
+
+    assert r.status_code == 409
+    assert "consumed" in r.json()["detail"]
+    assert store.get_handoff("h1")["status"] == "consumed"
+    assert c.patch("/api/handoff/h1", json={"status": "dismissed"}).status_code == 409
+
+
+def test_patch_refuses_to_edit_the_prompt_of_a_dismissed_handoff(handoff_app):
+    """The text must keep matching what a launch could still run. Rewriting a
+    dismissed row's prompt leaves a card whose bytes nothing ever agreed to."""
+    c, store, _ = handoff_app
+    c.post("/api/handoff", json=body("h1", prompt="original"))
+    c.patch("/api/handoff/h1", json={"status": "dismissed"})
+
+    r = c.patch("/api/handoff/h1", json={"next_prompt": "rewritten"})
+
+    assert r.status_code == 409
+    assert store.get_handoff("h1")["next_prompt"] == "original"
+
+
+def test_patch_still_accepts_both_edits_on_a_queued_handoff(handoff_app):
+    """The 409 guard above must not cost the ordinary path anything."""
+    c, store, _ = handoff_app
+    c.post("/api/handoff", json=body("h1", prompt="original"))
+
+    r = c.patch(
+        "/api/handoff/h1", json={"next_prompt": "edited", "status": "dismissed"}
+    )
+
+    assert r.status_code == 200
+    assert store.get_handoff("h1")["next_prompt"] == "edited"
+    assert store.get_handoff("h1")["status"] == "dismissed"
+
+
 def test_a_live_post_is_journaled_so_the_database_stays_disposable(tmp_path):
     """A live POST never passes through the outbox.
 

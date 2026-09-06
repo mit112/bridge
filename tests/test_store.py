@@ -1,3 +1,4 @@
+import logging
 import os
 import sqlite3
 import stat
@@ -827,6 +828,35 @@ def test_consumed_at_is_stamped_only_by_the_consumed_transition(store):
     assert stamped is not None
     store.set_handoff_status("h1", "queued")  # must not clear the stamp
     assert store.get_handoff("h1")["consumed_at"] == stamped
+
+
+def test_set_handoff_status_with_expect_loses_the_race_instead_of_clobbering(
+    store, caplog
+):
+    """A dismiss that lands while a spawn is in flight must win.
+
+    `launch()` claims a handoff to `launching` and `_started` consumes it, so
+    without the guard a panel dismiss between those two points is silently
+    overwritten with `consumed`. The write is discarded, not raised -- the
+    session really is running -- but it must be logged.
+    """
+    pid = store.upsert_project("/d", "d")
+    store.create_handoff(handoff("h1"), pid)
+    store.set_handoff_status("h1", "dismissed")
+
+    with caplog.at_level(logging.WARNING):
+        store.set_handoff_status("h1", "consumed", expect="launching")
+
+    assert store.get_handoff("h1")["status"] == "dismissed"
+    assert store.get_handoff("h1")["consumed_at"] is None
+    assert "write discarded" in caplog.text
+
+    # The same call against the state it expects still lands.
+    store.claim_queued_handoff("h1", pid)  # no-op: not queued
+    store.set_handoff_status("h1", "queued")
+    assert store.claim_queued_handoff("h1", pid) is not None
+    store.set_handoff_status("h1", "consumed", expect="launching")
+    assert store.get_handoff("h1")["status"] == "consumed"
 
 
 def test_a_handoff_requires_a_real_project(store):
