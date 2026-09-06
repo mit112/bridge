@@ -12,10 +12,17 @@ Design notes driven by the real corpus (9,229 files, 3.5 GB):
 """
 
 import json
+import logging
 from dataclasses import dataclass, replace
 from pathlib import Path
 
 from bridge.models import SessionRecord
+
+log = logging.getLogger(__name__)
+
+
+def _session_id(obj: dict) -> str | None:
+    return obj.get("sessionId") or obj.get("session_id")
 
 
 def _as_int(value) -> int:
@@ -60,6 +67,22 @@ def scan(path: Path, start_offset: int = 0, prev: SessionRecord | None = None) -
             if not isinstance(obj, dict):
                 parse_errors += 1
                 continue
+            # A line belonging to a DIFFERENT session must not be folded into
+            # this record. `_apply` reads `sessionId` only to seed the record,
+            # so without this every subsequent line was merged regardless of
+            # whose it was -- blending token counts and message counts across
+            # sessions, and making the indexer's
+            # `prior["session_id"] == rec.session_id` guard vacuous after a
+            # rehydrated incremental scan. Counted as a parse error because
+            # that is what it is: a line this scan cannot use.
+            sid = _session_id(obj)
+            if rec is not None and sid and sid != rec.session_id:
+                parse_errors += 1
+                log.debug(
+                    "skipping line for session %s in %s (scanning %s)",
+                    sid, path, rec.session_id,
+                )
+                continue
             lines_parsed += 1
             rec = _apply(rec, obj, str(path))
 
@@ -67,7 +90,7 @@ def scan(path: Path, start_offset: int = 0, prev: SessionRecord | None = None) -
 
 
 def _apply(rec: SessionRecord | None, obj: dict, path: str) -> SessionRecord | None:
-    sid = obj.get("sessionId") or obj.get("session_id")
+    sid = _session_id(obj)
     if rec is None:
         if not sid:
             return None
