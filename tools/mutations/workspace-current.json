@@ -21,12 +21,13 @@
     "expect_count": 1
   },
   {
-    "name": "drop the real-state guard, so the session -> handoff -> next line renders decoratively with no session on record",
+    "name": "drop the real-state guard, so the session -> handoff -> next line renders decoratively with no session on record and contradicts a withdrawn Ready badge",
     "file": "src/bridge/templates/_launch.html",
-    "old": "{% if show_span_line and card.session %}",
+    "old": "{% if show_span_line and card.session and not demoted %}",
     "new": "{% if show_span_line %}",
     "tests": [
-      "tests/test_workspace.py::test_span_line_renders_only_when_session_and_handoff_both_exist"
+      "tests/test_workspace.py::test_span_line_renders_only_when_session_and_handoff_both_exist",
+      "tests/test_launch_template.py::test_a_demoted_handoff_drops_the_handoff_ready_progress_strip"
     ],
     "expect_count": 1
   }

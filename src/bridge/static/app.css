@@ -2588,3 +2588,41 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
   font-size: var(--text-sm);
   color: var(--muted);
 }
+
+/* Queued-handoff stack: separation, demotion, and the bulk-dismiss row.
+   Appended at the end of the file so the lane that owns the rest of this
+   stylesheet this round does not have to merge around an insertion. */
+
+/* Each handoff block ends with its `.continuation-actions` row, which sat
+   flush against the next block's kicker -- one project's controls read as the
+   next one's heading. The rule and the space go on the following section. */
+.continuation-panel .continuation-actions + .handoff {
+  margin-top: var(--space-6);
+  padding-top: var(--space-5);
+  border-top: 1px solid var(--rule);
+}
+
+/* A handoff a later session has overtaken: same row, less weight. The title
+   drops to body scale so the freshest handoff is the only one at hero size. */
+.continuation-panel .handoff--demoted .handoff__title {
+  max-width: 60ch;
+  margin-bottom: 0;
+  font: 600 var(--text-body)/1.35 var(--font-sans);
+  -webkit-line-clamp: 1;
+}
+.continuation-panel .handoff--demoted .handoff__kicker { color: var(--text-secondary); }
+.handoff__demoted-body { margin-top: var(--space-2); }
+.handoff__demoted-body > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: .85rem;
+}
+.handoff__demoted-body > .handoff__summary { margin-top: var(--space-2); }
+
+.handoff-bulk {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-4);
+  flex-wrap: wrap;
+}

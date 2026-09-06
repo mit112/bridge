@@ -139,3 +139,133 @@ def test_handoff_block_keys_the_section_on_the_handoff_id_for_the_morph():
 
     assert 'data-key="h1"' in mod.handoff_block(card, _handoff("h1"), None)
     assert 'data-key="h2"' in mod.handoff_block(card, _handoff("h2"), None)
+
+
+# --- Lane D: a queued handoff a later session has overtaken -----------------
+#
+# `session_since` comes off `store.queued_handoffs` and says a session in this
+# project STARTED after the prompt was written. Supersession is scoped to the
+# source session, so nothing retires these rows -- the panel showed six equally
+# loud "Ready" badges with no way to tell which prompt was still real.
+
+
+def test_a_demoted_handoff_states_the_fact_instead_of_claiming_ready():
+    mod = _module()
+    card = _card()
+
+    fresh = mod.handoff_block(card, _handoff("h1", session_since=False), None)
+    demoted = mod.handoff_block(card, _handoff("h2", session_since=True), None)
+
+    assert ">Ready</span>" in fresh
+    assert "A session has run since" not in fresh
+    assert ">A session has run since</span>" in demoted
+    assert ">Ready</span>" not in demoted
+    # Colour is never the only cue, and the quiet pill is an existing one.
+    assert "pill--idle" in demoted
+    assert "pill--work" not in demoted
+
+
+def test_the_demotion_is_part_of_the_sections_accessible_name():
+    """A sighted user reads the badge; a screen-reader user must get the same
+    words. The pill is listed in `aria-labelledby` alongside the title, so the
+    section announces "<title>, A session has run since" -- not a bare title
+    whose demotion exists only as a CSS class."""
+    demoted = _module().handoff_block(_card(), _handoff("h2", session_since=True), None)
+
+    assert 'aria-labelledby="handoff-h2-title handoff-h2-state"' in demoted
+    assert 'id="handoff-h2-state">A session has run since</span>' in demoted
+
+
+def test_a_demoted_handoff_hides_its_prompt_behind_one_disclosure():
+    """Collapsed by default: the row is the kicker, the title and the badge.
+
+    The summary and the full prompt field both move inside a single
+    `<details>` -- the freshest handoff keeps the open `handoff-prompt` box,
+    so the two do not render at the same weight. The textarea itself still
+    exists in the DOM (a closed `<details>` does not remove it), which is what
+    keeps the launch band's `data-launch-prompt` lookup working unopened.
+    """
+    mod = _module()
+    card = _card()
+
+    fresh = mod.handoff_block(
+        card, _handoff("h1", session_since=False), None, collapse_prompt=True)
+    demoted = mod.handoff_block(
+        card, _handoff("h2", session_since=True), None, collapse_prompt=True)
+
+    assert "handoff__demoted-body" not in fresh
+    assert 'class="handoff-prompt"' in fresh
+
+    assert "handoff__demoted-body" in demoted
+    # The open preview box is gone -- there is one disclosure, not two.
+    assert 'class="handoff-prompt"' not in demoted
+    assert 'class="handoff__preview"' not in demoted
+    # The prompt field is still present, inside the collapsed disclosure.
+    body = demoted.split("handoff__demoted-body", 1)[1].split("</details>", 1)[0]
+    assert 'data-prompt-handoff="h2"' in body
+    assert "Summary h2" in body
+
+
+def test_a_demoted_handoff_drops_the_handoff_ready_progress_strip():
+    """The strip's middle node reads "Handoff ready", which is exactly the
+    claim the badge beside it has withdrawn."""
+    card = _card(session=SessionRecord(
+        session_id="s", transcript_path="/t/s", title="work",
+    ))
+    mod = _module()
+
+    assert "workspace-span" in mod.handoff_block(
+        card, _handoff("h1", session_since=False), None, show_span_line=True)
+    assert "workspace-span" not in mod.handoff_block(
+        card, _handoff("h2", session_since=True), None, show_span_line=True)
+
+
+def test_the_title_prefers_the_summarys_first_line_to_the_boilerplate():
+    """With no session title the card used to read "Demo is ready to continue",
+    which names the project and says nothing about the work. The summary's
+    first line is the nearest thing to a title the handoff actually carries;
+    the boilerplate survives only when there is no summary either."""
+    mod = _module()
+    card = _card()
+
+    with_summary = mod.handoff_block(
+        card,
+        _handoff("h1", session_title=None, summary="Land the parser fix\nthen retest"),
+        None)
+    assert ">Land the parser fix</h2>" in with_summary
+    assert "is ready to continue" not in with_summary
+    # Only the FIRST line reaches the heading; the rest stays in the summary.
+    assert "then retest" not in with_summary.split("</h2>", 1)[0]
+    assert "then retest" in with_summary
+
+    no_summary = mod.handoff_block(
+        card, _handoff("h2", session_title=None, summary=None), None)
+    assert ">Demo is ready to continue</h2>" in no_summary
+
+    # A real session title still wins over both.
+    titled = mod.handoff_block(
+        card, _handoff("h3", session_title="Ship the release", summary="Land the parser fix"),
+        None)
+    assert ">Ship the release</h2>" in titled
+    assert "Land the parser fix</h2>" not in titled
+
+
+def test_every_launch_band_offers_the_same_labelled_button():
+    """Rows 2..n of a stacked handoff list used to get a bare `▶` glyph while
+    row 1 got "Continue in Terminal" -- two different-looking controls for one
+    action. Every band now renders the same labelled button; `primary` only
+    decides which one wears `btn--primary`."""
+    mod = _module()
+    card = _card()
+
+    first = mod.launch_band(card, _handoff("h1"), primary=True)
+    rest = mod.launch_band(card, _handoff("h2"), primary=False)
+
+    for band in (first, rest):
+        assert "Continue in Terminal" in band
+        assert "▶" not in band
+        assert "btn--icon" not in band
+        assert 'aria-label="Continue a session for Demo in Terminal"' in band
+
+    assert "btn--primary" in first
+    assert "btn--primary" not in rest
