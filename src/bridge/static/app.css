@@ -321,6 +321,13 @@ body {
    motion has left to suppress is one sliding nav pill. */
 @view-transition { navigation: auto; }
 
+/* That at-rule is CROSS-document only, and the router intercepts every in-app
+   click -- so on the path users actually take, these rules are driven by
+   `document.startViewTransition` in router.js instead. Same pseudo tree, same
+   declarations below, nothing here is per-path. The at-rule still covers what
+   the router does not: a no-JS load, and the `location.assign` it falls back
+   to when a swap fails. */
+
 /* Everything that still moves, switched off -- which leaves an instant swap,
    the same thing every other browser now gets for the content itself. Groups
    are enumerated rather than matched with `*` because the universal form is
