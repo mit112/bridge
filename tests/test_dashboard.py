@@ -225,3 +225,80 @@ def test_a_session_in_no_registered_project_is_still_listed(tmp_path):
 
     assert update["topbar"]["unattributed_sessions"] == 1
     assert [row["path"] for row in update["unattributed"]] == ["/nowhere/at/all"]
+
+
+def test_the_live_frames_diagnostics_alert_defers_to_the_shared_predicate(tmp_path, monkeypatch):
+    """The header this frame patches must ask `diagnostics.needs_attention`,
+    not re-derive it.
+
+    It used to inline the same three conditions -- parse errors, spool depth,
+    liveness -- which is precisely what `attention_items`' own docstring says
+    must never happen: a fourth condition added there would have reached the
+    /diagnostics page and silently NOT the Overview header, and no test would
+    have failed. `api.py` even carried a comment asserting the two were one
+    call, which was true of the intent and not of the code.
+
+    Stubbing the predicate is what makes this discriminating: with the rule
+    inlined, the envelope ignores the stub and reports the real conditions, so
+    both cases below come back `False` and the test fails.
+    """
+    from bridge import dashboard as dashboard_module
+
+    cfg = load({"db_path": tmp_path / "delegate.db", "spool_dir": tmp_path / "spool"})
+    store = Store(cfg.db_path)
+    store.record_index_run({"parse_errors": 0}, ran_at=100, duration_ms=1)
+
+    seen: list[dict] = []
+
+    def fake_needs_attention(diag):
+        seen.append(diag)
+        return True          # nothing is actually wrong; only the stub says so
+
+    monkeypatch.setattr(
+        dashboard_module.diagnostics, "needs_attention", fake_needs_attention
+    )
+    builder = DashboardBuilder(
+        store, cfg, RefreshCoordinator(store, cfg),
+        probe_fn=lambda _path: GitState(status="ok", branch="main"),
+        agents_fn=lambda: AgentsState(status="ok", sessions=[]),
+    )
+
+    envelope = builder.full_update()
+    store.close()
+
+    assert envelope["diagnostics"]["alert"] is True, (
+        "the frame re-derived the alert instead of asking the shared predicate"
+    )
+    assert seen, "the shared predicate was never called"
+    # And it is handed every key that predicate reads -- including
+    # `live_source`, which only the liveness branch touches, to name the
+    # sensor. Omitting it raised `KeyError` the moment liveness went
+    # unavailable, which the healthy path above cannot reach.
+    assert {"parse_errors", "spool_depth", "live", "live_source"} <= set(seen[0])
+
+
+def test_the_diagnostics_alert_survives_an_unavailable_liveness_sensor(tmp_path):
+    """The branch that needed a key the frame was not passing.
+
+    `attention_items`' liveness case names the sensor in its message, so it
+    reads `live_source` -- a key no other branch touches. Building the diag
+    dict from the conditions alone therefore worked on every healthy path and
+    raised `KeyError` exactly when the sensor failed, which is the one moment
+    the alert has to work.
+    """
+    cfg = load({"db_path": tmp_path / "sensor.db", "spool_dir": tmp_path / "spool"})
+    store = Store(cfg.db_path)
+    store.record_index_run({"parse_errors": 0}, ran_at=100, duration_ms=1)
+
+    builder = DashboardBuilder(
+        store, cfg, RefreshCoordinator(store, cfg),
+        probe_fn=lambda _path: GitState(status="ok", branch="main"),
+        agents_fn=lambda: AgentsState(status="unavailable", sessions=[], source="registry"),
+    )
+
+    envelope = builder.full_update()
+    store.close()
+
+    assert envelope["diagnostics"]["alert"] is True, (
+        "an unavailable liveness sensor must raise the diagnostics affordance"
+    )
