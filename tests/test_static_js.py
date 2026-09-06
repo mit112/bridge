@@ -1142,27 +1142,29 @@ LIVE_HARNESS = """
 globalThis.window = globalThis;
 globalThis.CSS = { escape: (s) => s };
 const bands = {};
-function band(path) {
-  if (!bands[path]) {
+const cards = {};
+function card(id) {
+  if (!cards[id]) {
     const classes = new Set(["live", "live--unknown"]);
-    bands[path] = {
+    bands[id] = {
       textContent: "",
-      parentNode: {},
       classList: {
         add: (...names) => names.forEach((name) => classes.add(name)),
         remove: (...names) => names.forEach((name) => classes.delete(name)),
         values: () => [...classes],
       },
+      closest: () => null,
     };
+    cards[id] = { querySelector: (sel) => (sel === "[data-live-status]" ? bands[id] : null) };
   }
-  return bands[path];
+  return cards[id];
 }
-band("/p/one");
+card("one");
 globalThis.document = {
   addEventListener() {},
   querySelector: (sel) => {
-    const m = /\\[data-live-path="(.*)"\\]/.exec(sel);
-    return m && bands[m[1]] ? bands[m[1]] : null;
+    const m = /\\[data-project-card="(.*)"\\]/.exec(sel);
+    return m && cards[m[1]] ? cards[m[1]] : null;
   },
 };
 let listeners = {};
@@ -1213,22 +1215,29 @@ def _run_live(tmp_path, script: str) -> dict:
 def test_live_js_patches_a_band_from_a_snapshot(tmp_path):
     got = _run_live(tmp_path, """
 listeners.snapshot({ data: JSON.stringify(
-  { live: { "/p/one": { status: "busy", started_at: 1 } } }) });
+  { schema: 1, kind: "snapshot",
+    cards: { one: { live: { available: true, status: "busy", started_at: 1 } } } }) });
 """)
-    assert got["bands"]["/p/one"] == "busy"
-    assert got["bandClasses"]["/p/one"] == ["live", "live--busy"]
+    assert got["bands"]["one"] == "busy"
+    assert got["bandClasses"]["one"] == ["live", "live--busy"]
 
 
 @pytest.mark.skipif(_node() is None, reason="node is not installed")
-def test_live_js_clears_a_band_on_a_tombstone(tmp_path):
-    """Without this the card keeps claiming a session that has ended."""
+def test_live_js_clears_a_band_when_a_session_goes_away(tmp_path):
+    """Without this the card keeps claiming a session that has ended. The
+    server reports the end as `available: false` with no status, which
+    `patchLive` has to read as "ended" rather than leaving the last live
+    word (and its colour class) on screen."""
     got = _run_live(tmp_path, """
 listeners.snapshot({ data: JSON.stringify(
-  { live: { "/p/one": { status: "busy", started_at: 1 } } }) });
-listeners.delta({ data: JSON.stringify({ live: {}, removed: ["/p/one"] }) });
+  { schema: 1, kind: "snapshot",
+    cards: { one: { live: { available: true, status: "busy", started_at: 1 } } } }) });
+listeners.delta({ data: JSON.stringify(
+  { schema: 1, kind: "patch",
+    cards: { one: { live: { available: false, status: null, started_at: null } } } }) });
 """)
-    assert got["bands"]["/p/one"] == "ended"
-    assert got["bandClasses"]["/p/one"] == ["live", "live--ended"]
+    assert got["bands"]["one"] == "ended"
+    assert got["bandClasses"]["one"] == ["live", "live--ended"]
 
 
 @pytest.mark.skipif(_node() is None, reason="node is not installed")
@@ -1237,10 +1246,11 @@ def test_live_js_skips_a_malformed_frame_and_keeps_going(tmp_path):
     got = _run_live(tmp_path, """
 listeners.snapshot({ data: "{ not json" });
 listeners.snapshot({ data: JSON.stringify(
-  { live: { "/p/one": { status: "idle", started_at: 1 } } }) });
+  { schema: 1, kind: "snapshot",
+    cards: { one: { live: { available: true, status: "idle", started_at: 1 } } } }) });
 """)
     assert any("malformed" in e for e in got["errors"])
-    assert got["bands"]["/p/one"] == "idle", "the stream stopped after one bad frame"
+    assert got["bands"]["one"] == "idle", "the stream stopped after one bad frame"
 
 
 @pytest.mark.skipif(_node() is None, reason="node is not installed")
@@ -1261,7 +1271,7 @@ listeners.refresh({ data: "{}" });
 
     healthy = _run_live(tmp_path, """
 // Two good frames is proof, so the reconnect is immediate.
-const frame = JSON.stringify({ live: {} });
+const frame = JSON.stringify({ schema: 1, kind: "snapshot", cards: {} });
 listeners.snapshot({ data: frame });
 listeners.delta({ data: frame });
 listeners.refresh({ data: "{}" });

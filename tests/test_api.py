@@ -2304,7 +2304,6 @@ def test_live_js_handles_snapshot_update_and_refresh_events():
               / "static" / "live.js").read_text()
     for name in ("snapshot", "update", "refresh"):
         assert f'"{name}"' in source
-    assert "removed" in source               # the tombstone is applied
 
 
 # --- PATCH /api/projects/{id}: hide, archive, restore -------------------------
