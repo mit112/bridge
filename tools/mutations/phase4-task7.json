@@ -35,7 +35,8 @@
     "old": "    return bool(attention_items(diag))",
     "new": "    return True",
     "tests": [
-      "tests/test_api.py::test_the_header_links_to_diagnostics_only_when_something_is_wrong"
+      "tests/test_api.py::test_the_header_links_to_diagnostics_only_when_something_is_wrong",
+      "tests/test_api.py::test_the_diagnostics_page_says_healthy_when_nothing_is_wrong"
     ],
     "expect_count": 1
   },
@@ -45,7 +46,8 @@
     "old": "    return bool(attention_items(diag))",
     "new": "    return False",
     "tests": [
-      "tests/test_api.py::test_the_header_links_to_diagnostics_only_when_something_is_wrong"
+      "tests/test_api.py::test_the_header_links_to_diagnostics_only_when_something_is_wrong",
+      "tests/test_api.py::test_the_diagnostics_page_says_needs_attention_when_something_is_wrong"
     ],
     "expect_count": 1
   },

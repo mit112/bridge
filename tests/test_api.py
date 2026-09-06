@@ -1646,6 +1646,36 @@ def test_the_header_links_to_diagnostics_only_when_something_is_wrong(client):
     assert re.search(r'data-diagnostics-alert[^>]*>\s*⚠', degraded_body)
 
 
+def test_the_diagnostics_page_says_healthy_when_nothing_is_wrong(client):
+    """The negative half of the pair; see the positive half below.
+
+    `/` computes its own header alert in `dashboard.full_update` -- a second
+    copy of the same three conditions -- so nothing on the Overview reaches
+    `diagnostics.needs_attention` at all. This page is the only surface that
+    does, which is why both halves of the pair are asserted here rather than
+    on the header.
+
+    A `needs_attention` hardwired to True makes every page shout, and a page
+    that always shouts carries no signal: a clean index has to say so in
+    words, not merely fail to say the opposite.
+    """
+    c, store, _ = client
+    store.record_index_run({"parse_errors": 0}, ran_at=1, duration_ms=1)
+    text = c.get("/diagnostics").text
+    assert "Bridge is healthy" in text
+    assert "Bridge needs attention" not in text
+
+
+def test_the_diagnostics_page_says_needs_attention_when_something_is_wrong(client):
+    """The positive half. A `needs_attention` hardwired to False leaves the
+    page reporting a healthy Bridge while the index is dropping lines."""
+    c, store, _ = client
+    store.record_index_run({"parse_errors": 2}, ran_at=2, duration_ms=1)
+    text = c.get("/diagnostics").text
+    assert "⚠ Bridge needs attention" in text
+    assert "Bridge is healthy" not in text
+
+
 def test_the_diagnostics_page_renders_and_says_so_in_words(client):
     c, store, _ = client
     store.record_index_run({"parse_errors": 2, "files_seen": 4},
