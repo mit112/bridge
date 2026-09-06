@@ -101,6 +101,21 @@
 {% macro handoff_block(card, handoff, totals, collapse_prompt=False, show_span_line=False) %}
   {% if handoff %}
     {% set hid = "handoff-" ~ handoff.id %}
+    {# `session_since` (store.queued_handoffs) says a session in this project
+       STARTED after this prompt was written, so the prompt may already be
+       overtaken. Supersession is deliberately scoped to the source session, so
+       nothing retires these rows and a project can stack six equally loud
+       "Ready" badges. Demote rather than lie: the badge states the observed
+       fact instead of a readiness nobody checked, the summary and the whole
+       prompt go behind one disclosure, and the row stays fully launchable.
+       Nothing here writes a status -- Dismiss is still the only thing that
+       retires a handoff. #}
+    {% set demoted = handoff.session_since %}
+    {# The h2 falls back to the summary's first line before the "<name> is
+       ready to continue" boilerplate, which names the project and says nothing
+       about the work. Only the last resort is content-free. #}
+    {% set summary_line = (handoff.summary or "").strip().split("\n")[0].strip() %}
+    {% set headline = handoff.session_title or summary_line or card.name ~ " is ready to continue" %}
     {# data-key: morph.js reconciles unkeyed children BY POSITION, and the
        `data-live-preserve` <details>/<textarea> below stop its walk -- so when
        the project's queued handoffs change under an open page, the title above
@@ -108,24 +123,47 @@
        PATCHed a row the user was no longer looking at. Keyed on the handoff id,
        a different handoff is a different node: it is REPLACED wholesale, while
        the same id still morphs in place and keeps its preserve semantics. #}
-    <section class="handoff" aria-labelledby="{{ hid }}-title"
+    <section class="handoff{% if demoted %} handoff--demoted{% endif %}"
+             aria-labelledby="{{ hid }}-title {{ hid }}-state"
              data-key="{{ handoff.id }}"
-             data-handoff-section="{{ handoff.id }}">
+             data-handoff-section="{{ handoff.id }}"
+             {%- if demoted %} data-handoff-stale="{{ handoff.id }}"{% endif %}>
       <div class="handoff__top">
         <div>
           <p class="handoff__kicker">Queued handoff · {{ handoff.created_at | ago_epoch }} ago</p>
-          <h2 class="handoff__title" id="{{ hid }}-title" title="{{ handoff.session_title or card.name ~ ' is ready to continue' }}">{{ handoff.session_title or card.name ~ " is ready to continue" }}</h2>
+          <h2 class="handoff__title" id="{{ hid }}-title" title="{{ headline }}">{{ headline }}</h2>
+          {% if not demoted %}
           <p class="handoff__summary" title="{{ handoff.summary or 'Continue from the exact saved prompt.' }}">{{ handoff.summary or "Continue from the exact saved prompt." }}</p>
+          {% endif %}
         </div>
-        <span class="pill pill--work continuation-status">Ready</span>
+        {# The pill is the section's accessible name alongside the title
+           (`aria-labelledby` above lists both), so the demotion reaches a
+           screen reader in the same words it reaches the eye -- never colour
+           or weight alone. #}
+        <span class="pill {{ "pill--idle" if demoted else "pill--work" }} continuation-status"
+              id="{{ hid }}-state">{{ "A session has run since" if demoted else "Ready" }}</span>
       </div>
-      {% if show_span_line and card.session %}
+      {# Never on a demoted row: the strip's middle node reads "Handoff ready",
+         which is the exact claim the badge beside it has just withdrawn. #}
+      {% if show_span_line and card.session and not demoted %}
       <div class="workspace-span" aria-label="Continuation path">
         <div class="workspace-span__line" aria-hidden="true"><span class="workspace-span__node workspace-span__node--done">✓</span><span class="workspace-span__connector"></span><span class="workspace-span__node workspace-span__node--ready">•</span><span class="workspace-span__connector"></span><span class="workspace-span__node">›</span></div>
         <div class="workspace-span__labels"><span>Session ended</span><span>Handoff ready</span><span>Next session</span></div>
       </div>
       {% endif %}
-      {% if collapse_prompt %}
+      {% if demoted %}
+      {# One disclosure, not two: a demoted handoff skips the `handoff-prompt`
+         preview box entirely (below) and puts the summary plus the full prompt
+         field behind this single `<details>`, so the collapsed row is the
+         kicker, the title and the badge. `data-live-preserve` for the same
+         reason every other disclosure here carries it -- the server always
+         renders it closed, and the SSE morph would otherwise strip `open` and
+         snap it shut mid-read. #}
+      <details class="handoff__demoted-body" data-live-preserve>
+        <summary>Show the saved prompt</summary>
+        <p class="handoff__summary">{{ handoff.summary or "Continue from the exact saved prompt." }}</p>
+      {% endif %}
+      {% if collapse_prompt and not demoted %}
       <div class="handoff-prompt">
         <strong>Saved prompt</strong>
         <p class="handoff__preview">{{ handoff.next_prompt[:240] }}{% if handoff.next_prompt | length > 240 %}…{% endif %}</p>
@@ -142,9 +180,12 @@
       <label class="handoff__label" for="{{ hid }}">Prompt for {{ card.name }}</label>
       <textarea class="handoff__prompt" id="{{ hid }}"
                 data-prompt-handoff="{{ handoff.id }}" data-live-preserve>{{ handoff.next_prompt }}</textarea>
-      {% if collapse_prompt %}
+      {% if collapse_prompt and not demoted %}
         </details>
       </div>
+      {% endif %}
+      {% if demoted %}
+      </details>
       {% endif %}
     </section>
   {% endif %}
@@ -190,9 +231,10 @@
    never off a handoff id that may not exist -- a bare `handoff-` prefix would
    repeat on every card and silently break each `<label for>`.
 
-   `primary`, added for the workspace's single primary action, swaps the
-   compact icon-only ▶ button for a labelled `.btn--primary` one -- "Continue
-   in Terminal" when a handoff is queued, "Start session" when nothing is.
+   Every band renders the same labelled button -- "Continue in Terminal" when a
+   handoff is queued, "Start session" when nothing is. `primary` only promotes
+   one of them to `.btn--primary`, so a stack of handoffs still has a single
+   visual first action without demoting the others to a different control.
    `collapse_options` wraps the model/effort/permission selects in a
    `<details>` ("Change options"), leaving the button itself outside so it
    stays visible without opening the disclosure. #}
@@ -274,21 +316,19 @@
      {%- if handoff %} data-launch-handoff="{{ handoff.id }}"
      data-launch-prompt="{{ "handoff-" ~ handoff.id }}"
      {%- elif primary %} data-launch-prompt="{{ "compose-" ~ card.project_id }}"{% endif %}>
-    {% if primary %}
-    <button type="button" class="btn btn--primary" data-launch-button="{{ lid }}"
+    {# One affordance on every band. `primary` now only decides which band wears
+       `btn--primary` (the freshest handoff, or the empty state's "Start
+       session"); the rest are the same labelled button in a quieter weight.
+       They used to be a bare `▶` glyph, which made rows 2..n of a stacked
+       handoff list read as a different, lesser control than row 1. #}
+    <button type="button" class="btn{% if primary %} btn--primary{% endif %}" data-launch-button="{{ lid }}"
             {%- if not handoff %} disabled{% endif %}
             aria-label="{{ 'Continue' if handoff else 'Start' }} a session for {{ card.name }} in Terminal">{{ "Continue in Terminal" if handoff else "Start session" }}</button>
-    {% endif %}
     {# data-live-preserve so the SSE morph does not strip this <details>'s `open`
        state (server always renders it collapsed) and collapse it mid-use. #}
     {% if collapse_options %}<details class="launch__options" data-live-preserve><summary><span class="launch__effective">{{ sm or card.launch_models[0].value }} · {{ se or card.launch_efforts[0] }} · Ask as usual</span><span class="launch__change">Change options</span></summary>{% endif %}
     {{ launch_options(card, lid, sm, se) }}
     {% if collapse_options %}</details>{% endif %}
-    {% if not primary %}
-    <button type="button" class="btn btn--icon" data-launch-button="{{ lid }}"
-            aria-label="Launch a session for {{ card.name }}"
-            title="Launch a session in Terminal"><span aria-hidden="true">▶</span></button>
-    {% endif %}
     {# Distinct from `data-copy-status`: the two would otherwise overwrite each
        other. A failure says so in words as well as its glyph. #}
     <span class="launch__status" role="status" aria-live="polite"
