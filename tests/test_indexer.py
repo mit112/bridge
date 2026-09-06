@@ -69,7 +69,18 @@ def transcript_lines(sid=SID, cwd="/Users/you/dev/demo", title="Did work"):
 
 
 @pytest.fixture
-def env(tmp_path):
+def env(tmp_path, monkeypatch):
+    # `-private-tmp-` is a GLOBAL noise prefix (Claude Code's own sandbox
+    # transcripts), and pytest's `tmp_path` itself lands under `/private/tmp`
+    # whenever `$TMPDIR` is unset -- which is exactly the environment the
+    # mutation harness runs the suite in. Left in place, every project these
+    # tests build under `tmp_path` is auto-hidden as sandbox noise and every
+    # active/hidden assertion in this module inverts depending on the ambient
+    # `$TMPDIR`. The sandbox rule is covered on its own terms in
+    # `test_registry.py`; here it is only interference.
+    from bridge import registry
+
+    monkeypatch.setattr(registry, "GLOBAL_NOISE_PREFIXES", ("-Volumes-",))
     projects = tmp_path / "projects"
     (projects / "-Users-you-dev-demo").mkdir(parents=True)
     # `spool_dir` and `launches_dir` are overridden even though indexing writes
