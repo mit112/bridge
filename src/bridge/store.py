@@ -593,6 +593,23 @@ class Store:
             )
         return h.id
 
+    def ingest_handoff(self, h: Handoff, project_id: int) -> str:
+        """Queue a handoff and un-archive the project it belongs to.
+
+        Every path that accepts a handoff goes through here -- the live POST,
+        the boot drain, and the journal rebuild -- because a handoff is proof
+        the project is alive again, and that fact does not depend on which of
+        the three ingested it. The indexer archives a project the first run it
+        sees the directory gone and deliberately never un-archives it, so a
+        drained handoff for one would otherwise queue under a card the
+        dashboard does not show. Only `archived` is undone: `hidden` is the
+        user's own choice and stays.
+        """
+        with self.transaction():
+            if self.get_project(project_id)["status"] == "archived":
+                self.set_project_status(project_id, "active")
+            return self.create_handoff(h, project_id)
+
     def queued_handoffs(self, project_id: int) -> list[sqlite3.Row]:
         with self._lock:
             return list(self.conn.execute(

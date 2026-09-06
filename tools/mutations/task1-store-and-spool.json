@@ -29,8 +29,8 @@
   {
     "name": "server mints its own id instead of using the spool file's",
     "file": "src/bridge/spool.py",
-    "old": "        try:\n            store.create_handoff(h, resolve(store, h.project_path))\n        except Exception:  # noqa: BLE001 - leave it spooled and retry next boot",
-    "new": "        try:\n            import uuid as _u\n            h.id = str(_u.uuid4())\n            store.create_handoff(h, resolve(store, h.project_path))\n        except Exception:  # noqa: BLE001 - leave it spooled and retry next boot",
+    "old": "        try:\n            store.ingest_handoff(h, resolve(store, h.project_path))\n        except Exception:  # noqa: BLE001 - leave it spooled and retry next boot",
+    "new": "        try:\n            import uuid as _u\n            h.id = str(_u.uuid4())\n            store.ingest_handoff(h, resolve(store, h.project_path))\n        except Exception:  # noqa: BLE001 - leave it spooled and retry next boot",
     "tests": [
       "tests/test_spool.py::test_drain_is_idempotent"
     ]
