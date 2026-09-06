@@ -622,10 +622,20 @@ class Store:
             return self.create_handoff(h, project_id)
 
     def queued_handoffs(self, project_id: int) -> list[sqlite3.Row]:
+        """Each queued handoff plus its OWN source session's title.
+
+        The join is here rather than a `session_row` call per handoff in
+        `cards._handoffs`: that ran on every card build, SSE ticks included, so
+        a project with handoffs queued paid a query per handoff several times a
+        second. `LEFT` because a source session may be unknown or not yet
+        indexed -- that handoff is still queued and still has to render.
+        """
         with self._lock:
             return list(self.conn.execute(
-                "SELECT * FROM handoffs WHERE project_id=? AND status='queued' "
-                "ORDER BY created_at DESC",
+                "SELECT h.*, s.title AS session_title FROM handoffs h "
+                "LEFT JOIN sessions s ON s.id = h.source_session_id "
+                "WHERE h.project_id=? AND h.status='queued' "
+                "ORDER BY h.created_at DESC",
                 (project_id,),
             ))
 
