@@ -459,8 +459,17 @@ def _handoffs(store: Store, project_id: int) -> list[dict]:
 
     The title comes off `queued_handoffs`' own LEFT JOIN. It used to be one
     `session_row` call per handoff, on every card build -- SSE ticks included.
+
+    `session_since` arrives as SQLite's 0/1 and is narrowed to a real bool here
+    so the template branches on a Python truth value rather than an integer.
+    It is a rendering hint -- the row's stored `status` is untouched.
     """
-    return [dict(row) for row in store.queued_handoffs(project_id)]
+    out: list[dict] = []
+    for row in store.queued_handoffs(project_id):
+        handoff = dict(row)
+        handoff["session_since"] = bool(handoff["session_since"])
+        out.append(handoff)
+    return out
 
 
 def _is_stale(git: GitState, stale_hours: int, now: int) -> bool:

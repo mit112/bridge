@@ -3,6 +3,7 @@ import os
 import sqlite3
 import stat
 import threading
+from datetime import datetime, timezone
 
 import pytest
 
@@ -856,6 +857,115 @@ def test_handoffs_are_scoped_to_their_project(store):
     # Queueing for one project must not supersede another's.
     assert store.queued_handoff(a)["id"] == "ha"
     assert store.queued_handoff(b)["id"] == "hb"
+
+
+# --- `session_since`: has work continued past the point this prompt was
+# --- written? Supersession is scoped to the source session, so any session
+# --- started outside Bridge leaves its predecessor's handoff queued forever;
+# --- this is the computed signal that says so, and it never writes a status.
+
+
+def _iso(epoch: int) -> str:
+    """The ISO shape a transcript writes, which is what `started_at` stores."""
+    return datetime.fromtimestamp(epoch, timezone.utc).isoformat().replace(
+        "+00:00", "Z"
+    )
+
+
+def test_a_session_started_after_the_handoff_marks_it(store):
+    pid = store.upsert_project("/proj/a", "a")
+    store.create_handoff(
+        handoff("h1", project_path="/proj/a", source_session_id="sess-1",
+                created_at=1_000_000), pid)
+    store.upsert_session(rec("later", started_at=_iso(1_000_060)), pid)
+
+    assert store.queued_handoffs(pid)[0]["session_since"] == 1
+
+
+def test_a_session_started_before_the_handoff_does_not_mark_it(store):
+    """The direction of the comparison is the whole predicate.
+
+    The handoff's OWN source session started before the prompt was written --
+    that is the normal case for every handoff ever captured, so a reversed or
+    unanchored comparison would badge every row on the panel as overtaken.
+    """
+    pid = store.upsert_project("/proj/a", "a")
+    store.upsert_session(rec("sess-1", started_at=_iso(999_000)), pid)
+    store.create_handoff(
+        handoff("h1", project_path="/proj/a", source_session_id="sess-1",
+                created_at=1_000_000), pid)
+
+    assert store.queued_handoffs(pid)[0]["session_since"] == 0
+
+
+def test_a_handoff_with_no_session_at_all_is_not_marked(store):
+    pid = store.upsert_project("/proj/a", "a")
+    store.create_handoff(
+        handoff("h1", project_path="/proj/a", source_session_id=None,
+                created_at=1_000_000), pid)
+
+    assert store.queued_handoffs(pid)[0]["session_since"] == 0
+
+
+def test_session_since_is_decided_per_handoff_not_per_project(store):
+    """One session between two handoffs marks the older one and only it.
+
+    A project-level "has anything run lately" flag would mark both, which is
+    the failure that makes the signal useless: the newest handoff was written
+    AFTER that session started and is exactly the one still worth running.
+    """
+    pid = store.upsert_project("/proj/a", "a")
+    store.create_handoff(
+        handoff("old", project_path="/proj/a", source_session_id="sess-1",
+                created_at=1_000_000), pid)
+    store.upsert_session(rec("between", started_at=_iso(1_000_500)), pid)
+    store.create_handoff(
+        handoff("new", project_path="/proj/a", source_session_id="sess-2",
+                created_at=1_001_000), pid)
+
+    by_id = {r["id"]: r["session_since"] for r in store.queued_handoffs(pid)}
+
+    assert by_id == {"old": 1, "new": 0}
+
+
+def test_session_since_ignores_another_projects_sessions(store):
+    pid = store.upsert_project("/proj/a", "a")
+    other = store.upsert_project("/proj/b", "b")
+    store.create_handoff(
+        handoff("h1", project_path="/proj/a", source_session_id="sess-1",
+                created_at=1_000_000), pid)
+    store.upsert_session(rec("elsewhere", started_at=_iso(1_000_060)), other)
+
+    assert store.queued_handoffs(pid)[0]["session_since"] == 0
+
+
+def test_session_since_leaves_the_stored_status_alone(store):
+    """A presentation signal, not a state transition: Dismiss is still the only
+    thing that retires a handoff, so the row stays `queued` and stays listed."""
+    pid = store.upsert_project("/proj/a", "a")
+    store.create_handoff(
+        handoff("h1", project_path="/proj/a", source_session_id="sess-1",
+                created_at=1_000_000), pid)
+    store.upsert_session(rec("later", started_at=_iso(1_000_060)), pid)
+
+    rows = store.queued_handoffs(pid)
+    assert [r["id"] for r in rows] == ["h1"]
+    assert rows[0]["session_since"] == 1
+    assert store.get_handoff("h1")["status"] == "queued"
+
+
+def test_an_unparseable_started_at_never_marks_a_handoff(store):
+    """`started_at` is a transcript-supplied string; `strftime` returns NULL for
+    anything it cannot read, and NULL must fail the comparison rather than
+    badge the handoff on a timestamp nobody could parse."""
+    pid = store.upsert_project("/proj/a", "a")
+    store.create_handoff(
+        handoff("h1", project_path="/proj/a", source_session_id="sess-1",
+                created_at=1_000_000), pid)
+    store.upsert_session(rec("broken", started_at="not a timestamp"), pid)
+    store.upsert_session(rec("missing", started_at=None), pid)
+
+    assert store.queued_handoffs(pid)[0]["session_since"] == 0
 
 
 def test_consumed_at_is_stamped_only_by_the_consumed_transition(store):
