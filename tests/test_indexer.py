@@ -835,3 +835,46 @@ def test_a_background_launch_older_than_a_day_is_not_retried(env):
     rows = {r["id"]: r for r in store.launches(pid, limit=100)}
     assert rows["fresh"]["session_id"] == SID
     assert rows["stale"]["session_id"] is None
+
+
+# --- newly discovered non-projects start hidden -----------------------------
+
+def _transcript(projects, cwd: Path | str, sid: str, dirname: str | None = None):
+    """One session recorded at `cwd`, in a transcript directory of its own.
+
+    `dirname` defaults to the real encoding of `cwd`, except where a test needs
+    the mismatch that `is_noise` on the directory name cannot catch.
+    """
+    from bridge.registry import encode_path
+
+    d = projects / (dirname or encode_path(cwd))
+    d.mkdir(parents=True, exist_ok=True)
+    (d / f"{sid}.jsonl").write_text("".join(transcript_lines(sid=sid, cwd=str(cwd))))
+
+
+def _repo(path: Path) -> Path:
+    (path / ".git").mkdir(parents=True)
+    return path
+
+
+def _status(store, path) -> str:
+    return store.project_by_path(str(path))["status"]
+
+
+def test_a_session_that_cd_ed_home_does_not_card_the_home_directory(env):
+    """The transcript lives under a real project's directory -- `is_noise` on
+    the directory name never sees home at all -- but its cwd is home."""
+    cfg, store, projects = env
+    _transcript(projects, Path.home(), "aaaaaaaa-0000-0000-0000-000000000001",
+                dirname="-Users-you-dev-demo")
+    reindex(store, cfg)
+    assert _status(store, Path.home()) == "hidden"
+
+
+def test_a_real_project_is_still_active(env, tmp_path):
+    """Negative control for the noise rule: opt-out classification, not opt-in."""
+    cfg, store, projects = env
+    real = _repo(tmp_path / "dev" / "widget-app")
+    _transcript(projects, real, "aaaaaaaa-0000-0000-0000-000000000002")
+    reindex(store, cfg)
+    assert _status(store, real) == "active"
