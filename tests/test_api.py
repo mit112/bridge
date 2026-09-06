@@ -1688,14 +1688,29 @@ def test_the_diagnostics_page_renders_and_says_so_in_words(client):
 
 
 def test_a_diagnostics_write_failure_cannot_fail_an_index(client, monkeypatch):
-    """Indexing is the one thing that must always work."""
+    """Indexing is the one thing that must always work.
+
+    The status code alone proves nothing: `RefreshCoordinator.run_once`
+    swallows any exception out of `reindex` so a refresh can never kill
+    `serve`, so `/api/refresh` answers 200 whether the scan completed or blew
+    up. What separates the two is the payload the panel actually renders --
+    a completed refresh with real stats and an `available` server, versus a
+    freshness strip that goes `unavailable` with an error under it while the
+    scan it is describing in fact succeeded.
+    """
     c, store, _ = client
 
     def boom(*a, **k):
         raise RuntimeError("diagnostics exploded")
 
     monkeypatch.setattr(store, "record_index_run", boom)
-    assert c.post("/api/refresh").status_code == 200
+    response = c.post("/api/refresh")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["refresh"]["completed"] is True
+    assert payload["refresh"]["error"] is None
+    assert payload["refresh"]["stats"] is not None, "the index reports no stats"
+    assert payload["freshness"]["server"] == "available"
 
 
 def test_diagnostics_reports_terminal_agents_as_not_running(tmp_path, monkeypatch):
