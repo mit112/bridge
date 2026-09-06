@@ -15,6 +15,24 @@
         No queued handoff for this project.
       </p>
 
+      {# Clearing a pile of overtaken handoffs one at a time is six clicks for
+         a project that has six queued. Offered only from two upwards: with one
+         stale row its own Dismiss button already is the one-click route.
+         `data-handoff-stale-ids` carries the exact ids the button is allowed
+         to touch, so the client never has to re-derive staleness in the
+         browser -- and only queued rows are ever listed, since the PATCH
+         endpoint 409s anything else. #}
+      {% set stale_ids = card.handoffs | selectattr("session_since") | map(attribute="id") | list %}
+      {% if stale_ids | length > 1 %}
+      <p class="handoff-bulk">
+        <button type="button" class="btn btn--quiet"
+                data-handoff-dismiss-all="{{ card.project_id }}"
+                data-handoff-stale-ids="{{ stale_ids | join(' ') }}">Dismiss all {{ stale_ids | length }} overtaken</button>
+        <span class="handoff__status" role="status" aria-live="polite"
+              data-handoff-dismiss-all-status="{{ card.project_id }}"></span>
+      </p>
+      {% endif %}
+
       {% for h in card.handoffs %}
       {{ handoff_block(card, h, totals, collapse_prompt=True, show_span_line=(loop.first)) }}
 
