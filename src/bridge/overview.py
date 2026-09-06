@@ -163,6 +163,7 @@ def build_overview(
     probe_fn=None,
     agents_fn=None,
     git_cache=None,
+    coordinator: RefreshCoordinator | None = None,
 ) -> OverviewModel:
     """Assemble the Overview.
 
@@ -190,7 +191,14 @@ def build_overview(
             git_cache=git_cache,
         )
 
-    coordinator = RefreshCoordinator(store, cfg)
+    # The app passes its own coordinator -- the one that has actually been
+    # running refreshes. A freshly constructed one has never run, so its status
+    # is always the pristine default and the Overview's freshness strip could
+    # never say "unavailable" while the sidebar, reading the app's real
+    # coordinator, did. Defaulted rather than required so a direct caller that
+    # has no coordinator (every test that only wants the model) keeps working.
+    if coordinator is None:
+        coordinator = RefreshCoordinator(store, cfg)
     builder = DashboardBuilder(
         store, cfg, coordinator, probe_fn=probe_fn, agents_fn=agents_fn,
         now_fn=lambda: now,

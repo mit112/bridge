@@ -436,8 +436,14 @@ def create_app(
         probe = dashboard_builder._live_state(now)
         cards = build_cards(store, cfg, agents_fn=lambda: probe,
                             debouncer=None, hook_state=None, git_cache=git_cache)
+        # The app's own coordinator, not a fresh one: it is the only one that
+        # has run a refresh, so it is the only one whose status can say
+        # anything but the pristine default. Without it the Overview's
+        # freshness strip and the sidebar's -- which reads
+        # `app.state.refresh_coordinator` -- could disagree on the same page.
         model = build_overview(store, cfg, live_state=probe, cards=cards, now=now,
-                               git_cache=git_cache)
+                               git_cache=git_cache,
+                               coordinator=app.state.refresh_coordinator)
         return templates.TemplateResponse(
             request,
             "overview.html",
