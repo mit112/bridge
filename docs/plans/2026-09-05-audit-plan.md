@@ -246,4 +246,10 @@ errors.
 - Mit's live database had three noise rows the new rule could not touch (it only judges rows a
   run creates). `/Users/mit` and the nested `.agent/2026-09-08-session` were hidden through the
   API, reversible from the Hidden drawer; the agent worktree rows auto-archive.
-- **Not pushed.** `main` is 40+ commits ahead of `origin/main`.
+- **Four mutation specs have a real survivor** (5 mutations, 415/422 caught). They were
+  invisible until `make mutate` was fixed to run past its self-check: an unknown launch mode
+  reaching the launcher instead of being refused at the API edge (`task2-api`), and three
+  diagnostics-affordance behaviours (`phase4-task2`, `phase4-task7`, `project-lifecycle`) —
+  always-shown, never-shown, and an index that survives a diagnostics write failure. Each is an
+  untested behaviour, not a broken one.
+- **Not pushed.** `main` is 50+ commits ahead of `origin/main`.
