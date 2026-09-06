@@ -351,3 +351,45 @@ def test_the_home_derived_defaults_never_resolve_under_the_real_home():
     for path in (cfg.claude_projects_dir, cfg.session_meta_dir, cfg.db_path,
                  cfg.spool_dir, cfg.launches_dir, *cfg.discovery_paths):
         assert real_home not in path.parents, f"{path} is under the real home"
+
+
+# --- malformed hand-edited files must raise ConfigError, not TypeError ------
+
+
+def test_port_true_is_rejected_rather_than_read_as_port_1(tmp_path, monkeypatch):
+    """`bool` is a subclass of `int`, and TOML has a `true` literal.
+
+    An `isinstance(port, int)` check therefore accepted `port = true` and
+    silently bound the panel to port 1 -- a privileged port the bind then fails
+    on, with nothing anywhere pointing at the config file.
+    """
+    p = write_config(tmp_path, monkeypatch, "port = true\n")
+    with pytest.raises(ConfigError, match=str(p)):
+        load()
+
+
+def test_stale_hours_true_is_rejected_rather_than_read_as_one_hour(
+    tmp_path, monkeypatch
+):
+    p = write_config(tmp_path, monkeypatch, "[stale]\nhours = true\n")
+    with pytest.raises(ConfigError, match=str(p)):
+        load()
+
+
+def test_a_non_string_archived_path_raises_config_error(tmp_path, monkeypatch):
+    """`_absolute` calls `Path()`, whose `TypeError` escapes the parse `try`."""
+    p = write_config(tmp_path, monkeypatch, "[archived]\npaths = [123]\n")
+    with pytest.raises(ConfigError, match=str(p)):
+        load()
+
+
+def test_a_non_string_discovery_path_raises_config_error(tmp_path, monkeypatch):
+    p = write_config(tmp_path, monkeypatch, "[discovery]\npaths = [123]\n")
+    with pytest.raises(ConfigError, match=str(p)):
+        load()
+
+
+def test_a_non_string_alias_value_raises_config_error(tmp_path, monkeypatch):
+    p = write_config(tmp_path, monkeypatch, '[aliases]\n"/a/x" = 5\n')
+    with pytest.raises(ConfigError, match=str(p)):
+        load()
