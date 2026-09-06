@@ -947,3 +947,30 @@ def test_the_watcher_scope_matches_exactly_what_reindex_reads(tmp_path):
 
     assert set(files) == {str(p) for p in transcript_files(tmp_path)}
     assert str(real / "top.jsonl") in files
+
+
+def test_a_brand_new_project_still_fires_under_the_narrowed_watcher_scope(tmp_path):
+    """Narrowing what is watched must not narrow what is *noticed*.
+
+    A project's first transcript arrives with the project directory itself, so
+    the only thing that can see it is the root's mtime moving and the re-list
+    adopting the new child. That is exactly the path the directory filter
+    touches, which makes it the one most likely to have been broken by it.
+    """
+    import threading
+
+    from bridge.watcher import FileWatcher
+
+    fired = threading.Event()
+    watcher = FileWatcher(
+        tmp_path, on_change=fired.set, poll_s=0.02, quiet_s=0.02,
+        watch_dir=indexer.indexed_dirs(tmp_path),
+    )
+    watcher.start()
+    try:
+        fresh = tmp_path / "-Users-you-dev-brand-new"
+        fresh.mkdir()
+        (fresh / "first.jsonl").write_text("{}\n")
+        assert fired.wait(2.0), "a brand-new project's first transcript was missed"
+    finally:
+        watcher.stop()
