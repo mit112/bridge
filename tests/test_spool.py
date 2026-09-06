@@ -204,6 +204,49 @@ def test_a_hostile_prompt_survives_write_and_drain_byte_for_byte(store, spool_di
     assert store.queued_handoff(demo_pid(store))["next_prompt"] == prompt
 
 
+def test_drain_restores_an_archived_project_but_leaves_a_hidden_one_hidden(
+    store, spool_dir
+):
+    """The live POST un-archives; a spooled handoff must do the same.
+
+    `bridge handoff` spools whenever the panel is down, which is the normal
+    path -- so an archived project restored only by the live route would stay
+    invisible for exactly the capture most likely to be offline. `hidden` is
+    the user's own decision and is never undone.
+    """
+    archived = store.upsert_project(DEMO, "demo")
+    store.set_project_status(archived, "archived")
+    hidden = store.upsert_project("/Users/you/dev/other", "other")
+    store.set_project_status(hidden, "hidden")
+
+    spool.write(h("h1"), spool_dir)
+    spool.write(h("h2", project_path="/Users/you/dev/other"), spool_dir)
+    stats = spool.drain(store, spool_dir)
+
+    assert stats.drained == 2
+    assert store.get_project(archived)["status"] == "active"
+    assert store.queued_handoff(archived)["id"] == "h1"
+    assert store.get_project(hidden)["status"] == "hidden"
+    assert store.queued_handoff(hidden)["id"] == "h2"
+
+
+def test_rebuild_restores_an_archived_project_too(tmp_path, spool_dir):
+    """A journal replay is an ingest like any other: the project it queues
+    under must be visible, or the recovered prompt is invisible."""
+    db = tmp_path / "b.db"
+    s = Store(db)
+    spool.write(h("h1"), spool_dir)
+    spool.drain(s, spool_dir)
+    pid = demo_pid(s)
+    s.set_project_status(pid, "archived")
+    s.conn.execute("DELETE FROM handoffs")
+
+    spool.rebuild_if_empty(s, spool_dir)
+
+    assert s.get_project(pid)["status"] == "active"
+    s.close()
+
+
 # --- the journal invariant ---------------------------------------------------
 
 

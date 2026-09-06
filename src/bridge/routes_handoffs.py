@@ -60,14 +60,10 @@ def build_router(
         # Resolve through the alias table, then upsert: a handoff may arrive from
         # a project that was never indexed, or from an old ~/Documents path.
         project_id = resolve_project(store, h.project_path)
-        # A handoff is proof the project is alive again. The indexer archives a
-        # project the first run it sees the directory gone -- after a machine
-        # reset, that is every project -- and deliberately never un-archives it,
-        # so without this the prompt would queue under a card the dashboard does
-        # not show. Only `archived` is undone: `hidden` is the user's own choice.
-        if store.get_project(project_id)["status"] == "archived":
-            store.set_project_status(project_id, "active")
-        store.create_handoff(h, project_id)
+        # `ingest_handoff`, not `create_handoff`: un-archiving the project is
+        # part of accepting a handoff, and the spool's drain and rebuild reach
+        # the same code so an offline capture behaves identically.
+        store.ingest_handoff(h, project_id)
         notify()
         return {"id": h.id, "project_id": project_id, "journaled": journaled}
 

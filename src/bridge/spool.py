@@ -246,7 +246,7 @@ def drain(store, spool_dir: Path, resolve=None) -> DrainStats:
 
     for h, path in parsed:
         try:
-            store.create_handoff(h, resolve(store, h.project_path))
+            store.ingest_handoff(h, resolve(store, h.project_path))
         except Exception:  # noqa: BLE001 - leave it spooled and retry next boot
             stats.failed += 1
             continue
@@ -313,7 +313,7 @@ def rebuild_if_empty(store, spool_dir: Path, resolve=None) -> DrainStats:
     try:
         with store.transaction():
             for h in records:
-                store.create_handoff(h, resolve(store, h.project_path))
+                store.ingest_handoff(h, resolve(store, h.project_path))
                 stats.drained += 1
     except Exception as exc:  # noqa: BLE001 - reported, not raised; see below
         log.exception(
