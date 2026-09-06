@@ -84,6 +84,33 @@ def _read_prompt(prompt_file: str) -> str:
     return Path(prompt_file).read_text(encoding="utf-8")
 
 
+def _reject(h: Handoff, cfg, status: int, body) -> int:
+    """Park a payload the server refused, and say so loudly. Always zero.
+
+    `rejected/` is deliberately not `bad/`: `bad/` holds files Bridge itself
+    could not parse, and this one parsed fine -- it is the *server* that would
+    not have it. Neither directory is ever drained, so the prompt survives for
+    a human without ever being retried into a refusal.
+    """
+    # Rendered here rather than through `_detail`, which quotes only a string
+    # `detail`: a 422 -- the likeliest refusal -- carries pydantic's list of
+    # field errors, and that is exactly the part worth showing.
+    raw = body.get("detail") if isinstance(body, dict) else None
+    if raw is None:
+        detail = f"HTTP {status}"
+    else:
+        detail = raw if isinstance(raw, str) else json.dumps(raw)
+    try:
+        path = spool.write_rejected(h, cfg.spool_dir)
+        where = f"the payload is at {path}"
+    except Exception as exc:  # noqa: BLE001 - nowhere to put it; print it instead
+        where = f"could not save the payload ({exc}); it follows:\n{h.next_prompt}"
+    print(f"bridge handoff: the panel REFUSED this handoff: {detail}\n"
+          f"bridge handoff: nothing was queued and it will not be retried; {where}",
+          file=sys.stderr)
+    return 0
+
+
 def cmd_handoff(args, cfg) -> int:
     try:
         prompt = _read_prompt(args.prompt_file)
@@ -109,7 +136,7 @@ def cmd_handoff(args, cfg) -> int:
 
     reason = None
     try:
-        status, _ = _request(
+        status, body = _request(
             "POST", f"{_base(cfg)}/api/handoff",
             {
                 "id": h.id, "project_path": h.project_path,
@@ -122,8 +149,17 @@ def cmd_handoff(args, cfg) -> int:
             print(f"bridge: handoff {h.id} queued for {h.project_path}",
                   file=sys.stderr)
             return 0
-        # Any non-2xx spools too. A 4xx means this CLI and that server disagree,
-        # which is not the session's problem and must not cost it the prompt.
+        if 400 <= status < 500:
+            # The server understood this request and refused it, so re-sending
+            # the identical bytes at every boot forever is not a recovery, it
+            # is a permanent poison pill at the head of the spool. The payload
+            # is still written down -- under `rejected/`, where nothing drains
+            # it -- and the server's own words go to stderr, which lands in the
+            # transcript so the session can see why. Still exit zero: a session
+            # must never fail because of Bridge.
+            return _reject(h, cfg, status, body)
+        # A 5xx is the server failing, not refusing, so it spools and retries
+        # exactly as an unreachable panel does.
         reason = f"server returned {status}"
     except Exception as exc:  # noqa: BLE001 - refused, timed out, DNS, anything
         reason = f"{type(exc).__name__}: {exc}"

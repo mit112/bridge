@@ -68,6 +68,19 @@ def write(h: Handoff, spool_dir: Path) -> Path:
     return _atomic_write(dataclasses.asdict(h), h.id, live)
 
 
+def write_rejected(h: Handoff, spool_dir: Path) -> Path:
+    """Keep a handoff the *server* refused, out of the drain's reach.
+
+    A 4xx is a disagreement about the payload itself, so the outbox is the
+    wrong place for it: re-POSTing identical bytes at every boot only earns the
+    same refusal forever, with the rejected file at the head of the queue. It
+    is written down all the same -- a prompt is authored once and cannot be
+    regenerated -- but under `rejected/`, which nothing globs and nothing
+    replays, so recovering it is a deliberate human act.
+    """
+    return _atomic_write(dataclasses.asdict(h), h.id, Path(spool_dir) / "rejected")
+
+
 def journal(h: Handoff, spool_dir: Path) -> Path:
     """Record a handoff the server accepted directly, without it ever spooling.
 
@@ -190,13 +203,35 @@ def _load(path: Path) -> Handoff:
     Unknown keys are ignored so a file written by a newer Bridge still drains;
     a missing `id`, `project_path` or `next_prompt` is unrecoverable and the
     file belongs in `bad/`.
+
+    The result is then run through `HandoffIn`, the very model
+    `POST /api/handoff` validates against, so the drain and the API agree on
+    what a handoff is. Without it the two disagreed in the direction that
+    matters: a payload the API would 422 -- a `next_prompt` that is a number,
+    an `id` carrying a path separator -- reached `create_handoff` unexamined
+    simply because it arrived while the panel was down. A rejection here is an
+    ordinary parse failure and the file is quarantined like any other.
     """
+    # Imported inside the function: `schemas` imports this module at module
+    # level (for `check_record_id`), so a top-level import here is a cycle.
+    from bridge.schemas import HandoffIn
+
     data = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
         raise ValueError(f"{path.name}: top level is {type(data).__name__}, not object")
     h = Handoff(**{k: v for k, v in data.items() if k in _FIELDS})
     if not h.id or not h.project_path or not h.next_prompt:
         raise ValueError(f"{path.name}: missing id, project_path or next_prompt")
+    HandoffIn(
+        id=h.id,
+        project_path=h.project_path,
+        next_prompt=h.next_prompt,
+        session_id=h.source_session_id,
+        summary=h.summary,
+        suggested_model=h.suggested_model,
+        suggested_effort=h.suggested_effort,
+        created_at=h.created_at,
+    )
     return h
 
 

@@ -9,13 +9,21 @@
     ]
   },
   {
-    "name": "return success on a non-2xx instead of spooling",
+    "name": "return success on a 5xx instead of spooling",
     "file": "src/bridge/cli.py",
-    "old": "        # Any non-2xx spools too. A 4xx means this CLI and that server disagree,\n        # which is not the session's problem and must not cost it the prompt.\n        reason = f\"server returned {status}\"",
+    "old": "        # A 5xx is the server failing, not refusing, so it spools and retries\n        # exactly as an unreachable panel does.\n        reason = f\"server returned {status}\"",
     "new": "        return 0",
     "tests": [
-      "tests/test_cli.py::test_a_500_from_the_server_also_spools_and_exits_zero",
-      "tests/test_cli.py::test_a_4xx_from_the_server_also_spools_and_exits_zero"
+      "tests/test_cli.py::test_a_500_from_the_server_also_spools_and_exits_zero"
+    ]
+  },
+  {
+    "name": "spool a 4xx instead of rejecting it, so a refused payload is retried forever",
+    "file": "src/bridge/cli.py",
+    "old": "        if 400 <= status < 500:",
+    "new": "        if False:",
+    "tests": [
+      "tests/test_cli.py::test_a_4xx_is_rejected_not_spooled_and_still_exits_zero"
     ]
   },
   {

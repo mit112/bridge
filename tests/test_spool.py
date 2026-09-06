@@ -204,6 +204,48 @@ def test_a_hostile_prompt_survives_write_and_drain_byte_for_byte(store, spool_di
     assert store.queued_handoff(demo_pid(store))["next_prompt"] == prompt
 
 
+def test_a_spool_file_the_api_would_refuse_is_quarantined_not_inserted(
+    store, spool_dir
+):
+    """The drain and `POST /api/handoff` must agree on what a handoff is.
+
+    A spooled payload skips every validator the live route runs, so without
+    re-checking it here a `next_prompt` that is a number, or an `id` carrying a
+    path separator, reached `create_handoff` unexamined purely because it was
+    captured while the panel was down.
+    """
+    spool_dir.mkdir(parents=True, exist_ok=True)
+    (spool_dir / "wrong-type.json").write_text(json.dumps({
+        "id": "wrong-type", "project_path": DEMO, "next_prompt": 42,
+        "created_at": 1000,
+    }))
+    (spool_dir / "escaping-id.json").write_text(json.dumps({
+        "id": "../../escaped", "project_path": DEMO,
+        "next_prompt": "fine", "created_at": 1000,
+    }))
+    spool.write(h("good"), spool_dir)
+
+    stats = spool.drain(store, spool_dir)
+
+    assert (stats.drained, stats.bad) == (1, 2)
+    assert store.get_handoff("wrong-type") is None
+    assert store.get_handoff("../../escaped") is None
+    assert store.get_handoff("good")["status"] == "queued"
+    assert {p.name for p in (spool_dir / "bad").iterdir()} == {
+        "wrong-type.json", "escaping-id.json"
+    }
+
+
+def test_write_rejected_lands_outside_every_drained_directory(spool_dir):
+    """A payload the server refused must never be retried. `pending()` is what
+    the drain globs, and `rejected/` is deliberately not in it."""
+    p = spool.write_rejected(h("nope"), spool_dir)
+
+    assert p == spool_dir / "rejected" / "nope.json"
+    assert spool.pending(spool_dir) == []
+    assert json.loads(p.read_text())["next_prompt"] == "continue the work"
+
+
 def test_drain_restores_an_archived_project_but_leaves_a_hidden_one_hidden(
     store, spool_dir
 ):
