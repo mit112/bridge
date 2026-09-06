@@ -151,13 +151,43 @@ def test_a_500_from_the_server_also_spools_and_exits_zero(monkeypatch, tmp_path,
     assert spool.pending_count(cfg.spool_dir) == 1
 
 
-def test_a_4xx_from_the_server_also_spools_and_exits_zero(monkeypatch, tmp_path,
-                                                          fake_server):
-    """A CLI/server disagreement is not the session's problem to absorb."""
+def test_a_4xx_is_rejected_not_spooled_and_still_exits_zero(
+    monkeypatch, tmp_path, fake_server, capsys
+):
+    """A refusal is not a retry.
+
+    Spooling a payload the server understood and rejected only re-POSTs the
+    same bytes at every boot, forever, with the poison pill at the head of the
+    queue. The prompt is still written down -- under `rejected/`, which nothing
+    drains -- and the server's own words reach stderr, which the session's
+    transcript keeps. Exit stays zero: a session must never fail over Bridge.
+    """
     fake_server["code"] = 422
+    fake_server["post_body"] = {"detail": "next_prompt: field required"}
+
     code, cfg = run_handoff(monkeypatch, tmp_path, fake_server["port"])
+
     assert code == 0
-    assert spool.pending_count(cfg.spool_dir) == 1
+    assert spool.pending_count(cfg.spool_dir) == 0
+    rejected = list((cfg.spool_dir / "rejected").glob("*.json"))
+    assert len(rejected) == 1
+    assert json.loads(rejected[0].read_text())["next_prompt"] == HOSTILE
+    err = capsys.readouterr().err
+    assert "REFUSED" in err
+    assert "next_prompt: field required" in err
+
+
+def test_a_4xx_with_a_list_detail_still_reaches_stderr(
+    monkeypatch, tmp_path, fake_server, capsys
+):
+    """422 is the likeliest refusal and pydantic's `detail` is a LIST, so the
+    string-only rendering `bridge launch` uses would have printed nothing."""
+    fake_server["code"] = 422
+    fake_server["post_body"] = {"detail": [{"loc": ["body", "id"], "msg": "bad id"}]}
+
+    run_handoff(monkeypatch, tmp_path, fake_server["port"])
+
+    assert "bad id" in capsys.readouterr().err
 
 
 def test_a_2xx_does_not_spool(monkeypatch, tmp_path, fake_server):
