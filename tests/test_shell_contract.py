@@ -302,3 +302,24 @@ def test_the_narrow_nav_is_collapsed_by_default_and_only_when_js_can_reopen_it()
     assert 'aria-expanded="false"' in button, (
         "the Menu button ships expanded over a nav CSS has collapsed"
     )
+
+
+def test_no_template_comment_still_claims_navigation_is_a_full_page_load():
+    """Both claims predate the persistent shell and are now wrong.
+
+    `swappable()` keys on `url.pathname` alone, so `/schedule?view=history`
+    is intercepted and fragment-swapped exactly like a sidebar destination --
+    schedule.html's tabs are not "full page loads, not client routing", and
+    base.html's head comment cannot justify persisting `bridge.nav` on the
+    grounds that "every nav click is a full page load". A comment that
+    contradicts the router is how the next reader reasons their way into a
+    real bug, so the stale wording is asserted gone.
+    """
+    stale = {
+        "schedule.html": "Full page loads, not client routing",
+        "base.html": "every nav click is a full page load",
+    }
+    for name, phrase in stale.items():
+        assert phrase not in (TEMPLATES / name).read_text(), (
+            f"{name} still says {phrase!r}, but router.js swaps that navigation"
+        )
