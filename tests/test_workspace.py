@@ -584,26 +584,14 @@ def test_current_tab_headings_are_sequential_with_no_skipped_level(tmp_path):
     store.close()
 
 
-def test_span_line_renders_only_when_session_and_handoff_both_exist(tmp_path):
-    c, store, pid = _client_with_handoff(tmp_path / "with-session", with_session=True)
-    assert "workspace-span" in c.get(f"/project/{pid}?tab=current").text
-    store.close()
-
-    c2, store2, pid2 = _client_with_handoff(
-        tmp_path / "no-session", with_session=False
-    )
-    assert "workspace-span" not in c2.get(f"/project/{pid2}?tab=current").text
-    store2.close()
-
-    c3, store3, pid3 = _client(tmp_path / "no-handoff")
-    assert "workspace-span" not in c3.get(f"/project/{pid3}?tab=current").text
-    store3.close()
-
-
-def test_current_tab_leads_with_the_real_continuation_span_and_primary_action(tmp_path):
+def test_current_tab_leads_with_the_continuation_panel_and_primary_action(tmp_path):
     """A prose `title -> next: full summary` line or telemetry-first layout
-    loses the approved Bridge signature and makes the next action secondary."""
-    c, store, pid = _client_with_handoff(tmp_path)
+    makes the next action secondary. The three-node "Session ended -> Handoff
+    ready -> Next session" strip that used to sit under every handoff is gone:
+    it restated the badge, the age and the button, and cost ~44px on every row
+    of a stack. Its absence is asserted, not merely un-asserted -- reinstating
+    the markup has to break a test."""
+    c, store, pid = _client_with_handoff(tmp_path, with_session=True)
     html = c.get(f"/project/{pid}?tab=current").text
 
     continuation = html.index('class="continuation-panel"')
@@ -611,11 +599,9 @@ def test_current_tab_leads_with_the_real_continuation_span_and_primary_action(tm
     state = html.index('class="workspace-side-card workspace-side-card--state"')
 
     assert continuation < primary < state
-    for label in ("Session ended", "Handoff ready", "Next session"):
-        assert label in html
-    span = html[html.index('class="workspace-span"'):]
-    span = span[:span.index("</div>")]
-    assert "finish the thing" not in span, "the span labels states, not a duplicated summary"
+    panel = html[continuation:html.index("</section>", continuation)]
+    assert "workspace-span" not in panel
+    assert "Handoff ready" not in panel
     store.close()
 
 
@@ -642,8 +628,6 @@ def test_current_tab_matches_the_approved_continuation_and_right_rail_structure(
     assert html.index("btn--primary") < html.index(
         'class="workspace-side-card workspace-side-card--state"'
     )
-    for label in ("Session ended", "Handoff ready", "Next session"):
-        assert label in html
     store.close()
 
 

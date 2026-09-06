@@ -206,20 +206,6 @@ def test_a_demoted_handoff_hides_its_prompt_behind_one_disclosure():
     assert "Summary h2" in body
 
 
-def test_a_demoted_handoff_drops_the_handoff_ready_progress_strip():
-    """The strip's middle node reads "Handoff ready", which is exactly the
-    claim the badge beside it has withdrawn."""
-    card = _card(session=SessionRecord(
-        session_id="s", transcript_path="/t/s", title="work",
-    ))
-    mod = _module()
-
-    assert "workspace-span" in mod.handoff_block(
-        card, _handoff("h1", session_since=False), None, show_span_line=True)
-    assert "workspace-span" not in mod.handoff_block(
-        card, _handoff("h2", session_since=True), None, show_span_line=True)
-
-
 def test_the_title_prefers_the_summarys_first_line_to_the_boilerplate():
     """With no session title the card used to read "Demo is ready to continue",
     which names the project and says nothing about the work. The summary's

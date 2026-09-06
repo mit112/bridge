@@ -34,7 +34,7 @@
       {% endif %}
 
       {% for h in card.handoffs %}
-      {{ handoff_block(card, h, totals, collapse_prompt=True, show_span_line=(loop.first)) }}
+      {{ handoff_block(card, h, totals, collapse_prompt=True) }}
 
       <div class="continuation-actions">
         {{ launch_band(card, h, primary=(loop.first), collapse_options=True) }}

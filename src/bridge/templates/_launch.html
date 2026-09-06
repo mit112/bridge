@@ -92,13 +92,10 @@
    `collapse_prompt` (the workspace's "Edit prompt" toggle) wraps the SAME
    `<textarea>` -- same id, same `data-prompt-handoff` hook, same escaped
    text -- in a `<details>` behind a short preview, rather than duplicating
-   it: callers that do not request `show_span_line` keep the compact card.
-   `show_span_line` renders the session -> handoff -> next line ONLY when
-   `card.session` is truthy (an ended session on record) -- never decorative,
-   guarded the same way every other real-state line on this card already is.
+   it.
    Actions remain separate so the Current workspace can merge launch and
    handoff controls into one deliberate row. #}
-{% macro handoff_block(card, handoff, totals, collapse_prompt=False, show_span_line=False) %}
+{% macro handoff_block(card, handoff, totals, collapse_prompt=False) %}
   {% if handoff %}
     {% set hid = "handoff-" ~ handoff.id %}
     {# `session_since` (store.queued_handoffs) says a session in this project
@@ -143,14 +140,6 @@
         <span class="pill {{ "pill--idle" if demoted else "pill--work" }} continuation-status"
               id="{{ hid }}-state">{{ "A session has run since" if demoted else "Ready" }}</span>
       </div>
-      {# Never on a demoted row: the strip's middle node reads "Handoff ready",
-         which is the exact claim the badge beside it has just withdrawn. #}
-      {% if show_span_line and card.session and not demoted %}
-      <div class="workspace-span" aria-label="Continuation path">
-        <div class="workspace-span__line" aria-hidden="true"><span class="workspace-span__node workspace-span__node--done">✓</span><span class="workspace-span__connector"></span><span class="workspace-span__node workspace-span__node--ready">•</span><span class="workspace-span__connector"></span><span class="workspace-span__node">›</span></div>
-        <div class="workspace-span__labels"><span>Session ended</span><span>Handoff ready</span><span>Next session</span></div>
-      </div>
-      {% endif %}
       {% if demoted %}
       {# One disclosure, not two: a demoted handoff skips the `handoff-prompt`
          preview box entirely (below) and puts the summary plus the full prompt
