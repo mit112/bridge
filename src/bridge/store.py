@@ -622,17 +622,34 @@ class Store:
             return self.create_handoff(h, project_id)
 
     def queued_handoffs(self, project_id: int) -> list[sqlite3.Row]:
-        """Each queued handoff plus its OWN source session's title.
+        """Each queued handoff plus its OWN source session's title, and whether
+        a session in the project has started since it was written.
 
         The join is here rather than a `session_row` call per handoff in
         `cards._handoffs`: that ran on every card build, SSE ticks included, so
         a project with handoffs queued paid a query per handoff several times a
         second. `LEFT` because a source session may be unknown or not yet
         indexed -- that handoff is still queued and still has to render.
+
+        `session_since` rides along as a correlated subquery for the same
+        reason: it is read on every card build, and supersession is scoped to
+        the source session (see `create_handoff`), so a session started outside
+        Bridge leaves its predecessor's handoff queued forever with nothing on
+        the row to say work moved on. A session that STARTED after this handoff
+        was created is direct evidence it did. This is a presentation signal
+        only -- no status is written, and Dismiss remains the only thing that
+        retires a handoff.
+
+        `sessions.started_at` is an ISO string, so it is compared through
+        `strftime('%s', ...)`; an unparseable or NULL timestamp yields NULL,
+        which fails the `>` and therefore never marks a handoff stale.
         """
         with self._lock:
             return list(self.conn.execute(
-                "SELECT h.*, s.title AS session_title FROM handoffs h "
+                "SELECT h.*, s.title AS session_title, EXISTS("
+                "  SELECT 1 FROM sessions later WHERE later.project_id = h.project_id"
+                "    AND CAST(strftime('%s', later.started_at) AS INTEGER) > h.created_at"
+                ") AS session_since FROM handoffs h "
                 "LEFT JOIN sessions s ON s.id = h.source_session_id "
                 "WHERE h.project_id=? AND h.status='queued' "
                 "ORDER BY h.created_at DESC",
