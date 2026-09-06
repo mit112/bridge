@@ -223,33 +223,65 @@ C8 deferred refresh (0 fetches while focused, retried on blur); §3.4 transition
 scroll inside the transition wrapper; the narrow-width nav collapsed on first paint; zero console
 errors.
 
+### Round 3 — the remainder, plus Mit's three taste calls
+`main` a6c6dfb → merged. **Gate 1629 passed, 2 skipped**, and green under
+`TMPDIR=/private/tmp` too. Round 2 was merged to `origin/main` via PR #15 (rebase, CI green).
+
+- **Reindex is 2.3× faster.** One bulk `scan_state` read replaces 9,202 single-row queries and
+  the sort no longer compares `Path` objects: a steady-state run went 90 ms → 43 ms, a
+  one-file-changed run 157 ms → 47 ms.
+- **The liveness probe no longer spawns `ps` per rebuild.** A 1.0 s TTL caps it at one read per
+  second machine-wide regardless of tab count, against a 0.2 s rebuild floor and a 3 s cadence.
+  The hook path is unaffected: `/api/hooks` feeds an in-memory overlay reapplied every rebuild.
+- **The 15 s periodic reindex was NOT collapsed into the watcher**, deliberately, and
+  `refresh.py` now says why: repo discovery, vanished-project archiving, the `generation` bump
+  that is the only thing pushing external git changes to a connected tab, and the
+  watcher-failed fallback all need a run when nothing under the transcripts root moved.
+- **All five mutation survivors closed — 421/422**, the one remaining being the harness's own
+  deliberate self-check. Two findings fell out: nothing in the suite reached
+  `diagnostics.needs_attention` at all, and `tmp_path` under an unset `$TMPDIR` landed in
+  `/private/tmp`, which the sandbox-noise rule auto-hid — five indexer tests failed under
+  `TMPDIR=/private/tmp` and now do not.
+- **The diagnostics rule had two implementations.** The live envelope re-derived it inline, so
+  the predicate was reached only by the /diagnostics page and a fourth condition would have
+  silently never reached the Overview header. Now one call. (My own first attempt at this
+  passed only the three condition keys and broke the liveness branch, which reads a fourth to
+  name the sensor; both branches are covered now.)
+- **Orphans removed:** `ChangeNotifier.wait()`, `data-live-path`, and `_unattributed`'s
+  exact-path test, which disagreed with the count it sits beside.
+- **Mit's three taste calls, from rendered variants:** the continuation strip is gone; a
+  demoted handoff's action row is quieter and restores on hover and focus; and staleness is
+  now Rule C — a later session overtakes a handoff only if it wrote a handoff of its own or
+  spent ≥10,000 non-cache tokens. That threshold sits in an empty valley in the real
+  distribution: 94% of 9,258 sessions are one-message glances topping out at 11,336 tokens,
+  and 469/454/443 sessions clear 10k/15k/20k, so the exact figure is not load-bearing.
+
 ### Still open
-- **C10** was never browser-verified: rendering a Retry button needs a FAILED scheduled run, and
-  manufacturing one risks a real launch on Mit's machine. Guarded by tests and by reuse of the
-  same focus helper the cancel path already uses.
-- **Reindex is still O(corpus) per change (~106 ms)**, which is most of the remaining 2.2%. The
-  watcher knows which files changed and discards that. Two cheap wins inside it: one bulk
-  `SELECT * FROM scan_state` instead of 9,202 single-row reads (~29 ms), and sorting
-  `transcript_files` by name rather than by `Path` (~8 ms).
-- **`agents.probe()` spawns `/bin/ps` on every SSE rebuild** (~10.9 ms, up to 5/sec/tab under a
-  bump storm). A TTL cache trades against liveness accuracy — a judgement call, not a bug.
-- **The 15s periodic reindex duplicates the watcher's 15s reconcile.** Collapsing them changes
-  `generation`/freshness semantics the SSE full-update depends on.
-- **`ChangeNotifier.wait()` now has no callers in `src/`** — deletion candidate.
-- **`data-live-path`** is rendered by two templates and read by nothing since the F7 deletion.
-- **`dashboard._unattributed`** still uses an exact-path test, so it can list a subdirectory
-  session the cards already attribute.
-- **A pinned project holding a queued handoff** sits in the Pinned group, so the Queued group
-  header can read lower than the chip while the chip's filter still shows the row.
-- **§3.3** (the decorative Session-ended → Handoff-ready strip) and the weight of a demoted
-  handoff's action row are taste forks left for Mit to see rendered.
-- Mit's live database had three noise rows the new rule could not touch (it only judges rows a
-  run creates). `/Users/mit` and the nested `.agent/2026-09-08-session` were hidden through the
-  API, reversible from the Hidden drawer; the agent worktree rows auto-archive.
-- **Four mutation specs have a real survivor** (5 mutations, 415/422 caught). They were
-  invisible until `make mutate` was fixed to run past its self-check: an unknown launch mode
-  reaching the launcher instead of being refused at the API edge (`task2-api`), and three
-  diagnostics-affordance behaviours (`phase4-task2`, `phase4-task7`, `project-lifecycle`) —
-  always-shown, never-shown, and an index that survives a diagnostics write failure. Each is an
-  untested behaviour, not a broken one.
-- **Not pushed.** `main` is 50+ commits ahead of `origin/main`.
+
+Everything from the first two rounds' open list is closed except the items below, which are
+either genuinely someone's judgement or genuinely not worth doing yet.
+
+- **The remaining ~1.8s of a COLD full reindex is transcript parsing.** Untouched. The warm
+  path is what runs on every change and that is now 43 ms; the cold path runs at boot.
+- **`_index_one` still stats every file** (~19 ms of a run). Handing the `stat` down from a
+  `scandir`-based glob would remove it, but it changes the registry/indexer interface.
+- **The SSE payload's `unattributed` list is correct and read by nothing.** The Overview's
+  unregistered-sessions line renders from `topbar.captions`, not from this. Deleting it is an
+  `api.py` change.
+- **`agents.py`'s docstring says background records carry no pid**, and `DAEMON_ROSTER` is
+  unused. The real registry writes `kind: "bg"` WITH a pid, so the docstring is stale rather
+  than the code being wrong. Cosmetic, but it misleads.
+- **`store.queued_handoff_count()` has one caller left** (`diagnostics.py`) now that the tiles
+  count projects.
+- **No `force=True` caller for the probe cache.** None is needed at a 1.0s TTL; the escape
+  hatch exists if a future caller wants a guaranteed-fresh read.
+- **Rule C is invisible on today's data.** It marks the same handoffs Rule A did, because every
+  later session on boardwatch was genuinely substantive. What it buys is that the 94%
+  glance population can no longer demote anything — the change shows up the first time an
+  abandoned session would have wrongly demoted a live prompt.
+- **Two renders for Mit's eye:** whether the primary button staying loud on row 1 of a demoted
+  stack reads right, and whether `overview.html`'s own `attention-span` strip (a different
+  class, still rendered) should go the way the handoff one did.
+- **`tools/falsify.py` drops `$TMPDIR`** while preserving `$HOME`, so the harness does not
+  reproduce the gate's environment faithfully. The fragile tests were fixed instead; passing
+  `TMPDIR` through would be the more honest fix.
