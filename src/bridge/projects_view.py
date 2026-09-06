@@ -42,6 +42,10 @@ class ProjectGroup:
 # flagged as opaque: it means uncommitted work sitting past `stale_hours`, so it
 # reads "Uncommitted", which says what is actually true.
 _STATUS_LABELS = {
+    # The live sensor's statuses share this map: every other one it reports
+    # (busy, working, idle, waiting, blocked, failed, ended, unknown) is a
+    # single word the `.title()` default already renders correctly.
+    "needs_input": "Needs input",
     "queued": "Queued",
     "running": "Running",
     "stale": "Uncommitted",
