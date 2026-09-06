@@ -1152,28 +1152,6 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
 .workspace-activity p { margin: 0; font-size: var(--text-sm); }
 .workspace-activity time { display: block; margin-top: 1px; color: var(--text-secondary); font-size: var(--text-xs); }
 
-/* The session -> handoff -> next line is Bridge's signature structural fact,
-   rendered only inside the real-state guard in `_launch.html`. */
-.workspace-span {
-  margin: var(--space-4) 0 var(--space-3);
-}
-.workspace-span__line {
-  display: grid;
-  grid-template-columns: auto 1fr auto 1fr auto;
-  align-items: center;
-  gap: var(--space-2);
-}
-.workspace-span__node { display: grid; place-items: center; width: 19px; height: 19px; border: 1px solid var(--text-secondary); border-radius: 50%; color: var(--text-secondary); background: var(--surface); font-size: var(--text-xs); }
-.workspace-span__node--done { border-color: var(--work); color: var(--work); }
-.workspace-span__node--ready { border-color: var(--work); color: var(--work); box-shadow: 0 0 0 4px var(--work-soft); }
-.workspace-span__connector {
-  height: 1px;
-  background: var(--rule);
-}
-.workspace-span__labels { display: grid; grid-template-columns: 1fr 1fr 1fr; margin-top: var(--space-1); color: var(--text-secondary); font-size: var(--text-xs); }
-.workspace-span__labels span:nth-child(2) { text-align: center; color: var(--work); font-weight: 700; }
-.workspace-span__labels span:last-child { text-align: right; }
-
 /* The saved-prompt preview shown before "Edit prompt" is opened. */
 .handoff__preview {
   margin: var(--space-2) 0 0;
