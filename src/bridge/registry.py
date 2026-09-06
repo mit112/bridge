@@ -52,6 +52,20 @@ def is_noise(dir_name: str, home: Path | None = None) -> bool:
     return dir_name in containers or dir_name.startswith(prefixes)
 
 
+def is_noise_path(path: Path | str, home: Path | None = None) -> bool:
+    """`is_noise`, asked about a real directory instead of a transcript dir name.
+
+    Skipping the `-Users-you` transcript directory is not enough to keep the
+    home directory out of the project list, because a project row is created
+    from the `cwd` recorded INSIDE a transcript, not from the directory the
+    transcript sits in: a session that starts in a project and then `cd`s home
+    records home as its cwd, and lands in a directory `is_noise` never sees.
+    Encoding the path back into the same namespace answers the question with
+    the one existing rule set rather than a second one that can drift from it.
+    """
+    return is_noise(encode_path(path), home)
+
+
 def display_name(project_path: str) -> str:
     return Path(project_path.rstrip("/")).name
 

@@ -1,6 +1,12 @@
 from pathlib import Path
 
-from bridge.registry import display_name, encode_path, is_noise, transcript_files
+from bridge.registry import (
+    display_name,
+    encode_path,
+    is_noise,
+    is_noise_path,
+    transcript_files,
+)
 
 HOME = Path("/Users/dev")
 OTHER_HOME = Path("/Users/someone-else")
@@ -111,3 +117,27 @@ def test_home_with_a_space_still_encodes_to_one_container():
     assert is_noise("-Users-Ada-Lovelace", home=home) is True
     assert is_noise("-Users-Ada-Lovelace--claude", home=home) is True
     assert is_noise("-Users-Ada-Lovelace-dev-widget", home=home) is False
+
+
+def test_home_itself_is_never_a_project():
+    """Anyone who has ever run `claude` from `~` would otherwise get a project
+    card named after their login. Exactly home -- not "looks like a home"."""
+    assert is_noise_path(HOME, home=HOME) is True
+    assert is_noise_path(OTHER_HOME, home=HOME) is False
+
+
+def test_is_noise_path_answers_for_the_containers_is_noise_already_knows():
+    for path in [
+        "/Users/dev/dev",
+        "/Users/dev/Documents",
+        "/Users/dev/.claude",
+        "/Users/dev/.local/share/some-tool",
+        "/private/tmp/some-sandbox",
+        "/Volumes/external-drive",
+    ]:
+        assert is_noise_path(path, home=HOME) is True, path
+
+
+def test_is_noise_path_keeps_real_projects():
+    for path in ["/Users/dev/dev/projectY", "/Users/dev/dev/Job apps"]:
+        assert is_noise_path(path, home=HOME) is False, path

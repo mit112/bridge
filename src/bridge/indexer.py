@@ -15,7 +15,7 @@ from typing import Callable
 from bridge import backfill
 from bridge.config import Config
 from bridge.models import SessionRecord
-from bridge.registry import display_name, transcript_files
+from bridge.registry import display_name, is_noise_path, transcript_files
 from bridge.store import Store, now_epoch
 from bridge.transcripts import scan
 
@@ -39,6 +39,11 @@ def reindex(
     stats = IndexStats()
     files = transcript_files(cfg.claude_projects_dir)
     total = len(files)
+
+    # Which project rows this run creates, read as a difference at the end
+    # rather than threaded through the scan loop. `_hide_new_non_projects`
+    # needs it; see there for why only new rows may be judged.
+    known_before = {row["path"] for row in store.projects(include_hidden=True)}
 
     # Seed before indexing so this run's sessions attribute to canonical paths,
     # and read back the union of config-declared and already-stored aliases.
@@ -102,6 +107,10 @@ def reindex(
         if not Path(project["path"]).exists():
             store.archive_missing(project["id"], now_epoch())
 
+    # After the archive passes so a row this run both created and archived is
+    # left as archived rather than downgraded to hidden.
+    _hide_new_non_projects(store, known_before)
+
     # Last, because it can only match sessions this run has already written.
     stats.launches_linked = _link_background_launches(store)
 
@@ -119,6 +128,32 @@ def reindex(
         pass
 
     return stats
+
+
+def _hide_new_non_projects(store: Store, known_before: set[str]) -> None:
+    """Start a newly discovered non-project hidden instead of active.
+
+    The home directory and the other container and dotfile paths `registry`
+    already classifies as noise are not projects -- every user who has ever
+    run `claude` from `~` gets a project card called after their login name
+    otherwise.
+
+    Only rows this run CREATED are judged, and that is what makes the decision
+    reversible: Restore in the Projects page's Hidden drawer sets the row
+    active, the row already exists by the next index, and nothing here looks at
+    it again. Re-deciding every run would silently undo the user's choice --
+    the trap `missing_archived_at` exists to close one pass further up. Hidden,
+    not skipped, because a project row still owns its sessions: refusing to
+    create it would drop the history instead of tidying the list.
+    """
+    rows = {row["path"]: row for row in store.projects(include_hidden=True)}
+    for path, row in rows.items():
+        if path in known_before or row["status"] != "active":
+            continue
+        if not is_noise_path(path):
+            continue
+        log.info("auto-hiding %s: not a project directory", path)
+        store.set_project_status(row["id"], "hidden")
 
 
 # How long a background launch is worth retrying. A launch whose session never
