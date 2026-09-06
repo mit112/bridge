@@ -937,3 +937,58 @@ def test_the_recent_projects_rows_carry_no_status_pill(tmp_path):
     recent = html[html.index('class="projects-list"'):]
     assert "/p/quiet" in recent, "the row under test did not render"
     assert 'class="pill' not in recent, "the rows still carry a status pill"
+
+
+# --- the freshness strip reads the app's real coordinator -------------------
+
+
+def _failing_coordinator(store, cfg):
+    """A coordinator that has actually run, and failed, so its status says so."""
+    from bridge.refresh import RefreshCoordinator
+
+    def boom(_store, _cfg):
+        raise RuntimeError("index is on fire")
+
+    coordinator = RefreshCoordinator(store, cfg, reindex_fn=boom)
+    coordinator.run_once()
+    assert coordinator.status_snapshot().server == "unavailable"
+    return coordinator
+
+
+def test_the_overview_freshness_reports_a_coordinator_that_has_failed(tmp_path):
+    cfg = _cfg(tmp_path)
+    store = Store(cfg.db_path)
+
+    model = build_overview(
+        store, cfg, live_state=AgentsState(status="ok", sessions=[]), cards=[],
+        now=10_000, coordinator=_failing_coordinator(store, cfg),
+    )
+
+    assert model.freshness["server"] == "unavailable"
+    store.close()
+
+
+def test_the_dashboard_route_hands_the_overview_its_own_coordinator(tmp_path):
+    """A throwaway coordinator has never run, so it can only ever say
+    "available" -- the Overview strip would read "connected" on exactly the
+    page where the sidebar, which reads `app.state.refresh_coordinator`, says
+    the server is unavailable.
+
+    An index run is recorded first so a throwaway coordinator would have an
+    `index_at` and render "connected": without it "unavailable" is what a
+    never-indexed store yields anyway, and the assertion would hold against
+    the bug.
+    """
+    cfg = _cfg(tmp_path)
+    store = Store(cfg.db_path)
+    store.record_index_run({}, ran_at=int(datetime.now(timezone.utc).timestamp()),
+                           duration_ms=1)
+    coordinator = _failing_coordinator(store, cfg)
+
+    app = create_app(store, cfg, refresh_coordinator=coordinator)
+    with TestClient(app) as client:
+        body = client.get("/").text
+
+    strip = body.split('data-freshness-strip', 1)[1][:400]
+    assert 'data-freshness-state="unavailable"' in strip, strip
+    store.close()
