@@ -558,7 +558,8 @@ def test_concurrent_writers_do_not_error_or_lose_rows(tmp_path):
     for t in threads:
         t.start()
     for t in threads:
-        t.join()
+        t.join(timeout=10)
+        assert not t.is_alive(), "a writer thread never finished"
     assert errors == []
     assert len(main.sessions(pid, limit=1000)) == 80
     main.close()
