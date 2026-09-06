@@ -95,6 +95,11 @@ class ProjectSummary:
     # workspace fact; behind takes precedence over ahead, else "Synced".
     ahead: int | None = None
     behind: int | None = None
+    # `needs_attention(card)` for this row, rendered as `data-project-attention`
+    # so the Projects "Needs attention" chip filters on the same predicate it
+    # counts with. A row state alone cannot answer it: `running` covers both a
+    # session mid-turn and one sitting idle, and only the first needs a human.
+    needs_attention: bool = False
 
 
 @dataclass(frozen=True)
@@ -145,7 +150,13 @@ class AttentionItem:
 @dataclass(frozen=True)
 class OverviewModel:
     attention: list[AttentionItem]
+    # PROJECTS needing a human -- the same number the "Needs attention" tile
+    # and the Projects chip show, and the number of project entries in
+    # `attention` before it is sliced. Schedule failures are runs, not
+    # projects, so they are counted separately rather than folded in: the page
+    # headline names both units instead of adding them together.
     attention_total: int
+    schedule_failures: int
     recent: list[ProjectSummary]
     up_next: list[ScheduleRow]
     totals: dict
@@ -210,7 +221,9 @@ def build_overview(
     # trip per scheduled-run row.
     by_path = {card.path: card for card in cards}
 
-    all_attention = _attention_from_cards(cards) + _schedule_failures(store, by_path)
+    project_items = _attention_from_cards(cards)
+    failures = _schedule_failures(store, by_path)
+    all_attention = project_items + failures
     attention = all_attention[:ATTENTION_LIMIT]
     # "Needs attention" and "Recent projects" are distinct sections; a project
     # already surfaced above (as a queued handoff, a running session, stale, or
@@ -229,7 +242,8 @@ def build_overview(
 
     return OverviewModel(
         attention=attention,
-        attention_total=len(all_attention),
+        attention_total=len(project_items),
+        schedule_failures=len(failures),
         recent=recent,
         up_next=up_next,
         totals=envelope["topbar"],
@@ -251,26 +265,32 @@ def _attention_from_cards(cards: list[Card]) -> list[AttentionItem]:
     items: list[AttentionItem] = []
     for card in cards:
         if card.handoffs:
-            for h in card.handoffs:
-                items.append(AttentionItem(
-                    kind="handoff",
-                    project_id=card.project_id,
-                    title=(h.get("session_title") or card.name),
-                    summary=(h.get("summary") or h.get("next_prompt", "")),
-                    primary_action=Action(
-                        "Continue in Terminal",
-                        f"/project/{card.project_id}?tab=current",
-                    ),
-                    meta={
-                        "handoff_id": h.get("id"),
-                        "project_name": card.name,
-                        "created_at": h.get("created_at"),
-                        "has_span": bool(card.session),
-                        "branch": card.git.branch,
-                        "dirty_count": card.git.dirty_count,
-                        "path": card.path,
-                    },
-                ))
+            # ONE entry per project, not one per handoff. Six queued handoffs
+            # on one project used to contribute six items, so the page
+            # headlined 17 "items" against the Projects page's 9 projects for
+            # the same state. The remaining handoffs are a magnitude on this
+            # one entry (`handoff_count`), and the project page lists them.
+            h = card.handoffs[0]
+            items.append(AttentionItem(
+                kind="handoff",
+                project_id=card.project_id,
+                title=(h.get("session_title") or card.name),
+                summary=(h.get("summary") or h.get("next_prompt", "")),
+                primary_action=Action(
+                    "Continue in Terminal",
+                    f"/project/{card.project_id}?tab=current",
+                ),
+                meta={
+                    "handoff_id": h.get("id"),
+                    "handoff_count": len(card.handoffs),
+                    "project_name": card.name,
+                    "created_at": h.get("created_at"),
+                    "has_span": bool(card.session),
+                    "branch": card.git.branch,
+                    "dirty_count": card.git.dirty_count,
+                    "path": card.path,
+                },
+            ))
         elif card.live is not None and card.live.status in LIVE_ATTENTION:
             kind, summary = LIVE_ATTENTION[card.live.status]
             items.append(AttentionItem(
@@ -324,17 +344,123 @@ def failed_schedule_rows(rows) -> list:
     ]
 
 
-def attention_count(store: Store, cards: list[Card], scheduled_rows=None) -> int:
-    """`OverviewModel.attention_total`, for a caller that needs only the number.
+# --- One count vocabulary, for every surface ---------------------------------
+#
+# The rule: **every headline count is a count of PROJECTS**. Overview used to
+# headline "Running 5" from the registry's session list (including sessions in
+# directories that are not projects at all) while Projects headlined "Running
+# 1" from its card list, and "Needs attention 17" counted handoff ITEMS against
+# the Projects chip's 9 PROJECTS. Three units, no label saying which.
+#
+# A genuinely useful second magnitude (handoffs queued, sessions running) is
+# secondary text next to the tile -- `count_captions` below -- never the
+# headline number. `count_summary` is the single expression both the Overview
+# tiles (via `dashboard.DashboardBuilder`'s `topbar` envelope) and the Projects
+# chips read, so a chip and a tile cannot drift apart again.
 
-    `dashboard.DashboardBuilder` puts this on the wire so live.js can patch the
-    "Needs attention" cell; without it the headline number is the one thing on
-    the Overview that can only be corrected by a reload. `scheduled_rows` lets
-    that caller hand over the `store.scheduled_runs()` result it already has,
-    so wiring the cell costs no extra query.
+
+def needs_attention(card: Card) -> bool:
+    """Does this project need a human? The one predicate, for every surface.
+
+    Exactly the ladder `_attention_from_cards` walks, so the "Needs attention"
+    tile, the Projects chip and the number of project entries the ladder
+    renders are the same number by construction. A live session whose status is
+    not in `LIVE_ATTENTION` (idle, unknown, ...) is deliberately not attention
+    -- see that map's own note.
+    """
+    return bool(
+        card.handoffs
+        or (card.live is not None and card.live.status in LIVE_ATTENTION)
+        or card.is_stale
+    )
+
+
+def is_running(card: Card) -> bool:
+    """A project the panel renders as "Running": a live session and no queued
+    handoff, matching `_status_word` (a handoff outranks a session) so the
+    Running count and the Running group/filter can never disagree."""
+    return card.live is not None and not card.handoffs
+
+
+def count_summary(
+    store: Store,
+    cards: list[Card],
+    live_state: AgentsState,
+    *,
+    scheduled_rows=None,
+) -> dict:
+    """Every count the panel headlines, in one place.
+
+    Project-unit keys: `projects`, `running`, `attention`, `queued`, `dirty`.
+    Secondary magnitudes, never a headline: `running_sessions`,
+    `unattributed_sessions`, `queued_handoffs`, `schedule_failures`. `scheduled`
+    is the one genuine run count -- runs Bridge still owes -- and the tile
+    labels it "Scheduled runs" so it does not read as a project count.
+
+    `scheduled_rows` lets a caller hand over the `store.scheduled_runs()`
+    result it already has, so wiring these costs no extra query.
     """
     rows = store.scheduled_runs() if scheduled_rows is None else scheduled_rows
-    return len(_attention_from_cards(cards)) + len(failed_schedule_rows(rows))
+    # `agents.by_project`, not a `cwd in paths` test: a session started in a
+    # SUBDIRECTORY of a project is attributed to that project's card, so
+    # counting it as "unregistered" here would report work Bridge is already
+    # showing as homeless.
+    grouped = agents.by_project(
+        live_state, store.alias_map(), [card.path for card in cards]
+    )
+    unattributed = grouped.get(agents.UNATTRIBUTED, [])
+    return {
+        "projects": len(cards),
+        "running": sum(1 for card in cards if is_running(card)),
+        "running_sessions": sum(
+            len([s for s in sessions if not agents.is_terminal(s.status)])
+            for key, sessions in grouped.items() if key != agents.UNATTRIBUTED
+        ),
+        "unattributed_sessions": len(
+            [s for s in unattributed if not agents.is_terminal(s.status)]
+        ),
+        "attention": sum(1 for card in cards if needs_attention(card)),
+        "schedule_failures": len(failed_schedule_rows(rows)),
+        "queued": sum(1 for card in cards if card.handoffs),
+        "queued_handoffs": sum(len(card.handoffs) for card in cards),
+        "dirty": sum(1 for card in cards if card.git.dirty_count),
+        "scheduled": sum(
+            1 for row in rows if row["status"] in ("pending", "launching")
+        ),
+    }
+
+
+def count_captions(totals: dict) -> dict[str, str]:
+    """The secondary magnitude under each tile, or "" when there is none.
+
+    Composed once, server-side, and put on the wire: live.js writes these
+    strings into the tiles rather than re-wording them, so a live frame cannot
+    phrase a count differently from the server render. Kept to one short noun
+    phrase per tile -- the command strip is three cells across at 390px, so a
+    sentence here would wrap the cells to ragged heights.
+    """
+    captions = {"running": "", "queued": "", "attention": "", "unattributed": ""}
+    sessions = totals["running_sessions"]
+    if sessions != totals["running"]:
+        captions["running"] = f"{sessions} session{'' if sessions == 1 else 's'}"
+    handoffs = totals["queued_handoffs"]
+    if handoffs != totals["queued"]:
+        captions["queued"] = f"{handoffs} handoff{'' if handoffs == 1 else 's'}"
+    failures = totals["schedule_failures"]
+    if failures:
+        captions["attention"] = f"{failures} failed run{'' if failures == 1 else 's'}"
+    stray = totals["unattributed_sessions"]
+    if stray:
+        # Its own line under the strip, not a share of the Running tile: these
+        # sessions are running in directories Bridge has no project for, and
+        # folding them into a project count is what made Overview say 5 while
+        # Projects said 1.
+        captions["unattributed"] = (
+            f"{stray} session{'' if stray == 1 else 's'} running in "
+            f"{'a directory' if stray == 1 else 'directories'} "
+            "Bridge has no project for."
+        )
+    return captions
 
 
 def _schedule_failures(store: Store, by_path: dict[str, Card]) -> list[AttentionItem]:
@@ -415,6 +541,7 @@ def project_summary(card: Card, now: int) -> ProjectSummary:
         pinned=card.pinned,
         ahead=card.git.ahead,
         behind=card.git.behind,
+        needs_attention=needs_attention(card),
     )
 
 

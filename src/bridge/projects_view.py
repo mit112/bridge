@@ -16,7 +16,7 @@ from bridge import agents
 from bridge.cards import build_cards
 from bridge.config import Config
 from bridge.models import AgentsState, Card
-from bridge.overview import ProjectSummary, project_summary
+from bridge.overview import ProjectSummary, count_summary, project_summary
 from bridge.store import Store, now_epoch
 
 
@@ -141,23 +141,17 @@ def build_projects(
         if row["status"] != "active"
     ]
 
+    # `overview.count_summary` is the panel's one count vocabulary: the chips
+    # here and the Overview tiles are the same expressions, in the same unit
+    # (projects), so "Running 1" here and "Running 5" there can no longer be
+    # two different questions. `queued` was the last handoff-unit count on this
+    # page -- it read 10 while the Queued group under it listed 2 projects.
+    totals = count_summary(store, cards, live_state)
     counts = {
-        "all": len(rows),
-        # A project "needs attention" for the same reasons `overview.py`'s
-        # attention ladder surfaces it: a queued handoff, a live session, or
-        # uncommitted work stale past the threshold.
-        "needs_attention": sum(
-            1 for card in cards if card.handoffs or card.live is not None or card.is_stale
-        ),
-        # A live session on a card that also has a queued handoff renders as
-        # "queued" (a handoff outranks a running session in _status_word), and
-        # the Running filter matches that rendered state -- so it must not be
-        # counted here either, or the Running badge would outnumber the rows the
-        # Running filter shows. It is still counted under `queued` below.
-        "running": sum(
-            1 for card in cards if card.live is not None and not card.handoffs
-        ),
-        "queued": sum(len(card.handoffs) for card in cards),
+        "all": totals["projects"],
+        "needs_attention": totals["attention"],
+        "running": totals["running"],
+        "queued": totals["queued"],
         "hidden": len(hidden),
     }
 

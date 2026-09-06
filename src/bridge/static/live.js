@@ -203,6 +203,21 @@ function applyDashboardUpdate(update) {
   for (const name of ["projects", "running", "queued", "scheduled", "dirty", "attention"]) {
     if (topbar[name] != null) setTotal(name, topbar[name]);
   }
+  // The tiles' secondary magnitudes ("10 handoffs" under a Queued count of 2).
+  // The server composes the strings (`overview.count_captions`) and this only
+  // writes them: a cell patched to a new number beside a caption still
+  // describing the old one is the same "colour disagrees with the word"
+  // failure `setTotal` fixes for the flag class.
+  const captions = topbar.captions || {};
+  for (const [name, text] of Object.entries(captions)) {
+    if (name === "unattributed") {
+      const note = query("[data-unattributed-note]");
+      setText(note, text);
+      setHidden(note, !text);
+      continue;
+    }
+    setText(query(`[data-dashboard-sub="${cssValue(name)}"]`), text);
+  }
   if (topbar.today != null) setTotal("today", formatKilo(topbar.today));
   if (topbar.last_5h != null) setTotal("last_5h", formatKilo(topbar.last_5h));
   if (topbar.burn_rate != null) setTotal("burn_rate", `${formatKilo(topbar.burn_rate)}/h`);

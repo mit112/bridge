@@ -73,7 +73,9 @@ def test_attention_ladder_orders_kinds_and_pins_correct_hrefs(tmp_path):
 
     kinds = [item.kind for item in model.attention]
     assert kinds == ["handoff", "running", "stale"]
-    assert model.attention_total == 4
+    # Three PROJECTS need a human; the failed run is counted as a run.
+    assert model.attention_total == 3
+    assert model.schedule_failures == 1
 
     handoff_item, running_item, stale_item = model.attention
 
@@ -187,7 +189,8 @@ def test_schedule_failures_keep_true_total_and_show_newest_three_first(tmp_path)
 
     failures = [item for item in model.attention if item.kind == "schedule_failure"]
     assert len(failures) == 3
-    assert model.attention_total == len(completed_ats)
+    assert model.schedule_failures == len(completed_ats)
+    assert model.attention_total == 0  # a failed run is a run, not a project
     completed_order = [item.meta["run_id"] for item in failures]
     expected_order = [
         f"fail-{i}" for i, _ in sorted(
@@ -352,10 +355,10 @@ def test_no_handoff_or_schedule_failure_yields_empty_attention(tmp_path):
     store.close()
 
 
-def test_attention_emits_one_item_per_handoff(tmp_path):
-    """A card with several queued handoffs used to collapse to the newest one
-    via the `card.handoff` property; every queued handoff is now its own
-    independently actionable attention item."""
+def test_attention_emits_one_item_per_project_carrying_the_handoff_count(tmp_path):
+    """A project with six queued handoffs contributed six items to the ladder,
+    so the page headlined "17 items" where Projects said 9 projects for the
+    same state. One entry per project, with the magnitude on it."""
     cfg = _cfg(tmp_path)
     store = Store(cfg.db_path)
     now = 10_000
@@ -377,7 +380,9 @@ def test_attention_emits_one_item_per_handoff(tmp_path):
     )
     items = _attention_from_cards(cards)
     handoff_items = [i for i in items if i.kind == "handoff"]
-    assert {i.meta["handoff_id"] for i in handoff_items} == {"h1", "h2"}
+    assert len(handoff_items) == 1
+    assert handoff_items[0].project_id == pid
+    assert handoff_items[0].meta["handoff_count"] == 2
 
     store.close()
 
@@ -576,7 +581,7 @@ COMMAND_STRIP_CELLS = (
     (11, "Needs attention", "attention"),
     (13, "Queued", "queued"),
     (17, "Dirty trees", "dirty"),
-    (19, "Scheduled", "scheduled"),
+    (19, "Scheduled runs", "scheduled"),
     (23, "Projects", "projects"),
 )
 
@@ -991,4 +996,203 @@ def test_the_dashboard_route_hands_the_overview_its_own_coordinator(tmp_path):
 
     strip = body.split('data-freshness-strip', 1)[1][:400]
     assert 'data-freshness-state="unavailable"' in strip, strip
+    store.close()
+
+
+# --- One count vocabulary (audit plan §3.1) ----------------------------------
+
+
+def _mixed_units_store(cfg):
+    """One project holding three queued handoffs AND a live session, one
+    project with only a live session, one quiet project.
+
+    The exact state the surfaces disagreed about: Overview counted the
+    handoffs (3) where Projects counted the project (1), and Overview counted
+    registry sessions (2) where Projects counted the projects rendered as
+    running (1 -- the handoff project renders as queued).
+    """
+    store = Store(cfg.db_path)
+    busy_id = store.upsert_project("/p/busy", "busy-project")
+    for i in range(3):
+        store.create_handoff(Handoff(
+            id=f"h{i}", project_path="/p/busy", next_prompt="go",
+            source_session_id=f"s{i}", created_at=1000 + i,
+        ), busy_id)
+    store.upsert_project("/p/running", "running-project")
+    store.upsert_project("/p/quiet", "quiet-project")
+    return store
+
+
+def _mixed_units_agents():
+    return AgentsState(status="ok", sessions=[
+        LiveSession(session_id="l1", cwd="/p/busy", kind="interactive",
+                    status="busy"),
+        LiveSession(session_id="l2", cwd="/p/running", kind="interactive",
+                    status="busy"),
+    ])
+
+
+def test_overview_and_projects_report_the_same_number_for_the_same_concept(tmp_path):
+    """Every headline count is a count of PROJECTS, on both surfaces.
+
+    Overview read "Queued 10 / Running 5 / Needs attention 17" (handoffs,
+    registry sessions, ladder items) while Projects read "Queued 10 /
+    Running 1 / Needs attention 9" for the same state. Asserted as equalities
+    between the two models AND against literals: the equality alone would let
+    both sides drift into the same wrong unit together.
+    """
+    from bridge.projects_view import build_projects
+
+    cfg = _cfg(tmp_path)
+    store = _mixed_units_store(cfg)
+    probe = lambda _path: GitState(status="ok", branch="main")  # noqa: E731
+
+    overview = build_overview(store, cfg, now=10_000, probe_fn=probe,
+                              agents_fn=_mixed_units_agents)
+    projects = build_projects(store, cfg, probe_fn=probe,
+                              agents_fn=_mixed_units_agents)
+
+    assert overview.totals["queued"] == projects.counts["queued"] == 1
+    assert overview.totals["running"] == projects.counts["running"] == 1
+    assert overview.attention_total == projects.counts["needs_attention"] == 2
+    assert overview.totals["projects"] == projects.counts["all"] == 3
+    # The magnitudes that used to BE the headlines survive as secondary text.
+    assert overview.totals["queued_handoffs"] == 3
+    assert overview.totals["running_sessions"] == 2
+    store.close()
+
+
+def test_the_ladder_renders_exactly_the_number_the_headline_claims(tmp_path):
+    """"17 items need your attention" over a ladder that can only ever produce
+    9 project entries is a headline the page cannot honour."""
+    cfg = _cfg(tmp_path)
+    store = _mixed_units_store(cfg)
+    probe = lambda _path: GitState(status="ok", branch="main")  # noqa: E731
+
+    model = build_overview(store, cfg, now=10_000, probe_fn=probe,
+                           agents_fn=_mixed_units_agents)
+    ladder = _attention_from_cards(build_cards(
+        store, cfg, probe_fn=probe, agents_fn=_mixed_units_agents,
+    ))
+
+    assert len(ladder) == model.attention_total == 2
+    store.close()
+
+
+def test_a_session_outside_any_project_never_inflates_the_running_count(tmp_path):
+    """Overview said "Running 5" because it counted registry sessions --
+    including ones in directories that are not registered projects at all.
+    Those get their own line, with their own unit named."""
+    from bridge.overview import count_captions, count_summary
+
+    cfg = _cfg(tmp_path)
+    store = Store(cfg.db_path)
+    store.upsert_project("/p/real", "real-project")
+    live = AgentsState(status="ok", sessions=[
+        LiveSession(session_id="a", cwd="/p/real", kind="interactive",
+                    status="busy"),
+        LiveSession(session_id="b", cwd="/nowhere/one", kind="interactive",
+                    status="busy"),
+        LiveSession(session_id="c", cwd="/nowhere/two", kind="interactive",
+                    status="busy"),
+    ])
+    cards = build_cards(
+        store, cfg, probe_fn=lambda _p: GitState(status="ok", branch="main"),
+        agents_fn=lambda: live,
+    )
+
+    totals = count_summary(store, cards, live)
+
+    assert totals["running"] == 1
+    assert totals["running_sessions"] == 1
+    assert totals["unattributed_sessions"] == 2
+    assert count_captions(totals)["unattributed"] == (
+        "2 sessions running in directories Bridge has no project for."
+    )
+    store.close()
+
+
+def test_a_session_in_a_project_subdirectory_is_not_called_unregistered(tmp_path):
+    """`build_cards` attributes a session started in a SUBDIRECTORY to that
+    project (`agents.by_project`), so counting it as homeless here would
+    report work the panel is already showing on a card."""
+    from bridge.overview import count_summary
+
+    cfg = _cfg(tmp_path)
+    store = Store(cfg.db_path)
+    store.upsert_project("/p/real", "real-project")
+    live = AgentsState(status="ok", sessions=[LiveSession(
+        session_id="a", cwd="/p/real/sub/dir", kind="interactive", status="busy",
+    )])
+    cards = build_cards(
+        store, cfg, probe_fn=lambda _p: GitState(status="ok", branch="main"),
+        agents_fn=lambda: live,
+    )
+
+    totals = count_summary(store, cards, live)
+
+    assert totals["unattributed_sessions"] == 0
+    assert totals["running_sessions"] == 1
+    assert totals["running"] == 1
+    store.close()
+
+
+def test_a_caption_appears_only_where_the_second_magnitude_differs():
+    """A tile whose secondary magnitude equals its headline must not repeat it
+    -- "1 project, 1 handoff" is noise in a 120px cell."""
+    from bridge.overview import count_captions
+
+    same = {"running": 2, "running_sessions": 2, "queued": 2,
+            "queued_handoffs": 2, "schedule_failures": 0,
+            "unattributed_sessions": 0}
+    assert count_captions(same) == {
+        "running": "", "queued": "", "attention": "", "unattributed": "",
+    }
+
+    captions = count_captions({**same, "running_sessions": 5,
+                               "queued_handoffs": 10, "schedule_failures": 1})
+    assert captions["running"] == "5 sessions"
+    assert captions["queued"] == "10 handoffs"
+    assert captions["attention"] == "1 failed run"
+
+
+def test_the_overview_headline_counts_projects_and_the_tile_agrees(tmp_path):
+    """The lede said "N items" -- a unit no other surface used, and one three
+    queued handoffs on a single project inflated by three."""
+    c, store, _ = _route_client(tmp_path, "headline")
+    pid = store.upsert_project("/p/busy", "busy-project")
+    for i in range(3):
+        store.create_handoff(Handoff(
+            id=f"h{i}", project_path="/p/busy", next_prompt="go",
+            source_session_id=f"s{i}", created_at=1 + i,
+        ), pid)
+
+    html = c.get("/").text
+
+    assert "1 project needs your attention" in html
+    assert "3 items need your attention" not in html
+    assert 'data-dashboard-total="attention">1</span>' in html, (
+        "the tile must carry the same number the headline claims"
+    )
+    # The handoffs are not lost -- they are the Queued tile's secondary text.
+    assert ('<span class="command-cell__sub card__note" '
+            'data-dashboard-sub="queued">3 handoffs</span>') in html
+    store.close()
+
+
+def test_the_overview_states_the_truncation_and_links_to_the_full_list(tmp_path):
+    """The ladder is sliced to ATTENTION_LIMIT and said so nowhere: three cards
+    under a headline of 17, with no way to reach the other fourteen."""
+    c, store, _ = _route_client(tmp_path, "truncation")
+    for i in range(5):
+        path = f"/p/queued-{i}"
+        pid = store.upsert_project(path, f"queued-{i}")
+        store.create_handoff(Handoff(
+            id=f"h{i}", project_path=path, next_prompt="go", created_at=1 + i,
+        ), pid)
+
+    html = c.get("/").text
+
+    assert "Showing 3 of 5" in html
+    assert 'href="/projects?filter=needs_attention"' in html
     store.close()

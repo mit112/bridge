@@ -106,10 +106,11 @@ def test_build_projects_counts_by_status(tmp_path):
     store.close()
 
 
-def test_queued_count_counts_handoffs_not_cards(tmp_path):
-    """Two queued handoffs on one project count as 2, not 1 -- the `queued`
-    count used to be "cards with a handoff" and silently hid a second queued
-    handoff on the same project."""
+def test_queued_chip_counts_projects_and_the_handoffs_are_secondary(tmp_path):
+    """The chip has to select what it says. `queued` counted HANDOFFS (10),
+    while the Queued group under it listed the PROJECTS holding them (2) and
+    the chip's own filter showed those same 2 rows. Projects is the unit; the
+    handoff magnitude survives in `count_summary`'s `queued_handoffs`."""
     cfg = _cfg(tmp_path, "queued-count")
     store = Store(cfg.db_path)
     now = 10_000
@@ -130,7 +131,7 @@ def test_queued_count_counts_handoffs_not_cards(tmp_path):
         agents_fn=lambda: AgentsState(status="ok", sessions=[]),
     )
 
-    assert model.counts["queued"] == 2
+    assert model.counts["queued"] == 1
     store.close()
 
 
@@ -453,3 +454,87 @@ def test_overview_nav_now_links_to_projects(tmp_path):
     html = client.get("/").text
     assert 'href="/projects"' in html
     store.close()
+
+
+# --- Chips select what they say (audit plan §3.1) ----------------------------
+
+
+def test_the_queued_chip_and_the_queued_group_report_the_same_number(tmp_path):
+    """The chip counted handoffs (10) and the group under it counted the
+    projects holding them (2), on one page, with no label saying which."""
+    cfg = _cfg(tmp_path, "chip-vs-group")
+    store = Store(cfg.db_path)
+    pid = store.upsert_project("/p/busy", "busy-project")
+    for i in range(3):
+        store.create_handoff(Handoff(
+            id=f"h{i}", project_path="/p/busy", next_prompt="go",
+            source_session_id=f"s{i}", created_at=1 + i,
+        ), pid)
+    store.upsert_project("/p/quiet", "quiet-project")
+
+    c = TestClient(create_app(store, cfg))
+    html = c.get("/projects").text
+    store.close()
+
+    chip = re.search(
+        r'data-projects-filter="queued"[^>]*>Queued '
+        r'<span class="projects-filter__count">(\d+)</span>',
+        html,
+    )
+    group = re.search(
+        r'<span class="projects-group__label">Queued</span>\s*'
+        r'<span class="projects-group__count">(\d+)</span>',
+        html,
+    )
+    assert chip and group, html
+    rows = html.count('data-project-state="queued"')
+    # The chip's number, the group's number and the rows the chip's filter
+    # selects are one expression, so all three are the same.
+    assert chip.group(1) == group.group(1) == str(rows) == "1"
+
+
+def test_the_needs_attention_chip_marks_the_rows_it_counts(tmp_path):
+    """A live session that is merely sitting idle renders as "running" but
+    needs nobody -- the Overview ladder has always excluded it. The chip
+    counted it anyway, so the chip's number and the rows its filter showed
+    were two different sets.
+    """
+    cfg = _cfg(tmp_path, "attention-chip")
+    store = Store(cfg.db_path)
+    store.upsert_project("/p/idle", "idle-project")
+
+    def agents_fn() -> AgentsState:
+        return AgentsState(status="ok", sessions=[LiveSession(
+            session_id="l1", cwd="/p/idle", kind="interactive", status="idle",
+        )])
+
+    model = build_projects(
+        store, cfg,
+        probe_fn=lambda _p: GitState(status="ok", branch="main"),
+        agents_fn=agents_fn,
+    )
+
+    assert model.rows[0].status_word == "running"
+    assert model.rows[0].needs_attention is False
+    assert model.counts["needs_attention"] == 0
+    store.close()
+
+
+def test_each_row_carries_the_predicate_the_attention_chip_counts_with(tmp_path):
+    """`data-project-attention` is the interface projects.js filters on: with
+    only `data-project-state` to go by, the filter had to guess at a union of
+    row states, and guessed a different set than the chip counted."""
+    cfg = _cfg(tmp_path, "attention-attr")
+    store = Store(cfg.db_path)
+    pid = store.upsert_project("/p/queued", "queued-project")
+    store.create_handoff(Handoff(
+        id="h1", project_path="/p/queued", next_prompt="go", created_at=1,
+    ), pid)
+    store.upsert_project("/p/quiet", "quiet-project")
+
+    c = TestClient(create_app(store, cfg))
+    html = c.get("/projects").text
+    store.close()
+
+    assert html.count('data-project-attention="true"') == 1
+    assert html.count('data-project-attention="false"') == 1

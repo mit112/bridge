@@ -20,22 +20,22 @@
     "expect_count": 1
   },
   {
-    "name": "read the running count from nothing, so the topbar always claims zero sessions",
-    "file": "src/bridge/dashboard.py",
-    "old": "\"running\": running,",
-    "new": "\"running\": 0,",
+    "name": "read the running count from nothing, so the topbar always claims zero running projects",
+    "file": "src/bridge/overview.py",
+    "old": "        \"running\": sum(1 for card in cards if is_running(card)),",
+    "new": "        \"running\": 0,",
     "tests": [
-      "tests/test_api.py::test_the_topbar_reports_running_sessions_and_queued_handoffs"
+      "tests/test_api.py::test_the_topbar_counts_running_projects_and_captions_the_sessions"
     ],
     "expect_count": 1
   },
   {
-    "name": "swap the running and queued counts, so each reports the other's number",
-    "file": "src/bridge/dashboard.py",
-    "old": "\"running\": running,\n                \"queued\": self.store.queued_handoff_count(),",
-    "new": "\"running\": self.store.queued_handoff_count(),\n                \"queued\": running,",
+    "name": "report the queued count under Running, so each cell answers the other cell's question",
+    "file": "src/bridge/overview.py",
+    "old": "        \"running\": sum(1 for card in cards if is_running(card)),",
+    "new": "        \"running\": sum(1 for card in cards if card.handoffs),",
     "tests": [
-      "tests/test_api.py::test_the_topbar_reports_running_sessions_and_queued_handoffs"
+      "tests/test_api.py::test_the_topbar_counts_running_projects_and_captions_the_sessions"
     ],
     "expect_count": 1
   },

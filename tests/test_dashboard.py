@@ -104,9 +104,12 @@ def test_the_envelope_carries_the_same_attention_count_the_overview_rendered(tmp
     update = builder.full_update()
     model = build_overview(store, cfg, now=130, probe_fn=probe, agents_fn=agents_fn)
 
-    # One queued handoff, one failed scheduled run.
-    assert update["topbar"]["attention"] == 2
+    # One project with a queued handoff -- and the failed scheduled run is a
+    # RUN, counted beside it rather than added into a project count.
+    assert update["topbar"]["attention"] == 1
     assert update["topbar"]["attention"] == model.attention_total
+    assert update["topbar"]["schedule_failures"] == 1
+    assert update["topbar"]["schedule_failures"] == model.schedule_failures
     store.close()
 
 
@@ -128,3 +131,42 @@ def test_a_quiet_project_is_not_counted_as_needing_attention(tmp_path):
 
     assert builder.full_update()["topbar"]["attention"] == 0
     store.close()
+
+
+def test_the_envelope_carries_the_secondary_magnitudes_and_their_wording(tmp_path):
+    """A live frame patches the tiles, so it has to carry both the project
+    counts and the captions beside them -- and the captions are composed
+    server-side (`overview.count_captions`) so live.js cannot word them
+    differently from the server render."""
+    cfg = load({"db_path": tmp_path / "captions.db",
+                "spool_dir": tmp_path / "spool-captions"})
+    store = Store(cfg.db_path)
+    pid = store.upsert_project("/p/busy", "busy-project")
+    for i in range(3):
+        store.create_handoff(Handoff(
+            id=f"h{i}", project_path="/p/busy", next_prompt="go",
+            source_session_id=f"s{i}", created_at=1 + i,
+        ), pid)
+    store.upsert_project("/p/elsewhere-parent", "elsewhere-parent")
+
+    def agents_fn():
+        return AgentsState(status="ok", sessions=[LiveSession(
+            session_id="stray", cwd="/nowhere/at/all", kind="interactive",
+            status="busy",
+        )])
+
+    builder = DashboardBuilder(
+        store, cfg, RefreshCoordinator(store, cfg),
+        probe_fn=lambda _p: GitState(status="ok", branch="main"),
+        agents_fn=agents_fn, now_fn=lambda: 500,
+    )
+    topbar = builder.full_update()["topbar"]
+    store.close()
+
+    assert topbar["queued"] == 1                 # projects, not handoffs
+    assert topbar["queued_handoffs"] == 3
+    assert topbar["unattributed_sessions"] == 1
+    assert topbar["captions"]["queued"] == "3 handoffs"
+    assert topbar["captions"]["unattributed"] == (
+        "1 session running in a directory Bridge has no project for."
+    )
