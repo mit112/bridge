@@ -5,6 +5,7 @@ from bridge.registry import (
     encode_path,
     is_noise,
     is_noise_path,
+    nesting_parent,
     transcript_files,
 )
 
@@ -141,3 +142,45 @@ def test_is_noise_path_answers_for_the_containers_is_noise_already_knows():
 def test_is_noise_path_keeps_real_projects():
     for path in ["/Users/dev/dev/projectY", "/Users/dev/dev/Job apps"]:
         assert is_noise_path(path, home=HOME) is False, path
+
+
+def _repo(base: Path, *parts: str) -> Path:
+    d = base.joinpath(*parts)
+    (d / ".git").mkdir(parents=True)
+    return d
+
+
+def test_nesting_parent_finds_a_scratch_dir_inside_a_repo(tmp_path):
+    parent = _repo(tmp_path, "boardwatch")
+    child = parent / "2026-09-08-session"
+    child.mkdir()
+    assert nesting_parent(child, [str(parent)]) == str(parent)
+
+
+def test_nesting_parent_never_fires_for_siblings(tmp_path):
+    """Component-wise containment. `instalily-v2` is not inside `instalily`
+    even though its path string starts with every character of it -- the case a
+    `startswith` would silently hide the wrong project on."""
+    a = _repo(tmp_path, "Job apps", "instalily")
+    b = _repo(tmp_path, "Job apps", "instabase")
+    prefixed = tmp_path / "Job apps" / "instalily-v2"
+    prefixed.mkdir()
+    assert nesting_parent(b, [str(a)]) is None
+    assert nesting_parent(a, [str(b)]) is None
+    assert nesting_parent(prefixed, [str(a)]) is None
+
+
+def test_nesting_parent_leaves_a_nested_repo_of_its_own_alone(tmp_path):
+    """A submodule or an independently cloned repo is a separate worktree to
+    git, so it is a separate project here."""
+    parent = _repo(tmp_path, "outer")
+    child = _repo(tmp_path, "outer", "vendored")
+    assert nesting_parent(child, [str(parent)]) is None
+
+
+def test_nesting_parent_needs_the_ancestor_to_be_a_worktree_root(tmp_path):
+    """Otherwise a registered container directory swallows everything below."""
+    container = tmp_path / "dev"
+    child = container / "widget-app"
+    child.mkdir(parents=True)
+    assert nesting_parent(child, [str(container)]) is None

@@ -12,6 +12,7 @@ directory and their dotfile directories as projects, and filters nothing.
 """
 
 import re
+from collections.abc import Iterable
 from pathlib import Path
 
 # Directory names directly under $HOME that hold projects but are not projects
@@ -64,6 +65,41 @@ def is_noise_path(path: Path | str, home: Path | None = None) -> bool:
     the one existing rule set rather than a second one that can drift from it.
     """
     return is_noise(encode_path(path), home)
+
+
+def nesting_parent(path: Path | str, registered: Iterable[str]) -> str | None:
+    """The registered project `path` is a sub-directory artefact of, or None.
+
+    Running Claude in `boardwatch/2026-09-08-session` makes that scratch
+    directory look exactly like a new project: it has its own transcript
+    directory and its own cwd, and nothing in the transcript says it is not a
+    project of its own. The containment does.
+
+    The rule settled on: an ancestor that is a git worktree root, where `path`
+    itself is not one. Comparison is per path component (`is_relative_to`), so
+    two siblings -- `Job apps/instalily` and `Job apps/instabase` -- can never
+    match each other however similar their names. Requiring the ancestor to be
+    a worktree root stops a merely-registered container directory swallowing
+    everything beneath it. Requiring the descendant NOT to be one keeps a
+    submodule, or a repo independently cloned inside another repo, visible:
+    git itself calls those separate worktrees, so Bridge does too.
+
+    A monorepo *package* under a registered monorepo root is caught by this,
+    knowingly: git reports it as part of the same worktree, so there is nothing
+    left to tell it apart from a scratch directory. The caller only applies
+    this to projects it is seeing for the first time and hides rather than
+    deletes them, so the cost is one Restore click that then sticks.
+    """
+    p = Path(path)
+    if (p / ".git").exists():
+        return None
+    for other in registered:
+        parent = Path(other)
+        if parent == p or not p.is_relative_to(parent):
+            continue
+        if (parent / ".git").exists():
+            return other
+    return None
 
 
 def display_name(project_path: str) -> str:

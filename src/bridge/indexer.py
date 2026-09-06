@@ -15,7 +15,12 @@ from typing import Callable
 from bridge import backfill
 from bridge.config import Config
 from bridge.models import SessionRecord
-from bridge.registry import display_name, is_noise_path, transcript_files
+from bridge.registry import (
+    display_name,
+    is_noise_path,
+    nesting_parent,
+    transcript_files,
+)
 from bridge.store import Store, now_epoch
 from bridge.transcripts import scan
 
@@ -133,10 +138,12 @@ def reindex(
 def _hide_new_non_projects(store: Store, known_before: set[str]) -> None:
     """Start a newly discovered non-project hidden instead of active.
 
-    The home directory and the other container and dotfile paths `registry`
-    already classifies as noise are not projects -- every user who has ever
-    run `claude` from `~` gets a project card called after their login name
-    otherwise.
+    Two kinds of row are not projects. The home directory and the other
+    container and dotfile paths `registry` already classifies as noise -- every
+    user who has ever run `claude` from `~` gets a project card called after
+    their login name otherwise. And a directory nested inside a project, which
+    is a scratch directory rather than a sibling project (`nesting_parent`
+    states the exact rule).
 
     Only rows this run CREATED are judged, and that is what makes the decision
     reversible: Restore in the Projects page's Hidden drawer sets the row
@@ -150,9 +157,10 @@ def _hide_new_non_projects(store: Store, known_before: set[str]) -> None:
     for path, row in rows.items():
         if path in known_before or row["status"] != "active":
             continue
-        if not is_noise_path(path):
+        parent = nesting_parent(path, rows)
+        if not is_noise_path(path) and parent is None:
             continue
-        log.info("auto-hiding %s: not a project directory", path)
+        log.info("auto-hiding %s (%s)", path, f"nested in {parent}" if parent else "noise")
         store.set_project_status(row["id"], "hidden")
 
 
