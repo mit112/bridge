@@ -19,7 +19,8 @@
 {% call freshness_status(freshness_state,
                           freshness.index_age_seconds if freshness.index_age_seconds is not none else "never indexed",
                           index_at=freshness.index_at,
-                          server=freshness.server) %}
+                          server=freshness.server,
+                          state_visible=False) %}
   <button type="button" class="btn" data-dashboard-refresh>Refresh</button>
   <span class="card__note" data-refresh-status role="status" aria-live="polite"></span>
 {% endcall %}
@@ -192,7 +193,7 @@
       {{ empty_state("No other projects yet.") }}
     {% else %}
     <ul class="projects-list">
-      {% for row in model.recent %}<li class="projects-list__item">{{ project_summary_row(row) }}</li>{% endfor %}
+      {% for row in model.recent %}<li class="projects-list__item">{{ project_summary_row(row, show_status=False) }}</li>{% endfor %}
     </ul>
     {% endif %}
   </section>
