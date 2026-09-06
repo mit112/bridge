@@ -240,7 +240,16 @@ function makeDocument(root) {
     get pathname() { return new URL(this.href).pathname; },
     assign(href) { globalThis.__calls.locationAssign = href; },
   };
-  globalThis.history = { pushState() {} };
+  // `state` and `replaceState` as well as `pushState`: router.js records the
+  // departing page's scroll position on the current entry before pushing the
+  // next one, and reads it back on a pop. Both are plain stores here -- this
+  // harness models no session history stack, so a test that wants a pop
+  // dispatches the event with the state it expects the browser to restore.
+  globalThis.history = {
+    state: null,
+    pushState(state) { this.state = state == null ? null : state; },
+    replaceState(state) { this.state = state == null ? null : state; },
+  };
   globalThis.localStorage = {
     _m: new Map(),
     getItem(k) { return this._m.has(k) ? this._m.get(k) : null; },
