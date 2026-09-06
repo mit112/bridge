@@ -101,6 +101,7 @@
       {% for row in g.rows %}
       <li class="projects-list__item" data-project-card="{{ row.project_id }}"
           data-project-row-item data-project-state="{{ row.status_word }}"
+          data-project-attention="{{ 'true' if row.needs_attention else 'false' }}"
           data-project-name="{{ row.name }}" data-project-path="{{ row.path }}">
         {{ project_summary_row(row, show_remote=True, show_status=False) }}
         <details class="projects-list__actions">

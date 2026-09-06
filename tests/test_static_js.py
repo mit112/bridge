@@ -2008,19 +2008,26 @@ const filterQueued = makeFilterButton("queued", "false");
 const filterHidden = makeFilterButton("hidden", "false");
 const filterButtons = [filterAll, filterAttention, filterRunning, filterQueued, filterHidden];
 
-function makeRow(name, path, state) {
+function makeRow(name, path, state, attention) {
   return {
     hidden: false,
-    attrs: { "data-project-name": name, "data-project-path": path, "data-project-state": state },
+    attrs: {
+      "data-project-name": name, "data-project-path": path,
+      "data-project-state": state,
+      "data-project-attention": String(Boolean(attention)),
+    },
     getAttribute(n) { return this.attrs[n] ?? null; },
   };
 }
-// queued, running, idle -- deliberately no "stale" row: needs_attention's
-// three-state union is exercised by queued+running alone, and this keeps the
-// fixture small.
-const rowAlpha = makeRow("Alpha Project", "/x/alpha", "queued");
-const rowBeta = makeRow("Beta", "/x/beta-path", "running");
-const rowGamma = makeRow("Gamma", "/x/gamma", "idle");
+// queued, running, idle. "Needs attention" is the server's own predicate on
+// the row (`data-project-attention`), not a union of row states: a live
+// session that is merely sitting idle does not need a human.
+// Beta is running a session that is merely sitting idle: the row reads
+// "running", and nobody is waiting on it. That is the case a union of row
+// states cannot express, and the reason the predicate is an attribute.
+const rowAlpha = makeRow("Alpha Project", "/x/alpha", "queued", true);
+const rowBeta = makeRow("Beta", "/x/beta-path", "running", false);
+const rowGamma = makeRow("Gamma", "/x/gamma", "idle", false);
 const rows = [rowAlpha, rowBeta, rowGamma];
 
 const hiddenRows = [{ hidden: false, textContent: "Zeta hidden-project" }];
@@ -2076,6 +2083,10 @@ globalThis.document = {
     if (sel === "[data-hidden-projects]") return hiddenSection;
     if (sel === '[data-projects-filter][aria-pressed="true"]') {
       return filterButtons.find((b) => b.attrs["aria-pressed"] === "true") || null;
+    }
+    const named = /^\\[data-projects-filter="(.*)"\\]$/.exec(sel);
+    if (named) {
+      return filterButtons.find((b) => b.attrs["data-projects-filter"] === named[1]) || null;
     }
     return null;
   },
@@ -2133,7 +2144,7 @@ console.log(JSON.stringify({
 
 
 def _run_projects_filter(tmp_path, query: str, filter_target, clear_click: bool = False,
-                         view_click=None, stored_view=None):
+                         view_click=None, stored_view=None, stored_location=None):
     harness = tmp_path / "projects_filter_harness.js"
     target_literal = json.dumps(filter_target) if filter_target is not None else "null"
     script = (
@@ -2142,6 +2153,14 @@ def _run_projects_filter(tmp_path, query: str, filter_target, clear_click: bool 
         .replace("CLEAR_CLICK", "true" if clear_click else "false")
         .replace("VIEW_CLICK", json.dumps(view_click) if view_click else "null")
     )
+    if stored_location is not None:
+        # Stands in for the browser's own URL. `/projects?filter=X` is a deep
+        # link the Overview's truncated attention ladder relies on.
+        script = script.replace(
+            "const fs = require",
+            f'globalThis.location = {{ search: {json.dumps(stored_location)} }};'
+            "\nconst fs = require",
+        )
     if stored_view is not None:
         # Stands in for base.html's inline head script, which sets the
         # attribute pre-paint from localStorage before projects.js ever runs.
@@ -2180,10 +2199,13 @@ def test_projects_filter_running_combines_with_the_search(tmp_path):
 
 
 @pytest.mark.skipif(_node() is None, reason="node is not installed")
-def test_projects_filter_needs_attention_covers_queued_and_running(tmp_path):
+def test_projects_filter_needs_attention_selects_what_the_chip_counts(tmp_path):
+    """The chip's number is `overview.needs_attention` per project, written
+    onto the row as `data-project-attention`. Filtering on a union of row
+    states instead showed the running-but-idle row the chip never counted."""
     got = _run_projects_filter(tmp_path, "", "needs_attention")
-    assert got["rowHidden"] == [False, False, True]
-    assert got["count"] == "2 projects shown"
+    assert got["rowHidden"] == [False, True, True]
+    assert got["count"] == "1 project shown"
 
 
 @pytest.mark.skipif(_node() is None, reason="node is not installed")
@@ -4028,11 +4050,23 @@ const dirty = cell(null, false);
 const runningDd = node();
 const projectsDd = node();
 
+// The tiles' secondary magnitudes, and the unregistered-sessions line under
+// the strip. Both are server-composed strings on the wire; a frame that
+// patches the number and leaves the caption is the same "the words disagree
+// with the number" failure the flag class already guards against.
+const runningSub = node();
+const queuedSub = node();
+const strayNote = node();
+strayNote.hidden = true;
+
 const bySelector = {
   '[data-dashboard-total="running"]': [running.num, runningDd],
   '[data-dashboard-total="attention"]': [attention.num],
   '[data-dashboard-total="dirty"]': [dirty.num],
   '[data-dashboard-total="projects"]': [projectsDd],
+  '[data-dashboard-sub="running"]': [runningSub],
+  '[data-dashboard-sub="queued"]': [queuedSub],
+  '[data-unattributed-note]': [strayNote],
 };
 
 globalThis.document = {
@@ -4052,7 +4086,13 @@ eval(fs.readFileSync(process.argv[2], "utf8"));
 window.bridgeApplyDashboardUpdate({
   schema: 1, kind: "snapshot", generated_at: 1, generation: 1,
   freshness: { server: "available", index_at: 100, index_age_seconds: 0 },
-  topbar: { running: 2, attention: 0, dirty: 5, projects: 9 },
+  topbar: {
+    running: 2, attention: 0, dirty: 5, projects: 9,
+    captions: {
+      running: "6 sessions", queued: "", attention: "",
+      unattributed: "1 session running in a directory Bridge has no project for.",
+    },
+  },
   diagnostics: { alert: false }, card_order: [], cards: {},
   refresh: { attempted: false, completed: true, error: null }, unattributed: [],
 });
@@ -4065,6 +4105,10 @@ console.log(JSON.stringify({
   hiddenProjects: projectsDd.textContent,
   runningLit: running.wrapper.classList.has("is-live"),
   attentionLit: attention.wrapper.classList.has("is-hot"),
+  runningSub: runningSub.textContent,
+  queuedSub: queuedSub.textContent,
+  strayNote: strayNote.textContent,
+  strayHidden: strayNote.hidden,
 }));
 '''
 
@@ -4924,3 +4968,46 @@ def test_dismiss_all_reports_nothing_dismissed_when_every_patch_is_refused(
     assert got["emptyHidden"] is True
     assert "0 of 3" in got["status"]
     assert got["bulkHidden"] is False
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_a_live_frame_patches_the_tile_captions_too(tmp_path):
+    """The caption is the tile's unit ("2 projects" over "10 handoffs"). A
+    frame that patches the number and leaves the caption at its page-load
+    value is a tile whose two halves describe different moments."""
+    got = _run_command_strip(tmp_path)
+    assert got["runningSub"] == "6 sessions"
+    assert got["queuedSub"] == ""
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_a_live_frame_reveals_the_unregistered_sessions_line(tmp_path):
+    """Sessions in directories Bridge has no project for get their own line
+    rather than a share of the Running tile. It renders hidden when there are
+    none, so the first frame that finds one has to unhide it."""
+    got = _run_command_strip(tmp_path)
+    assert got["strayNote"] == (
+        "1 session running in a directory Bridge has no project for."
+    )
+    assert got["strayHidden"] is False
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_a_filter_named_in_the_url_is_pressed_on_arrival(tmp_path):
+    """The Overview's truncated attention ladder links to
+    `/projects?filter=needs_attention`. Landing on the unfiltered list would
+    not show what the link promised."""
+    got = _run_projects_filter(
+        tmp_path, "", None, stored_location="?filter=needs_attention",
+    )
+    assert got["pressed"] == ["false", "true", "false", "false", "false"]
+    assert got["rowHidden"] == [False, True, True]
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_an_unknown_filter_in_the_url_leaves_the_list_alone(tmp_path):
+    """A URL is user input: a filter name with no button must not press
+    nothing and leave every chip unpressed, which would show an empty page."""
+    got = _run_projects_filter(tmp_path, "", None, stored_location="?filter=nope")
+    assert got["pressed"] == ["true", "false", "false", "false", "false"]
+    assert got["rowHidden"] == [False, False, False]

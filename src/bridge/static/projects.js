@@ -231,17 +231,32 @@ function normalizeProjectsQuery(value) {
   return (value || "").toLowerCase();
 }
 
-// "Needs attention" is not a `data-project-state` value of its own -- it is
-// the same predicate `projects_view.build_projects` counts under that name
-// (a queued handoff, a running session, or stale dirty work), so the three
-// states it covers have to be spelled out here rather than added as a fourth
-// row state that would have to be kept in sync with the model's own.
-function projectsMatchesFilter(state, filter) {
+// "Needs attention" is not a `data-project-state` value of its own, and it is
+// not a union of row states either: `running` covers a session mid-turn and
+// one merely sitting idle, and only the first needs a human. The server writes
+// the one predicate it also counts the chip with (`overview.needs_attention`)
+// onto each row as `data-project-attention`, so the chip's number and the rows
+// it selects cannot disagree.
+function projectsMatchesFilter(row, filter) {
   if (filter === "all") return true;
   if (filter === "needs_attention") {
-    return state === "queued" || state === "running" || state === "stale";
+    return row.getAttribute("data-project-attention") === "true";
   }
-  return state === filter;
+  return row.getAttribute("data-project-state") === filter;
+}
+
+// A deep link may name the filter: the Overview's truncated attention ladder
+// links here with `?filter=needs_attention`, and landing on the unfiltered
+// list would not show what the link promised.
+function pressFilterFromLocation() {
+  const location = typeof window !== "undefined" ? window.location : null;
+  const match = /[?&]filter=([a-z_]+)/.exec((location && location.search) || "");
+  if (!match) return;
+  const wanted = document.querySelector(`[data-projects-filter="${match[1]}"]`);
+  if (!wanted) return;
+  document.querySelectorAll("[data-projects-filter]").forEach((btn) => {
+    btn.setAttribute("aria-pressed", String(btn === wanted));
+  });
 }
 
 function applyProjectsFilter() {
@@ -271,7 +286,7 @@ function applyProjectsFilter() {
       const path = normalizeProjectsQuery(row.getAttribute("data-project-path"));
       const matchesQuery = !query || name.includes(query) || path.includes(query);
       const visible = matchesQuery
-        && projectsMatchesFilter(row.getAttribute("data-project-state"), filter);
+        && projectsMatchesFilter(row, filter);
       row.hidden = !visible;
       if (visible) shown += 1;
     });
@@ -388,11 +403,13 @@ document.addEventListener("input", (event) => {
 if (window.bridgePage) {
   window.bridgePage.onEnter(() => {
     restoreGroupState();
+    pressFilterFromLocation();
     applyProjectsFilter();
     applyProjectsView(currentProjectsView());
   });
 } else {
   restoreGroupState();
+  pressFilterFromLocation();
   applyProjectsFilter();
   applyProjectsView(currentProjectsView());
 }

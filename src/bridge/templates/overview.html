@@ -5,9 +5,19 @@
 {% block page_title %}Overview{% endblock %}
 {% block page_eyebrow %}<p class="page-eyebrow">Local control plane</p>{% endblock %}
 {% block page_summary %}
+{#- Both units are named. "N items" counted handoffs, live sessions, stale
+    trees AND failed runs into one number that matched nothing else on the
+    panel: six handoffs on one project read as six items while Projects called
+    the same state one project. Projects are projects; a failed scheduled run
+    is a run, and says so rather than being added in. -#}
 <p class="page-lede">
-  {% if model.attention_total %}
-    {{ model.attention_total }} item{{ "" if model.attention_total == 1 else "s" }} need{{ "s" if model.attention_total == 1 else "" }} your attention. Everything else can wait.
+  {% set failed = model.schedule_failures %}
+  {% if model.attention_total and failed %}
+    {{ model.attention_total }} project{{ "" if model.attention_total == 1 else "s" }} and {{ failed }} failed scheduled run{{ "" if failed == 1 else "s" }} need your attention.
+  {% elif model.attention_total %}
+    {{ model.attention_total }} project{{ "" if model.attention_total == 1 else "s" }} need{{ "s" if model.attention_total == 1 else "" }} your attention. Everything else can wait.
+  {% elif failed %}
+    {{ failed }} failed scheduled run{{ "" if failed == 1 else "s" }} need{{ "s" if failed == 1 else "" }} your attention.
   {% else %}
     Nothing needs your attention right now.
   {% endif %}
@@ -39,18 +49,27 @@
     can keep the colour honest when it writes the number without knowing which
     class this template chose -- a cell left `is-hot` while its count patched
     down to 0 is a lit warning for nothing. -#}
+{#- Every headline here is a count of PROJECTS (`overview.count_summary`), and
+    "Scheduled runs" says outright that it is the one cell that is not. Where a
+    second magnitude is genuinely useful -- the handoffs behind those queued
+    projects, the sessions behind those running ones -- it is the caption under
+    the label, composed server-side by `overview.count_captions` and patched
+    from `topbar.captions` so a live frame cannot word it differently. -#}
 <div class="overview-command-strip" role="group" aria-label="System at a glance">
   <div class="command-cell{% if model.totals.running %} is-live{% endif %}" data-cell-flag="is-live">
     <span class="command-cell__num" data-dashboard-total="running">{{ model.totals.running }}</span>
     <span class="command-cell__label">Running</span>
+    <span class="command-cell__sub card__note" data-dashboard-sub="running">{{ model.totals.captions.running }}</span>
   </div>
   <div class="command-cell{% if model.attention_total %} is-hot{% endif %}" data-cell-flag="is-hot">
     <span class="command-cell__num" data-dashboard-total="attention">{{ model.attention_total }}</span>
     <span class="command-cell__label">Needs attention</span>
+    <span class="command-cell__sub card__note" data-dashboard-sub="attention">{{ model.totals.captions.attention }}</span>
   </div>
   <div class="command-cell">
     <span class="command-cell__num" data-dashboard-total="queued">{{ model.totals.queued }}</span>
     <span class="command-cell__label">Queued</span>
+    <span class="command-cell__sub card__note" data-dashboard-sub="queued">{{ model.totals.captions.queued }}</span>
   </div>
   <div class="command-cell">
     <span class="command-cell__num" data-dashboard-total="dirty">{{ model.totals.dirty }}</span>
@@ -58,13 +77,20 @@
   </div>
   <div class="command-cell">
     <span class="command-cell__num" data-dashboard-total="scheduled">{{ model.totals.scheduled }}</span>
-    <span class="command-cell__label">Scheduled</span>
+    <span class="command-cell__label">Scheduled runs</span>
   </div>
   <div class="command-cell">
     <span class="command-cell__num" data-dashboard-total="projects">{{ model.totals.projects }}</span>
     <span class="command-cell__label">Projects</span>
   </div>
 </div>
+{#- Sessions running where Bridge has no project. They are deliberately NOT in
+    the Running tile: folding them into a project count is what made Overview
+    say "Running 5" against Projects' "Running 1". Rendered (and patched)
+    hidden when there are none rather than omitted, so live.js has a node to
+    write into on the first frame that finds one. -#}
+<p class="card__note" data-unattributed-note
+   {%- if not model.totals.captions.unattributed %} hidden{% endif %}>{{ model.totals.captions.unattributed }}</p>
 <section class="overview-attention" aria-labelledby="overview-attention-title">
   <div class="overview-section-head">
     <div>
@@ -123,8 +149,16 @@
             ended-at, so that guard would drop its branch and dirty count
             entirely, and a row labelled "Last activity" whose value is a branch
             name would be a lie. -#}
-        {% if primary.meta.created_at or primary.meta.branch or primary.meta.dirty_count or wait %}
+        {% set queued_here = primary.meta.handoff_count or 0 %}
+        {% if primary.meta.created_at or primary.meta.branch or primary.meta.dirty_count or wait or queued_here > 1 %}
         <dl class="attention-detail">
+          {#- The ladder is one entry per project, so a project holding several
+              handoffs must say how many here or the other five vanish. -#}
+          {% if queued_here > 1 %}
+          <div class="attention-detail__row">
+            <dt>Queued</dt><dd>{{ queued_here }} handoffs</dd>
+          </div>
+          {% endif %}
           {% if primary.meta.created_at %}
           <div class="attention-detail__row">
             <dt>Last activity</dt>
@@ -176,6 +210,21 @@
       </div>
       {% endif %}
     </div>
+    {#- The page shows at most ATTENTION_LIMIT of the ladder and used to say so
+        nowhere: "17 items need your attention" sat above three cards with no
+        way to reach the other fourteen. The link filters Projects to the same
+        predicate this ladder uses (`?filter=needs_attention`), and the failed
+        runs -- which are not projects and so are not on that page -- get their
+        own destination. -#}
+    {% set shown = model.attention | length %}
+    {% set ladder_total = model.attention_total + model.schedule_failures %}
+    {% if shown < ladder_total %}
+    <p class="overview-section-head__hint" data-attention-more>
+      Showing {{ shown }} of {{ ladder_total }} ·
+      <a href="/projects?filter=needs_attention">View all {{ model.attention_total }} project{{ "" if model.attention_total == 1 else "s" }}</a>
+      {%- if model.schedule_failures %} · <a href="/schedule">{{ model.schedule_failures }} failed run{{ "" if model.schedule_failures == 1 else "s" }}</a>{% endif %}
+    </p>
+    {% endif %}
   {% endif %}
 </section>
 

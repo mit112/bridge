@@ -1905,13 +1905,27 @@ def test_sse_emits_on_a_queued_count_change_with_no_generation_bump(tmp_path, mo
     without `topbar.queued` in `live_signature`, that branch saw no
     difference at all. Creating a handoff for real between ticks would work
     too, but there is no hook to run it exactly between tick 1 and tick 2 of
-    a single streamed response; stubbing the exact count `_envelope` reads
-    isolates the signature comparison itself from that plumbing problem."""
+    a single streamed response; stubbing the exact rows `_envelope`'s count reads
+    isolates the signature comparison itself from that plumbing problem.
+    (`topbar.queued` counts the PROJECTS holding queued handoffs now, so what
+    is stubbed is the per-project handoff list the cards are built from, not a
+    store-wide handoff tally.)"""
     cfg = load({"db_path": tmp_path / "queued.db", "spool_dir": tmp_path / "spool"})
     store = Store(cfg.db_path)
     store.upsert_project("/p/queued", "queued")
-    counts = iter([0, 1, 1, 1])
-    monkeypatch.setattr(store, "queued_handoff_count", lambda: next(counts))
+    builds = {"n": 0}
+
+    def queued_handoffs(_project_id):
+        builds["n"] += 1
+        return [] if builds["n"] == 1 else [
+            # `session_since` too: the real `queued_handoffs` selects it, and a
+            # stub that omits it makes `cards._handoffs` raise rather than
+            # exercise the signature comparison this test is about.
+            {"id": "h1", "next_prompt": "go", "status": "queued",
+             "session_since": 0},
+        ]
+
+    monkeypatch.setattr(store, "queued_handoffs", queued_handoffs)
 
     c = TestClient(create_app(store, cfg))
     with c.stream("GET", "/events?max_ticks=2&interval=0") as r:
@@ -2592,38 +2606,52 @@ def test_the_topbar_reports_a_burn_rate_over_the_measured_window(client):
     assert "<meter" not in body          # and no gauge implying one
 
 
-def test_the_topbar_reports_running_sessions_and_queued_handoffs(
+def test_the_topbar_counts_running_projects_and_captions_the_sessions(
     client, monkeypatch
 ):
-    """Both counts must be non-zero and different from each other.
+    """`running` is a count of PROJECTS, and the sessions behind it are the
+    caption -- not the headline.
 
-    Asserting `running` is 0 against conftest's empty registry proved nothing:
-    a topbar hardcoded to 0 passed it. Two sessions and one handoff is what
-    makes the two numbers tell each other apart.
+    Three sessions live in ONE project here. The old topbar read that as
+    "Running 2" (non-terminal sessions) while the Projects page read the same
+    state as "Running 1", which is the mixed-unit bug: two surfaces answering
+    two different questions under one word. Both counts must still be non-zero
+    and different from each other, so a topbar hardcoded to either number
+    fails.
     """
     from bridge import agents
     from bridge.models import AgentsState, LiveSession
 
+    c, store, pid = client
+    store.upsert_project("/p/busy", "busy-project")
+    # A SECOND queued project, so `queued` (2) and `running` (1) cannot be
+    # confused for each other: swapping the two expressions has to fail here.
+    other = store.upsert_project("/p/queued-too", "queued-too")
+    store.create_handoff(Handoff(
+        id="h-other", project_path="/p/queued-too", next_prompt="go",
+        status="queued",
+    ), other)
+
     def live(*_a, **_kw):
         return AgentsState(status="ok", sessions=[
-            LiveSession(session_id="a", cwd=DEMO, kind="interactive",
+            LiveSession(session_id="a", cwd="/p/busy", kind="interactive",
                         status="busy"),
-            LiveSession(session_id="b", cwd=DEMO, kind="interactive",
+            LiveSession(session_id="b", cwd="/p/busy", kind="interactive",
                         status="idle"),
             # Terminal, so it is running for nobody and must not be counted.
-            LiveSession(session_id="c", cwd=DEMO, kind="background",
+            LiveSession(session_id="c", cwd="/p/busy", kind="background",
                         status="done"),
         ])
 
     monkeypatch.setattr(agents, "probe", live)
 
-    c, store, pid = client
     store.create_handoff(Handoff(
         id="h-top", project_path=DEMO, next_prompt="go", status="queued",
     ), pid)
     body = c.get("/").text
-    assert re.search(r"<dt>queued</dt><dd[^>]*>1</dd>", body)
-    assert re.search(r"<dt>running</dt><dd[^>]*>2</dd>", body)
+    assert re.search(r"<dt>queued</dt><dd[^>]*>2</dd>", body)
+    assert re.search(r"<dt>running</dt><dd[^>]*>1</dd>", body)
+    assert '<span class="command-cell__sub card__note" data-dashboard-sub="running">2 sessions</span>' in body
 
 
 def test_the_topbar_says_never_rather_than_leaving_the_index_time_blank(client):
@@ -2702,8 +2730,12 @@ def test_the_unattributed_block_holds_the_same_status_the_cards_do(
     second = c.get("/").text
     store.close()
 
-    assert re.search(r"<dt>running</dt><dd[^>]*>1</dd>", first)
-    assert re.search(r"<dt>running</dt><dd[^>]*>1</dd>", second), (
+    # A session in an unregistered directory is no longer a share of any
+    # project count -- it has its own line -- so that line is where the
+    # hysteresis is now observable.
+    note = "1 session running in a directory Bridge has no project for."
+    assert note in first
+    assert note in second, (
         "the sensor said idle once, inside the hold, so running must still count it"
     )
 
@@ -2737,7 +2769,12 @@ def test_a_session_outside_any_project_is_shown_with_its_directory(
         payload = _frames("".join(r.iter_text()))[0][1]
 
     assert any(u["path"] == "/Users/you/scratch" for u in payload["unattributed"])
-    assert re.search(r"<dt>running</dt><dd[^>]*>1</dd>", c.get("/").text)
+    # And it must NOT inflate a project count: Overview said "Running 5" off
+    # the session list while Projects said 1, because sessions in directories
+    # that are not registered projects were counted as running projects.
+    html = c.get("/").text
+    assert re.search(r"<dt>running</dt><dd[^>]*>0</dd>", html)
+    assert "1 session running in a directory Bridge has no project for." in html
 
 
 def test_a_session_inside_a_project_stays_on_its_card(client, monkeypatch):
