@@ -143,8 +143,8 @@ def test_handoff_block_keys_the_section_on_the_handoff_id_for_the_morph():
 
 # --- Lane D: a queued handoff a later session has overtaken -----------------
 #
-# `session_since` comes off `store.queued_handoffs` and says a session in this
-# project STARTED after the prompt was written. Supersession is scoped to the
+# `overtaken` comes off `store.queued_handoffs` and says a later session in this
+# project DID WORK after the prompt was written. Supersession is scoped to the
 # source session, so nothing retires these rows -- the panel showed six equally
 # loud "Ready" badges with no way to tell which prompt was still real.
 
@@ -153,12 +153,12 @@ def test_a_demoted_handoff_states_the_fact_instead_of_claiming_ready():
     mod = _module()
     card = _card()
 
-    fresh = mod.handoff_block(card, _handoff("h1", session_since=False), None)
-    demoted = mod.handoff_block(card, _handoff("h2", session_since=True), None)
+    fresh = mod.handoff_block(card, _handoff("h1", overtaken=False), None)
+    demoted = mod.handoff_block(card, _handoff("h2", overtaken=True), None)
 
     assert ">Ready</span>" in fresh
-    assert "A session has run since" not in fresh
-    assert ">A session has run since</span>" in demoted
+    assert "Work has continued since" not in fresh
+    assert ">Work has continued since</span>" in demoted
     assert ">Ready</span>" not in demoted
     # Colour is never the only cue, and the quiet pill is an existing one.
     assert "pill--idle" in demoted
@@ -168,12 +168,12 @@ def test_a_demoted_handoff_states_the_fact_instead_of_claiming_ready():
 def test_the_demotion_is_part_of_the_sections_accessible_name():
     """A sighted user reads the badge; a screen-reader user must get the same
     words. The pill is listed in `aria-labelledby` alongside the title, so the
-    section announces "<title>, A session has run since" -- not a bare title
+    section announces "<title>, Work has continued since" -- not a bare title
     whose demotion exists only as a CSS class."""
-    demoted = _module().handoff_block(_card(), _handoff("h2", session_since=True), None)
+    demoted = _module().handoff_block(_card(), _handoff("h2", overtaken=True), None)
 
     assert 'aria-labelledby="handoff-h2-title handoff-h2-state"' in demoted
-    assert 'id="handoff-h2-state">A session has run since</span>' in demoted
+    assert 'id="handoff-h2-state">Work has continued since</span>' in demoted
 
 
 def test_a_demoted_handoff_hides_its_prompt_behind_one_disclosure():
@@ -189,9 +189,9 @@ def test_a_demoted_handoff_hides_its_prompt_behind_one_disclosure():
     card = _card()
 
     fresh = mod.handoff_block(
-        card, _handoff("h1", session_since=False), None, collapse_prompt=True)
+        card, _handoff("h1", overtaken=False), None, collapse_prompt=True)
     demoted = mod.handoff_block(
-        card, _handoff("h2", session_since=True), None, collapse_prompt=True)
+        card, _handoff("h2", overtaken=True), None, collapse_prompt=True)
 
     assert "handoff__demoted-body" not in fresh
     assert 'class="handoff-prompt"' in fresh

@@ -1974,11 +1974,11 @@ def test_sse_emits_on_a_queued_count_change_with_no_generation_bump(tmp_path, mo
     def queued_handoffs(_project_id):
         builds["n"] += 1
         return [] if builds["n"] == 1 else [
-            # `session_since` too: the real `queued_handoffs` selects it, and a
+            # `overtaken` too: the real `queued_handoffs` selects it, and a
             # stub that omits it makes `cards._handoffs` raise rather than
             # exercise the signature comparison this test is about.
             {"id": "h1", "next_prompt": "go", "status": "queued",
-             "session_since": 0},
+             "overtaken": 0},
         ]
 
     monkeypatch.setattr(store, "queued_handoffs", queued_handoffs)

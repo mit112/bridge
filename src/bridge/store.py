@@ -236,6 +236,26 @@ COLUMN_MIGRATIONS: dict[str, dict[str, str]] = {
 # uptime model, where startup is the only housekeeping event there is.
 SCHEDULED_RUN_RETENTION_DAYS = 30
 
+# How much a session has to have cost before it counts as having DONE WORK in
+# a project, for the purposes of overtaking a queued handoff (`queued_handoffs`
+# below). Measured against the real corpus on this machine (9,258 sessions):
+#
+#   * 8,678 of them -- 94% -- have exactly one user message. Their median total
+#     is 62 tokens, their 99th percentile 5,091, and their MAXIMUM 11,336. That
+#     is the glance population: a launch abandoned after one question, a `-p`
+#     one-shot, a hook. None of them moved the project.
+#   * Raising the bar past 10k barely changes the answer: 469 sessions clear
+#     10k, 454 clear 15k, 443 clear 20k, 434 clear 30k. The distribution is
+#     empty between the glances and the working sessions, and 10k sits in that
+#     gap -- so the exact figure is not load-bearing, which is the property a
+#     judgement call should have.
+#
+# Tokens rather than message counts because a headless agent run has one user
+# message and can still do a day's work; `user_msgs` would score it zero.
+# `tokens_in + tokens_out` only -- cache reads are not effort, and they are the
+# term that would drag a re-read of a big transcript over any threshold.
+WORKED_TOKENS = 10_000
+
 
 def to_epoch(iso: str | None) -> int | None:
     if not iso:
@@ -623,7 +643,7 @@ class Store:
 
     def queued_handoffs(self, project_id: int) -> list[sqlite3.Row]:
         """Each queued handoff plus its OWN source session's title, and whether
-        a session in the project has started since it was written.
+        a later session in the project has since DONE WORK -- `overtaken`.
 
         The join is here rather than a `session_row` call per handoff in
         `cards._handoffs`: that ran on every card build, SSE ticks included, so
@@ -631,14 +651,43 @@ class Store:
         second. `LEFT` because a source session may be unknown or not yet
         indexed -- that handoff is still queued and still has to render.
 
-        `session_since` rides along as a correlated subquery for the same
-        reason: it is read on every card build, and supersession is scoped to
-        the source session (see `create_handoff`), so a session started outside
+        `overtaken` rides along as a correlated subquery for the same reason:
+        it is read on every card build, and supersession is scoped to the
+        source session (see `create_handoff`), so a session started outside
         Bridge leaves its predecessor's handoff queued forever with nothing on
-        the row to say work moved on. A session that STARTED after this handoff
-        was created is direct evidence it did. This is a presentation signal
-        only -- no status is written, and Dismiss remains the only thing that
-        retires a handoff.
+        the row to say work moved on.
+
+        It used to be enough for a later session to have STARTED. That is
+        literally true and practically inert: 94% of the sessions on this
+        machine are one-message glances, so on a project with six queued
+        handoffs every one of them was marked and the badge became furniture.
+        A session overtakes a handoff only if it actually did something:
+
+          * it wrote a handoff of ITS OWN -- definitive, a session only writes
+            one at a real boundary, but sparse (17 of boardwatch's 450), so it
+            cannot carry the rule alone; or
+          * it was substantive rather than a glance: `WORKED_TOKENS` of real
+            (non-cache) traffic. See that constant for the distribution the
+            threshold was cut from.
+
+        A session that opened, asked one question and closed is on the "did not
+        overtake" side, which is the whole point of the change. A long session
+        that only READ code is on the "overtook" side, deliberately: Bridge can
+        see volume, not intent, and a 200-message session in this project means
+        attention has already moved here since the prompt was written, whatever
+        it touched. The cost of being wrong is one row rendered quietly -- the
+        handoff stays queued and every control stays live.
+
+        Session-meta (`sessionmeta.py`, commits and files-modified) is
+        deliberately NOT a third disjunct. It is a per-session FILE read, not a
+        column, so it could only join this rule by reading the filesystem once
+        per candidate session on every SSE tick -- and the directory is empty
+        on the real machine, so it would buy nothing for that cost. Getting it
+        into SQL means persisting it at index time; until something does, the
+        two clauses above are the whole rule and the rule degrades to them.
+
+        This stays a presentation signal -- no status is written, and Dismiss
+        remains the only thing that retires a handoff.
 
         `sessions.started_at` is an ISO string, so it is compared through
         `strftime('%s', ...)`; an unparseable or NULL timestamp yields NULL,
@@ -649,11 +698,14 @@ class Store:
                 "SELECT h.*, s.title AS session_title, EXISTS("
                 "  SELECT 1 FROM sessions later WHERE later.project_id = h.project_id"
                 "    AND CAST(strftime('%s', later.started_at) AS INTEGER) > h.created_at"
-                ") AS session_since FROM handoffs h "
+                "    AND (later.tokens_in + later.tokens_out >= ?"
+                "      OR EXISTS(SELECT 1 FROM handoffs w"
+                "                 WHERE w.source_session_id = later.id))"
+                ") AS overtaken FROM handoffs h "
                 "LEFT JOIN sessions s ON s.id = h.source_session_id "
                 "WHERE h.project_id=? AND h.status='queued' "
                 "ORDER BY h.created_at DESC",
-                (project_id,),
+                (WORKED_TOKENS, project_id),
             ))
 
     def queued_handoff(self, project_id: int) -> sqlite3.Row | None:

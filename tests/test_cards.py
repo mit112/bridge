@@ -4,7 +4,7 @@ from bridge import cards as cards_module
 from bridge.cards import build_cards, model_options, sort_key, spark_points
 from bridge.config import ModelChoice, load
 from bridge.models import GitState, SessionRecord
-from bridge.store import Store
+from bridge.store import WORKED_TOKENS, Store
 
 
 @pytest.fixture
@@ -686,16 +686,16 @@ def test_handoff_titles_come_from_one_query_not_a_row_per_handoff(store, tmp_pat
     }
 
 
-def test_each_handoff_reports_whether_a_session_has_started_since_it(store, tmp_path):
-    """`session_since` reaches the card as a real bool, decided per handoff.
+def test_each_handoff_reports_whether_a_session_has_worked_since_it(store, tmp_path):
+    """`overtaken` reaches the card as a real bool, decided per handoff.
 
     SQLite hands back 0/1, and the template branches on it, so a raw integer
     would still render correctly and hide the fact that this is a boolean --
     the assertion is on `is True`/`is False`, not on truthiness.
 
-    `sess-2` starts after `h1` was written and before `h2` was, so exactly one
-    of the two is overtaken. Both remain queued: this is a rendering hint, not
-    a state transition.
+    `sess-2` did real work after `h1` was written and before `h2` was, so
+    exactly one of the two is overtaken. Both remain queued: this is a
+    rendering hint, not a state transition.
     """
     pid = store.upsert_project("/proj/a", "a")
     store.create_handoff(
@@ -705,7 +705,8 @@ def test_each_handoff_reports_whether_a_session_has_started_since_it(store, tmp_
         SessionRecord(session_id="sess-2", transcript_path="/t/sess-2",
                       project_path="/proj/a", title="later work",
                       started_at="2026-09-04T20:00:00.000Z",
-                      ended_at="2026-09-04T21:00:00.000Z"),
+                      ended_at="2026-09-04T21:00:00.000Z",
+                      tokens_in=WORKED_TOKENS, tokens_out=0),
         pid,
     )
     store.create_handoff(
@@ -717,8 +718,8 @@ def test_each_handoff_reports_whether_a_session_has_started_since_it(store, tmp_
     card = next(c for c in cards if c.path == "/proj/a")
     by_id = {h["id"]: h for h in card.handoffs}
 
-    assert by_id["h1"]["session_since"] is True
-    assert by_id["h2"]["session_since"] is False
+    assert by_id["h1"]["overtaken"] is True
+    assert by_id["h2"]["overtaken"] is False
     assert {h["id"] for h in card.handoffs} == {"h1", "h2"}
 
 
