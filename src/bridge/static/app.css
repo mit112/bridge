@@ -2617,3 +2617,60 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
   margin: 0 0 var(--space-4);
   flex-wrap: wrap;
 }
+
+/* The action row under a demoted handoff: quieter, but whole.
+
+   Six overtaken handoffs meant six full-weight rows of Continue in Terminal /
+   Schedule / Copy prompt / Dismiss, every one of them shouting as loudly as
+   the handoff that is actually next. Nothing is removed or disabled here:
+   every control keeps its place in the DOM, its tab stop and its behaviour,
+   and this is colour and scale only.
+
+   The row is the demoted section's NEXT sibling in `_workspace_current.html`,
+   which is why the selector reads forwards.
+
+   Scale is quieted permanently; COLOUR is what comes back on hover and on
+   :focus-within. Growing the controls back on hover would reflow the row under
+   the pointer mid-click -- a real bug traded for a little more contrast in the
+   one state where the user is already looking straight at the row.
+
+   The 26px floor rather than `min-height: auto`: WCAG 2.2 2.5.8 (Target Size,
+   Minimum) is AA and asks for 24x24 CSS px, which .btn's padding alone does
+   not reach at --text-xs.
+
+   Every colour here is --text-secondary, whose ratio against both --surface
+   and --canvas is asserted in tests/test_contrast.py in both themes; no new
+   pair is introduced. The only transition is .btn's own, which is
+   colour-only, so prefers-reduced-motion has nothing to switch off.
+
+   `.btn--primary` is exempt. Exactly one renders on the whole panel (the
+   first row's launch button), so it is not part of the wall this quiets, and
+   dimming it would leave a stack of six with no promoted action at all. */
+.continuation-panel .handoff--demoted + .continuation-actions .btn:not(.btn--primary) {
+  min-height: 26px;
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  background: transparent;
+  border-color: transparent;
+}
+.continuation-panel .handoff--demoted + .continuation-actions .launch__effective,
+.continuation-panel .handoff--demoted + .continuation-actions .launch__change {
+  color: var(--text-secondary);
+  font-weight: 400;
+}
+.continuation-panel .handoff--demoted + .continuation-actions:hover .btn:not(.btn--primary),
+.continuation-panel .handoff--demoted + .continuation-actions:focus-within .btn:not(.btn--primary) {
+  color: var(--btn-fg);
+  background: var(--btn-bg);
+  border-color: var(--btn-border);
+}
+.continuation-panel .handoff--demoted + .continuation-actions:hover .launch__effective,
+.continuation-panel .handoff--demoted + .continuation-actions:focus-within .launch__effective {
+  color: var(--text);
+}
+.continuation-panel .handoff--demoted + .continuation-actions:hover .launch__change,
+.continuation-panel .handoff--demoted + .continuation-actions:focus-within .launch__change {
+  color: var(--work);
+  font-weight: 700;
+}
