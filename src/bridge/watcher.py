@@ -22,6 +22,11 @@ now scales with the *change*, not the corpus:
     cold file mutated in place, a directory whose mtime was restored -- is
     still picked up, just not within the second.
 
+  * **Scope.** `watch_dir` prunes directories the caller does not care about.
+    Watching a file the reindex will never open is pure cost twice over: the
+    stat itself, and -- far worse -- the full reindex its change fires. See
+    `indexer.indexed_dirs` for the production predicate and what it measured.
+
 `on_change` fires only when the *.jsonl file set or one of its (mtime, size)
 pairs actually changed; a directory mtime moving on its own is not a change.
 On a detected change the watcher waits for a `quiet_s` lull before firing
@@ -50,6 +55,7 @@ class FileWatcher:
         poll_s: float = 0.5, quiet_s: float = 0.2,
         clock: Callable[[], float] = time.monotonic,
         hot_s: float = 300.0, full_s: float = 15.0,
+        watch_dir: Callable[[str], bool] | None = None,
     ) -> None:
         self._root = Path(root)
         self._on_change = on_change
@@ -57,6 +63,9 @@ class FileWatcher:
         self._quiet_s = quiet_s
         self._clock = clock
         self._hot_s = hot_s
+        # Which directories are worth watching at all. Default: everything, so
+        # a caller that has no opinion still gets the whole subtree.
+        self._watch_dir = watch_dir or (lambda _dirpath: True)
         self._full_s = full_s
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -85,7 +94,10 @@ class FileWatcher:
         dirs: Dirs = {}
         files: Files = {}
         try:
-            for dirpath, _subdirs, names in os.walk(self._root):
+            for dirpath, subdirs, names in os.walk(self._root):
+                subdirs[:] = [
+                    d for d in subdirs if self._watch_dir(os.path.join(dirpath, d))
+                ]
                 try:
                     dirs[dirpath] = os.stat(dirpath).st_mtime
                 except OSError:
@@ -117,7 +129,7 @@ class FileWatcher:
         for entry in entries:
             try:
                 if entry.is_dir(follow_symlinks=False):
-                    if entry.path not in dirs:
+                    if entry.path not in dirs and self._watch_dir(entry.path):
                         # A directory created since the last walk: adopt its
                         # whole subtree, which may already hold transcripts.
                         changed |= self._adopt(entry.path, dirs, files)
@@ -143,7 +155,10 @@ class FileWatcher:
         """Walk a newly-appeared subtree in. True if it contributed a file."""
         changed = False
         try:
-            for sub, _subdirs, names in os.walk(dirpath):
+            for sub, subdirs, names in os.walk(dirpath):
+                subdirs[:] = [
+                    d for d in subdirs if self._watch_dir(os.path.join(sub, d))
+                ]
                 try:
                     dirs[sub] = os.stat(sub).st_mtime
                 except OSError:

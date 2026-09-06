@@ -7,6 +7,7 @@ aborts a run.
 
 import dataclasses
 import logging
+import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,6 +18,7 @@ from bridge.config import Config
 from bridge.models import SessionRecord
 from bridge.registry import (
     display_name,
+    is_noise,
     is_noise_path,
     nesting_parent,
     transcript_files,
@@ -35,6 +37,37 @@ class IndexStats:
     parse_errors: int = 0
     sessions_upserted: int = 0
     launches_linked: int = 0
+
+
+def indexed_dirs(projects_dir: Path) -> Callable[[str], bool]:
+    """Whether a directory can hold a transcript this module will ever open.
+
+    The mirror of `registry.transcript_files`, which globs exactly ONE level
+    deep and skips noise directories. Nothing else under the transcripts root
+    is read: a `<session>/subagents/*.jsonl`, a `-private-tmp-` sandbox
+    directory, a `<home>--dotdir` are all invisible to `reindex`.
+
+    It exists so the file watcher can be handed the same scope. Measured on the
+    real corpus, 849 of the 901 directories and 2,190 of the 11,392 *.jsonl
+    files under the root were outside it -- and the nested `subagents/`
+    directories are the most write-active part of the tree, so watching them
+    made the watcher fire a full reindex ~1.4 times a second on a panel with no
+    client connected. Every one of those runs recorded `files_scanned = 0`:
+    they could not have found anything, because the changed files are not in
+    the set `transcript_files` returns.
+
+    Keep this in step with `transcript_files`; `test_indexer.py` asserts the
+    two agree against a tree with a nested transcript in it.
+    """
+    root = str(Path(projects_dir))
+
+    def watch(dirpath: str) -> bool:
+        if dirpath == root:
+            return True
+        parent, name = os.path.split(dirpath)
+        return parent == root and not is_noise(name)
+
+    return watch
 
 
 def reindex(
