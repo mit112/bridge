@@ -121,7 +121,7 @@ Suggested order: C12 → C1 → C2 → C3 → C7 → C8 → C6 → C4 → C5 →
 ### 3.5 Registry noise [V]
 - `/Users/mit` (the home directory) is listed as a project "mit". Auto-hide `$HOME` itself.
 - `2026-09-08-session` is a subdirectory of boardwatch surfaced as its own project; Overview
-  also shows two "Job apps/insta…" projects that truncate to the same path. Rule: a project whose
+  also shows two "Job apps/north…" projects that truncate to the same path. Rule: a project whose
   path is inside another registered project's git worktree is folded into the parent (or at
   least badged "nested"). Show the *distinguishing* tail of a path, not a fixed-width prefix.
 

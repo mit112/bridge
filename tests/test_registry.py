@@ -158,12 +158,12 @@ def test_nesting_parent_finds_a_scratch_dir_inside_a_repo(tmp_path):
 
 
 def test_nesting_parent_never_fires_for_siblings(tmp_path):
-    """Component-wise containment. `instalily-v2` is not inside `instalily`
+    """Component-wise containment. `northwind-v2` is not inside `northwind`
     even though its path string starts with every character of it -- the case a
     `startswith` would silently hide the wrong project on."""
-    a = _repo(tmp_path, "Job apps", "instalily")
-    b = _repo(tmp_path, "Job apps", "instabase")
-    prefixed = tmp_path / "Job apps" / "instalily-v2"
+    a = _repo(tmp_path, "Job apps", "northwind")
+    b = _repo(tmp_path, "Job apps", "northgate")
+    prefixed = tmp_path / "Job apps" / "northwind-v2"
     prefixed.mkdir()
     assert nesting_parent(b, [str(a)]) is None
     assert nesting_parent(a, [str(b)]) is None

@@ -1,8 +1,8 @@
 """Every surface that shows a project path must clip the PREFIX, not the tail.
 
-`/Users/you/dev/Job apps/instalily` and `/Users/you/dev/Job apps/instabase` are
+`/Users/you/dev/Job apps/northwind` and `/Users/you/dev/Job apps/northgate` are
 different projects that share every character up to the last four. Clip on the
-right and both render `/Users/you/dev/Job apps/insta…` -- the surviving text is
+right and both render `/Users/you/dev/Job apps/north…` -- the surviving text is
 the part they have in common, so the reader is shown nothing that tells them
 apart. The distinguishing part is the leaf, so the leaf is what has to survive.
 
