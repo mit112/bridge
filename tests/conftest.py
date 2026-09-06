@@ -37,6 +37,37 @@ def launch_by_session(store, session_id: str):
 
 
 @pytest.fixture(autouse=True)
+def home_is_a_tmp_dir(tmp_path, monkeypatch):
+    """Point `Path.home()` and `$HOME` at a per-test directory, for every test.
+
+    The guards below each name one path they refuse. That only works for a path
+    somebody remembered to list: `Config`'s defaults for `claude_projects_dir`,
+    `session_meta_dir` and `discovery_paths` were on nobody's list, so a test
+    that overrode `db_path` and `spool_dir` and nothing else -- the ordinary
+    shape of a `_cfg()` helper -- wrote `session-meta/s1.json` straight into the
+    developer's real `~/.claude/usage-data/session-meta`. Redirecting home makes
+    the whole suite hermetic by construction rather than by enumeration, so a
+    home-derived default added later is covered without anyone editing this
+    file.
+
+    `$HOME` and the `Path.home()` attribute both, because they are two
+    independent readers: `os.path.expanduser` consults the env var, while a
+    `Path.home()` call goes through the classmethod. Module-level constants that
+    already froze a real home at import time (`agents.SESSIONS_DIR`,
+    `sessionmeta.DEFAULT_META_DIR`) are out of reach here and keep their own
+    guards.
+    """
+    # Not `tmp_path / "home"`: several tests build their own subprocess HOME
+    # under that exact name with a bare `mkdir()`, and colliding with them would
+    # turn this guard into a FileExistsError in unrelated tests.
+    fake_home = tmp_path / "hermetic-home"
+    fake_home.mkdir(exist_ok=True)
+    monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: fake_home))
+    return fake_home
+
+
+@pytest.fixture(autouse=True)
 def testclient_addresses_the_panel_over_loopback(monkeypatch):
     """Give every `TestClient` a loopback `base_url` instead of `testserver`.
 

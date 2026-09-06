@@ -9,7 +9,7 @@ from bridge.config import load
 from bridge.indexer import reindex
 from bridge.registry import transcript_files
 from bridge.store import Store, now_epoch
-from tests.conftest import jline, launch_by_session
+from tests.conftest import REAL_BRIDGE_DIR, jline, launch_by_session
 
 SID = "22222222-2222-2222-2222-222222222222"
 
@@ -596,6 +596,14 @@ def test_against_the_real_corpus_no_launch_joins_a_session_it_did_not_launch(
     easier question than the live panel answers.
     """
     monkeypatch.delenv("BRIDGE_CONFIG", raising=False)
+    # Against the `home_is_a_tmp_dir` guard as well, and for the same reason as
+    # the BRIDGE_CONFIG line above: this test's whole subject is the real corpus
+    # and the real aliases, so pointing home at tmp would turn it into a
+    # permanent skip rather than a test. Reads only -- every path the run writes
+    # to is overridden to `tmp_path` below.
+    real_home = REAL_BRIDGE_DIR.parent
+    monkeypatch.setenv("HOME", str(real_home))
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: real_home))
     real = Path.home() / ".claude" / "projects"
     files = transcript_files(real)
     if not files:
@@ -633,6 +641,7 @@ def test_against_the_real_corpus_no_launch_joins_a_session_it_did_not_launch(
         "db_path": tmp_path / "real.db",
         "spool_dir": tmp_path / "spool",
         "launches_dir": tmp_path / "launches",
+        "session_meta_dir": tmp_path / "session-meta",
         "discovery_paths": (tmp_path / "dev",),
     })
     store = Store(cfg.db_path)

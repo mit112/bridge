@@ -330,3 +330,24 @@ def test_update_check_opt_out(tmp_path, monkeypatch):
 def test_update_check_default_on(tmp_path, monkeypatch):
     monkeypatch.setenv("BRIDGE_CONFIG", str(tmp_path / "missing.toml"))
     assert load().update_check_enabled is True
+
+
+def test_the_home_derived_defaults_never_resolve_under_the_real_home():
+    """Every default `load()` builds from `Path.home()` must land in tmp.
+
+    `conftest.home_is_a_tmp_dir` is what makes that true, and this is the test
+    that would notice if it stopped being true: `session_meta_dir` in particular
+    is WRITTEN by the workspace tests, so a regression here means the suite
+    starts depositing fixture files in the developer's own `~/.claude`.
+
+    `REAL_BRIDGE_DIR` is captured at conftest import, before any fixture runs,
+    so it is the only reference to the real home still reachable from inside a
+    test.
+    """
+    from tests.conftest import REAL_BRIDGE_DIR
+
+    real_home = REAL_BRIDGE_DIR.parent
+    cfg = load()
+    for path in (cfg.claude_projects_dir, cfg.session_meta_dir, cfg.db_path,
+                 cfg.spool_dir, cfg.launches_dir, *cfg.discovery_paths):
+        assert real_home not in path.parents, f"{path} is under the real home"

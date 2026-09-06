@@ -21,7 +21,11 @@ from bridge.workspace import build_workspace
 
 
 def _cfg(tmp_path):
-    return load({"db_path": tmp_path / "workspace.db", "spool_dir": tmp_path / "spool"})
+    # `session_meta_dir` is named because a test below WRITES an `s1.json` into
+    # it. Left to its default it resolved under the real home, so the suite was
+    # dropping fixture files into the developer's own session-meta directory.
+    return load({"db_path": tmp_path / "workspace.db", "spool_dir": tmp_path / "spool",
+                 "session_meta_dir": tmp_path / "session-meta"})
 
 
 def _ended(minutes_ago: int) -> str:
