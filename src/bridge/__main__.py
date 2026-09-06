@@ -10,6 +10,8 @@ import json
 import logging
 import sys
 import threading
+import urllib.error
+import urllib.request
 from dataclasses import asdict
 from pathlib import Path
 
@@ -23,6 +25,56 @@ from bridge.update import UpdateChecker
 from bridge.watcher import FileWatcher
 
 log = logging.getLogger(__name__)
+
+# Generous: this waits on a full reindex, not a ping. A refused connection --
+# the "no panel is running" case -- fails immediately and never reaches it.
+SERVER_INDEX_TIMEOUT = 300.0
+
+
+def _defer_index_to_server(cfg) -> dict | None:
+    """Ask a running panel to reindex; None when there is no panel to ask.
+
+    `bridge serve` is the sole writer, and `bridge index` opened its own `Store`
+    unconditionally -- so running the two at once put two writer processes on
+    one database, racing read-modify-write updates on `sessions`. There is
+    already an endpoint that does exactly this work inside the writer, so the
+    fix is to use it.
+
+    Only a refused connection means "nothing is listening". Every other outcome
+    -- an HTTP error, a timeout, an unreadable body -- means something answered
+    on the panel's port, and opening the database anyway would be precisely the
+    second writer this exists to prevent. Those fail closed.
+    """
+    url = f"http://127.0.0.1:{cfg.port}/api/refresh"
+    req = urllib.request.Request(url, data=b"", method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=SERVER_INDEX_TIMEOUT) as resp:
+            raw = resp.read()
+    except urllib.error.HTTPError as exc:
+        print(f"bridge index: the panel on port {cfg.port} refused the refresh "
+              f"({exc.code}); not opening the database as a second writer",
+              file=sys.stderr)
+        return {}
+    except urllib.error.URLError as exc:
+        if isinstance(exc.reason, ConnectionRefusedError):
+            return None
+        print(f"bridge index: could not reach the panel on port {cfg.port} "
+              f"({exc.reason}); not opening the database as a second writer",
+              file=sys.stderr)
+        return {}
+    except OSError as exc:  # a timeout, most likely: something IS listening
+        print(f"bridge index: the panel on port {cfg.port} did not answer "
+              f"({exc}); not opening the database as a second writer",
+              file=sys.stderr)
+        return {}
+
+    print(f"bridge index: a panel is serving on port {cfg.port}; asked it to "
+          "reindex instead of opening the database here", file=sys.stderr)
+    try:
+        body = json.loads(raw or b"{}")
+    except ValueError:
+        return {}
+    return (body.get("refresh") or {}).get("stats") or {}
 
 
 def run_db_command(argv: list[str] | None = None) -> int:
@@ -56,6 +108,15 @@ def run_db_command(argv: list[str] | None = None) -> int:
     if args.spool_dir:
         overrides["spool_dir"] = Path(args.spool_dir)
     cfg = load(overrides)
+
+    # Before the `Store` is opened, not after: opening it at all is the thing
+    # being avoided.
+    if args.cmd == "index":
+        served = _defer_index_to_server(cfg)
+        if served is not None:
+            print(json.dumps(served, indent=2))
+            return 0
+
     store = Store(cfg.db_path)
 
     if args.cmd == "index":

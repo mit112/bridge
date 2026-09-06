@@ -1,4 +1,5 @@
 import json
+import socket
 import threading
 import time
 
@@ -12,7 +13,23 @@ from bridge.store import Store
 DEMO = "/Users/you/dev/demo"
 
 
-def test_index_subcommand_runs_and_reports(tmp_path, capsys):
+def closed_port() -> int:
+    """A port with nothing listening, verified rather than assumed."""
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+    probe = socket.socket()
+    probe.settimeout(0.25)
+    assert probe.connect_ex(("127.0.0.1", port)) != 0, f"port {port} is open"
+    probe.close()
+    return port
+
+
+def test_index_subcommand_runs_and_reports(tmp_path, capsys, monkeypatch):
+    # A closed port, so `index` takes the "no panel is running" branch rather
+    # than deferring to whatever happens to be serving on 8787 on this machine.
+    monkeypatch.setenv("BRIDGE_PORT", str(closed_port()))
     projects = tmp_path / "projects"
     (projects / "-Users-you-dev-demo").mkdir(parents=True)
     code = main(["index", "--projects-dir", str(projects),
@@ -42,7 +59,11 @@ def serve_cfg(tmp_path, monkeypatch):
     launches.mkdir()
     cfg = load({"db_path": tmp_path / "s.db", "spool_dir": tmp_path / "spool",
                 "launches_dir": launches,
-                "claude_projects_dir": tmp_path / "projects"})
+                "claude_projects_dir": tmp_path / "projects",
+                # A closed port, so an `index` run through this fixture takes
+                # the "no panel is running" branch rather than deferring to
+                # whatever happens to be serving on 8787 on this machine.
+                "port": closed_port()})
     monkeypatch.setattr(entry, "load", lambda overrides: cfg)
     served = []
     monkeypatch.setattr("uvicorn.run", lambda app, **kw: served.append(kw))
@@ -358,3 +379,69 @@ def test_serve_respects_update_check_disabled(tmp_path, monkeypatch):
 
     assert main(["serve"]) == 0
     assert seen["enabled"] is False
+
+
+# --- `bridge index` must never become a second writer -----------------------
+
+
+def test_index_defers_to_a_running_panel_instead_of_opening_the_database(
+    tmp_path, monkeypatch, capsys
+):
+    """`bridge serve` is the sole writer.
+
+    `index` opened its own `Store` unconditionally, so running it while the
+    panel was up put two writer processes on one database, racing the
+    read-modify-write updates the indexer makes to `sessions`. A panel that
+    answers gets asked to do the work instead -- and the database file must not
+    even be created here, which is what proves no second connection was opened.
+    """
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    posts = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            posts.append(self.path)
+            body = json.dumps(
+                {"refresh": {"stats": {"files_seen": 7, "files_scanned": 3}}}
+            ).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    monkeypatch.setenv("BRIDGE_PORT", str(server.server_address[1]))
+    db = tmp_path / "never-opened.db"
+    try:
+        code = main(["index", "--projects-dir", str(tmp_path / "projects"),
+                     "--db", str(db), "--spool-dir", str(tmp_path / "spool")])
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    assert code == 0
+    assert posts == ["/api/refresh"]
+    assert not db.exists(), "index opened the database despite a live panel"
+    out = capsys.readouterr()
+    assert json.loads(out.out)["files_seen"] == 7
+    assert "asked it to reindex" in out.err
+
+
+def test_index_still_indexes_locally_when_no_panel_answers(tmp_path, monkeypatch):
+    """The fallback has to stay: with no server there is no second writer."""
+    monkeypatch.setenv("BRIDGE_PORT", str(closed_port()))
+    projects = tmp_path / "projects"
+    (projects / "-Users-you-dev-demo").mkdir(parents=True)
+    db = tmp_path / "local.db"
+
+    code = main(["index", "--projects-dir", str(projects), "--db", str(db),
+                 "--spool-dir", str(tmp_path / "spool")])
+
+    assert code == 0
+    assert db.exists(), "index must open the database when nothing is serving"
