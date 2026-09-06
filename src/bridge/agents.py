@@ -33,6 +33,8 @@ the false quiescence the design forbids. A record with neither field is
 import json
 import os
 import subprocess
+import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -247,11 +249,70 @@ def read_registry(sessions_dir=None, alive_fn=None) -> AgentsState:
                        version=version)
 
 
-def probe(sessions_dir=None) -> AgentsState:
+# How long a probe result is reused before the registry is read again.
+#
+# This is the whole trade: a cached probe means a session's status can be up to
+# `PROBE_TTL_S` stale. One second is the number because of what sits either
+# side of it.
+#
+#   * The SSE rebuild floor is 0.2 s, so under a bump storm a single connected
+#     tab could drive five `read_registry` calls a second -- and each one costs
+#     ~10.9 ms, dominated by spawning `/bin/ps`. That is ~5% of a core per tab,
+#     for a machine-wide fact that cannot have changed five times a second.
+#     1.0 s caps it at one read per second NO MATTER how many tabs are open,
+#     because the cache is process-global and the probe is not per-client.
+#   * The active-surface refresh cadence is ~3 s. A 1.0 s TTL is strictly finer
+#     than that, so no polled surface can ever show data older than it would
+#     have shown anyway. Going above 3 s would start costing real freshness;
+#     going below 0.2 s would buy nothing over the rebuild floor.
+#
+# The one path that must NOT be blunted is hooks, and it is not: `/api/hooks`
+# feeds liveness through `hooks.HookState`, an in-memory overlay the dashboard
+# re-applies on top of the probe result on every single rebuild. A
+# `needs_input` transition therefore lands at the next frame regardless of this
+# cache. What the TTL does delay is a brand-new session's *appearance* in the
+# live band, since that comes from the registry -- bounded at 1.0 s, and below
+# the 3 s cadence of the surfaces that would show it.
+PROBE_TTL_S = 1.0
+
+# A single slot, not a dict: the probe is a whole-machine reading, so there is
+# only ever one answer worth holding. The directory is part of the slot purely
+# so that pointing the sensor somewhere else (tests, a diagnostic) is a miss
+# rather than a wrong answer -- it is not a cache key in the sense of
+# accumulating entries.
+_probe_lock = threading.Lock()
+_probe_cache: "tuple[str, float, AgentsState] | None" = None
+
+
+def reset_probe_cache() -> None:
+    """Drop the cached reading. For tests; production lets the TTL do it."""
+    global _probe_cache
+    with _probe_lock:
+        _probe_cache = None
+
+
+def probe(sessions_dir=None, *, force: bool = False,
+          ttl_s: float = PROBE_TTL_S) -> AgentsState:
     """The sensor the panel calls. Registry only: the subprocess is not a
     fallback, because a slow path on every SSE tick per connected tab is the
-    cost this design exists to avoid."""
-    return read_registry(sessions_dir)
+    cost this design exists to avoid.
+
+    The reading is reused for `ttl_s` seconds -- see `PROBE_TTL_S` for why that
+    is the number and why the hook path is unaffected by it. `force=True` is
+    the explicit escape hatch for a caller that needs the registry read now.
+    """
+    global _probe_cache
+    key = str(sessions_dir if sessions_dir is not None else SESSIONS_DIR)
+    now = time.monotonic()
+    if not force:
+        with _probe_lock:
+            cached = _probe_cache
+        if cached is not None and cached[0] == key and now < cached[1]:
+            return cached[2]
+    state = read_registry(sessions_dir)
+    with _probe_lock:
+        _probe_cache = (key, now + ttl_s, state)
+    return state
 
 
 # --- attribution -------------------------------------------------------------
