@@ -245,8 +245,8 @@
   {
     "name": "stop resetting the .shell__body scroll container on arrival, leaving a swap wherever the last page was scrolled",
     "file": "src/bridge/static/router.js",
-    "old": "  const body = document.querySelector(\".shell__body\");\n  if (body) body.scrollTop = 0;",
-    "new": "",
+    "old": "  window.scrollTo(0, 0);\n  if (body) body.scrollTop = 0;\n}",
+    "new": "}",
     "tests": [
       "tests/test_shell_contract.py::test_router_lands_a_swap_at_the_top_without_a_focus_scroll"
     ],

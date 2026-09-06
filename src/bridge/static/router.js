@@ -64,10 +64,39 @@ function applyFragment(parsed) {
   return true;
 }
 
+// Where the page is scrolled right now, in both containers: `.shell__body` is
+// the scroll container at >=1024px and the window is below it, and which one
+// holds the offset is a CSS breakpoint decision this file cannot see. Saved
+// into the history entry being left so Back can put it back.
+function scrollPosition() {
+  const body = document.querySelector(".shell__body");
+  return {
+    x: window.scrollX || 0,
+    y: window.scrollY || 0,
+    body: body ? body.scrollTop || 0 : 0,
+  };
+}
+
+// Records `pos` on the CURRENT history entry, just before pushState creates
+// the next one. Guarded on replaceState being callable so a host without it
+// keeps the old land-at-the-top behaviour rather than throwing into
+// navigate()'s catch, which would turn every link into a full page load.
+function saveScrollPosition(pos) {
+  const entries = window.history;
+  if (!pos || !entries || typeof entries.replaceState !== "function") return;
+  const state = Object.assign({}, entries.state, { bridge: true, scroll: pos });
+  entries.replaceState(state, "");
+}
+
 // A swap moves neither focus nor the screen reader's attention -- the browser
 // does that for a real navigation and does nothing for a DOM replacement. Both
 // are required, not polish.
-function announceArrival() {
+//
+// `restore` is the scroll position saved on the history entry a Back/Forward
+// landed on. A real navigation restores the position the browser recorded;
+// pushState navigation gets none of that for free, so without this Back
+// dropped the user at the top of a page they had scrolled deep into.
+function announceArrival(restore) {
   const main = document.getElementById("main");
   // Focus the new content for the screen reader, but NOT with the browser's
   // scroll-into-view. At >=1024px the shell is a fixed 100vh cage and
@@ -76,11 +105,18 @@ function announceArrival() {
   // top and push the whole page header (breadcrumb, title, actions) out of
   // view. `preventScroll` keeps focus a pure a11y move.
   if (main && main.focus) main.focus({ preventScroll: true });
-  // Land at the top like a real navigation. `window.scrollTo` handles the
-  // document scroll below 1024px; resetting `.shell__body` handles the scroll
-  // container at and above it, where `window.scrollTo` is a no-op.
-  window.scrollTo(0, 0);
+  // Land at the top like a real navigation -- unless this is a pop with a
+  // recorded position, which lands where the user left off instead.
+  // `window.scrollTo` handles the document scroll below 1024px; setting
+  // `.shell__body` handles the scroll container at and above it, where
+  // `window.scrollTo` is a no-op.
   const body = document.querySelector(".shell__body");
+  if (restore) {
+    window.scrollTo(restore.x || 0, restore.y || 0);
+    if (body) body.scrollTop = restore.body || 0;
+    return;
+  }
+  window.scrollTo(0, 0);
   if (body) body.scrollTop = 0;
 }
 
@@ -95,10 +131,13 @@ function announceArrival() {
 // href either -- the newer navigation is already doing the right thing.
 let navEpoch = 0;
 
-async function navigate(href, { push = true } = {}) {
+async function navigate(href, { push = true, restore = null } = {}) {
   const url = new URL(href, window.location.href);
   if (!swappable(url)) { window.location.assign(href); return; }
   const epoch = ++navEpoch;
+  // Read before anything awaits: the swap below replaces the very container
+  // whose offset this is.
+  const departure = push ? scrollPosition() : null;
   try {
     // Awaited -- not fire-and-forget. A leave hook's own async work (launch.js's
     // prompt flush) must settle before the fragment fetch and the swap it feeds,
@@ -114,9 +153,12 @@ async function navigate(href, { push = true } = {}) {
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const parsed = parseFragment(await response.text());
     if (!parsed || !applyFragment(parsed)) throw new Error("unusable fragment");
-    if (push) window.history.pushState({ bridge: true }, "", url.href);
+    if (push) {
+      saveScrollPosition(departure);
+      window.history.pushState({ bridge: true }, "", url.href);
+    }
     window.bridgePage.enter();
-    announceArrival();
+    announceArrival(restore);
   } catch (error) {
     if (epoch !== navEpoch) return;  // a newer navigation already took over
     // Never strand the user on a link that did nothing. A real navigation is
@@ -154,7 +196,15 @@ if (document.addEventListener) {
     navigate(url.href);
   });
 
-  window.addEventListener("popstate", () => {
-    navigate(window.location.href, { push: false });
+  window.addEventListener("popstate", (event) => {
+    // The entry being restored carries the scroll position saved when it was
+    // pushed. `event.state` is the authority; the current entry's own state is
+    // the fallback for a host that dispatches the event without one.
+    const state = (event && event.state)
+      || (window.history ? window.history.state : null);
+    navigate(window.location.href, {
+      push: false,
+      restore: state && state.scroll ? state.scroll : null,
+    });
   });
 }

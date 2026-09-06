@@ -163,7 +163,9 @@ def test_router_lands_a_swap_at_the_top_without_a_focus_scroll():
     page-head height) instead of 0.
     """
     text = source("router.js")
-    assert "preventScroll" in text, (
+    # The exact token, not the bare identifier: `preventScroll: false` contains
+    # "preventScroll" and would have passed while doing the opposite.
+    assert "preventScroll: true" in text, (
         "focus() without preventScroll scrolls the tall #main's top to the top "
         "of the .shell__body container, hiding the page header after a swap"
     )

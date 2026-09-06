@@ -672,3 +672,97 @@ def test_five_navigations_leave_exactly_one_of_everything(tmp_path):
     assert baseline < 10, f"{baseline} click listeners suggests re-registration"
     for key in ("focusout", "change", "input"):
         assert got[key] <= 2, f"{key} listeners multiplied across page views"
+
+
+# --- Back must land where the user left, not at the top --------------------
+#
+# `navigate()` calls `announceArrival()`, which reset both scroll containers to
+# 0 unconditionally -- including on a popstate. Every Back therefore dropped
+# the user at the top of a page they had scrolled deep into. The position is
+# saved on the departing history entry at push time and read back on the pop.
+#
+# minidom models no layout and no session history stack: `scrollTop` here is a
+# plain property and the pop is dispatched by hand with the state a browser
+# would restore. What this proves is the bookkeeping -- what is written to the
+# entry, and what is applied on the way back.
+def test_back_restores_the_scroll_position_the_page_was_left_at(tmp_path):
+    got = run_js(
+        """
+        globalThis.window.scrollTo = () => {};   // not modeled by minidom
+        globalThis.fetch = () => Promise.resolve(
+          { ok: true, status: 200, text: async () => "FRAGMENT" });
+        const body = document.createElement("div");
+        body.setAttribute("class", "shell__body");
+        document.body.append(body);
+
+        globalThis.parseFragment = (html) => ({ marker: html });
+        globalThis.applyFragment = () => true;   // keep the same .shell__body node
+
+        const entries = [];
+        globalThis.history = {
+          state: null,
+          pushState(state, title, url) { entries.push({ op: "push", state, url }); this.state = state; },
+          replaceState(state) { entries.push({ op: "replace", state }); this.state = state; },
+        };
+        function tick() { return new Promise((resolve) => setImmediate(resolve)); }
+
+        (async () => {
+          body.scrollTop = 240;                  // scrolled deep into /projects
+          await window.bridgeNavigate("/schedule");
+          const afterForward = body.scrollTop;   // forward nav still lands at the top
+          const replaced = entries.filter((e) => e.op === "replace");
+          const saved = replaced.map((e) => e.state.scroll.body);
+
+          // Back: the browser restores the entry /projects was pushed with.
+          const restored = replaced.length ? replaced[0].state : null;
+          globalThis.location.href = "http://localhost/projects";
+          body.scrollTop = 0;                    // the re-rendered page starts at the top
+          globalThis.dispatchEvent({ type: "popstate", state: restored });
+          await tick(); await tick(); await tick();
+
+          report({ afterForward, saved, afterBack: body.scrollTop,
+                   pushes: entries.filter((e) => e.op === "push").length });
+        })();
+        """,
+        ["shell.js", "router.js"],
+        tmp_path,
+    )
+    assert got["afterForward"] == 0, "a forward navigation still lands at the top"
+    assert got["saved"] == [240], (
+        "the departing page's scroll offset must be recorded on its own history "
+        "entry before the next one is pushed"
+    )
+    assert got["afterBack"] == 240, (
+        "Back re-rendered the page at the top instead of where it was left"
+    )
+    assert got["pushes"] == 1, "a pop must not push a new history entry"
+
+
+def test_a_pop_with_no_recorded_position_still_lands_at_the_top(tmp_path):
+    """An entry pushed before this shipped (or by a full page load) carries no
+    scroll state. That case keeps the old behaviour rather than reading
+    `undefined` into `scrollTop`."""
+    got = run_js(
+        """
+        globalThis.window.scrollTo = () => {};
+        globalThis.fetch = () => Promise.resolve(
+          { ok: true, status: 200, text: async () => "FRAGMENT" });
+        const body = document.createElement("div");
+        body.setAttribute("class", "shell__body");
+        document.body.append(body);
+        globalThis.parseFragment = (html) => ({ marker: html });
+        globalThis.applyFragment = () => true;
+        function tick() { return new Promise((resolve) => setImmediate(resolve)); }
+
+        (async () => {
+          body.scrollTop = 180;
+          globalThis.location.href = "http://localhost/projects";
+          globalThis.dispatchEvent({ type: "popstate", state: null });
+          await tick(); await tick(); await tick();
+          report({ afterBack: body.scrollTop });
+        })();
+        """,
+        ["shell.js", "router.js"],
+        tmp_path,
+    )
+    assert got["afterBack"] == 0
