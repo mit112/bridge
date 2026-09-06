@@ -361,3 +361,32 @@ def test_dedup_survives_an_incremental_scan_boundary(write_transcript):
     incremental = scan(p, start_offset=first.new_offset, prev=first.record)
     assert (incremental.record.tokens_in, incremental.record.tokens_out) == (100, 50)
     assert incremental.record.tokens_in == scan(p).record.tokens_in
+
+
+def test_a_foreign_session_id_is_not_merged_into_the_record(write_transcript):
+    """`sessionId` was read on every line but only used to SEED the record.
+
+    Every later line was folded in whatever session it claimed, so a file that
+    carries two session ids (a resume that reopened an existing path, a
+    concatenated log) blended one session's tokens and message counts into the
+    other -- and made the indexer's `prior["session_id"] == rec.session_id`
+    guard vacuous, since the rehydrated record could never disagree.
+    """
+    foreign = jline(
+        type="assistant", sessionId="other-session", requestId="req_B",
+        timestamp="2026-07-30T10:00:02.000Z", cwd="/Users/you/dev/elsewhere",
+        message={"role": "assistant", "model": "claude-haiku-9",
+                 "usage": {"input_tokens": 999, "output_tokens": 777}},
+    )
+    p = write_transcript("s.jsonl", [
+        _assistant(req="req_A", tin=100, tout=50),
+        foreign,
+    ])
+    r = scan(p)
+    assert r.record.session_id == SID
+    assert (r.record.tokens_in, r.record.tokens_out) == (100, 50)
+    assert r.record.assistant_msgs == 1
+    assert r.record.model == "claude-opus-5"
+    assert r.record.project_path == "/Users/you/dev/demo"
+    assert r.parse_errors == 1
+    assert r.lines_parsed == 1
