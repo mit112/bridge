@@ -1453,13 +1453,24 @@ def test_the_requested_permission_mode_reaches_the_spec_verbatim(launch_app):
 
 
 def test_an_unknown_permission_mode_is_refused_before_anything_is_launched(launch_app):
-    """422 at the edge, and -- the part that matters -- no launch recorded."""
+    """422 at the edge, and -- the part that matters -- no launch recorded.
+
+    The body carries a prompt on purpose. Without one the route 422s for a
+    wholly different reason ("supply a prompt or a handoff_id") and never
+    reaches the launcher either way, so the status code and the call count
+    both hold whether or not `permission_mode` is validated at all -- the
+    assertions pass against an edge with no validator on it. The prompt makes
+    this the only thing left that can refuse the request, and the detail check
+    pins WHICH field did the refusing.
+    """
     c, _, _, launch_fn = launch_app
     c.post("/api/handoff", json=body("h1"))
     before = len(launch_fn.calls)
     response = c.post("/api/launch",
-                      json={"project_path": DEMO, "permission_mode": "yolo"})
+                      json={"project_path": DEMO, "prompt": "carry on",
+                            "permission_mode": "yolo"})
     assert response.status_code == 422
+    assert "permission_mode" in response.text
     assert len(launch_fn.calls) == before, "a refused mode still spawned something"
 
 
