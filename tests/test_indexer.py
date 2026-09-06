@@ -791,6 +791,22 @@ def test_launch_correlation_reads_do_not_grow_with_history(env):
     )
 
 
+def test_an_already_linked_launch_is_not_relinked_by_the_next_index(env):
+    """A settled row must leave the pending set, not be re-bound every tick.
+
+    Re-examining it costs a prefix lookup and a write on every reindex forever,
+    and makes `launches_linked` report work that did not happen -- the one
+    number Diagnostics has for whether correlation is doing anything.
+    """
+    cfg, store, projects = env
+    pid = store.upsert_project(DEMO, "demo")
+    make_launch(store, pid, "background", short_id=SID[:8])
+    write(projects, "s.jsonl", transcript_lines())
+
+    assert reindex(store, cfg).launches_linked == 1
+    assert reindex(store, cfg).launches_linked == 0, "a settled launch was re-linked"
+
+
 def test_a_background_launch_older_than_a_day_is_not_retried(env):
     """Retrying forever is what made the pass unbounded; the window is the fix.
 
