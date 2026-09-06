@@ -214,3 +214,70 @@ def test_a_cold_change_is_still_reconciled_by_the_full_walk(tmp_path):
         assert ev.wait(2.0), "the full walk never reconciled a cold change"
     finally:
         w.stop()
+
+
+class _CountingEntry:
+    """A `DirEntry` that reports its own `stat()` calls."""
+
+    def __init__(self, entry, calls):
+        self._entry = entry
+        self._calls = calls
+
+    def __getattr__(self, name):
+        return getattr(self._entry, name)
+
+    def stat(self, *a, **kw):
+        self._calls["n"] += 1
+        return self._entry.stat(*a, **kw)
+
+
+def test_a_warm_directory_is_not_relisted_on_every_poll_for_five_minutes(
+    tmp_path, monkeypatch
+):
+    """The hot-directory guard exists for coarse mtimes, not for five minutes.
+
+    A re-list is `scandir` plus one `stat` per entry. The real corpus has one
+    directory holding 74% of its 11,392 transcripts, measured at 22.6 ms to
+    re-list; under the old rule any activity in it bought that on every 0.5s
+    poll for the next `hot_s` (300s) seconds. The directory's mtime moving is
+    what triggers a re-list; recency past a tick or two adds nothing the
+    periodic full walk does not already cover.
+    """
+    fat = tmp_path / "fat"
+    fat.mkdir()
+    # The files themselves are cold, so the file hot set is not what is being
+    # measured here -- only the directory rule is.
+    old = time.time() - 3600
+    for i in range(40):
+        f = fat / f"s{i}.jsonl"
+        f.write_text("{}\n")
+        os.utime(f, (old, old))
+    # Touched 10s ago: inside the old 300s window, outside the new one.
+    warm = time.time() - 10
+    os.utime(fat, (warm, warm))
+    os.utime(tmp_path, (warm, warm))
+
+    w = FileWatcher(tmp_path, on_change=lambda: None)
+    dirs, files = w._walk()
+
+    calls = {"n": 0}
+    real_stat = os.stat
+    real_scandir = os.scandir
+
+    def counting_stat(*a, **kw):
+        calls["n"] += 1
+        calls.setdefault("paths", []).append(a[0])
+        return real_stat(*a, **kw)
+
+    def counting_scandir(path):
+        return [_CountingEntry(e, calls) for e in real_scandir(path)]
+
+    monkeypatch.setattr(os, "stat", counting_stat)
+    monkeypatch.setattr(os, "scandir", counting_scandir)
+    w._poll(dirs, files)
+    monkeypatch.undo()
+
+    # One stat per known directory (the root, `fat`, and whatever the shared
+    # fixtures put in `tmp_path`) and nothing else: not one of the 40 entries
+    # of the warm directory should have been stat()ed.
+    assert calls["n"] <= 8, f"cost {calls['n']} stats per poll: {calls['paths']}"

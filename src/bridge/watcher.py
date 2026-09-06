@@ -16,7 +16,13 @@ now scales with the *change*, not the corpus:
     something else in the tree moving first.
   * **Directories are hot too.** A filesystem with coarse (1s) directory mtimes
     could otherwise hide a file created in the same tick as the baseline stat,
-    so a recently-touched directory is re-listed unconditionally.
+    so a recently-touched directory is re-listed unconditionally -- but only
+    for `dir_hot_s`, which is a couple of polls and not the five minutes the
+    file hot set gets. That guard only has to outlive one mtime tick, and a
+    re-list is `scandir` + one `stat` per entry: the real corpus has one
+    directory holding 74% of its 11,392 transcripts, and re-listing it costs
+    22.6 ms. At the old window, any activity in it meant paying that on every
+    0.5s poll for the next five minutes.
   * **The full walk.** Every `full_s` (15s, the reindex cadence) the whole tree
     is re-walked and reconciled, so anything the cheap passes cannot see -- a
     cold file mutated in place, a directory whose mtime was restored -- is
@@ -55,6 +61,7 @@ class FileWatcher:
         poll_s: float = 0.5, quiet_s: float = 0.2,
         clock: Callable[[], float] = time.monotonic,
         hot_s: float = 300.0, full_s: float = 15.0,
+        dir_hot_s: float = 2.0,
         watch_dir: Callable[[str], bool] | None = None,
     ) -> None:
         self._root = Path(root)
@@ -63,6 +70,7 @@ class FileWatcher:
         self._quiet_s = quiet_s
         self._clock = clock
         self._hot_s = hot_s
+        self._dir_hot_s = dir_hot_s
         # Which directories are worth watching at all. Default: everything, so
         # a caller that has no opinion still gets the whole subtree.
         self._watch_dir = watch_dir or (lambda _dirpath: True)
@@ -202,7 +210,7 @@ class FileWatcher:
             except OSError:
                 changed |= self._forget(dirpath, dirs, files)
                 continue
-            if mtime != dirs[dirpath] or now - mtime <= self._hot_s:
+            if mtime != dirs[dirpath] or now - mtime <= self._dir_hot_s:
                 dirs[dirpath] = mtime
                 changed |= self._relist(dirpath, dirs, files)
 
