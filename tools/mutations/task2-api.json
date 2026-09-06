@@ -90,12 +90,12 @@
     ]
   },
   {
-    "name": "GUARD CHECK: drop spool_dir from a fixture and require the real-dir guard to fire",
-    "file": "tests/test_api.py",
-    "old": "    cfg = load({\"db_path\": tmp_path / \"h.db\", \"spool_dir\": tmp_path / \"spool\"})",
-    "new": "    cfg = load({\"db_path\": tmp_path / \"h.db\"})",
+    "name": "GUARD CHECK: neutralise the tmp-home redirect and require the hermeticity test to fire",
+    "file": "tests/conftest.py",
+    "old": "    monkeypatch.setattr(Path, \"home\", classmethod(lambda cls: fake_home))",
+    "new": "    monkeypatch.setattr(Path, \"home\", classmethod(lambda cls: Path.home()))",
     "tests": [
-      "tests/test_api.py::test_get_returns_204_when_nothing_is_queued"
+      "tests/test_config.py::test_the_home_derived_defaults_never_resolve_under_the_real_home"
     ]
   }
 ]
