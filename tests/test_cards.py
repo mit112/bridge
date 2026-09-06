@@ -1,5 +1,6 @@
 import pytest
 
+from bridge import cards as cards_module
 from bridge.cards import build_cards, model_options, sort_key, spark_points
 from bridge.config import ModelChoice, load
 from bridge.models import GitState, SessionRecord
@@ -639,6 +640,50 @@ def test_each_handoff_carries_its_own_source_sessions_title(store, tmp_path):
     by_id = {h["id"]: h for h in card.handoffs}
     assert by_id["h1"]["session_title"] == "earlier work"
     assert by_id["h2"]["session_title"] == "later work"
+
+
+def test_handoff_titles_come_from_one_query_not_a_row_per_handoff(store, tmp_path):
+    """`_handoffs` issued a `session_row` per queued handoff, per card build.
+
+    Card builds are not rare: every SSE tick rebuilds them, so a project with
+    handoffs queued paid a query per handoff several times a second for a
+    string the queued-handoffs query can join in for free.
+    """
+    pid = store.upsert_project("/proj/a", "a")
+    for i in range(3):
+        sid = f"sess-{i}"
+        store.upsert_session(
+            SessionRecord(session_id=sid, transcript_path=f"/t/{sid}",
+                          project_path="/proj/a", title=f"work {i}",
+                          ended_at="2026-09-04T20:00:00.000Z"),
+            pid,
+        )
+        store.create_handoff(
+            Handoff(id=f"h{i}", project_path="/proj/a", next_prompt="go",
+                    source_session_id=sid, created_at=i), pid)
+
+    queued_calls = {"n": 0}
+    real_queued = store.queued_handoffs
+
+    def counting_queued(project_id):
+        queued_calls["n"] += 1
+        return real_queued(project_id)
+
+    def refuse_session_row(session_id):
+        raise AssertionError(f"_handoffs read session {session_id} row by row")
+
+    store.queued_handoffs = counting_queued
+    store.session_row = refuse_session_row
+    try:
+        rows = cards_module._handoffs(store, pid)
+    finally:
+        del store.queued_handoffs
+        del store.session_row
+
+    assert queued_calls["n"] == 1
+    assert {r["id"]: r["session_title"] for r in rows} == {
+        "h0": "work 0", "h1": "work 1", "h2": "work 2",
+    }
 
 
 def test_card_no_handoffs_is_empty_list(store, tmp_path):
