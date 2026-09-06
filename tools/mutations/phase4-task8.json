@@ -73,7 +73,7 @@
   {
     "name": "drop unattributed sessions from the wire again, losing every session with no project row",
     "file": "src/bridge/dashboard.py",
-    "old": "        if session.cwd not in paths and session.cwd not in seen:",
+    "old": "        if session.cwd not in seen:",
     "new": "        if False:",
     "tests": [
       "tests/test_api.py::test_the_wire_payload_keys_unattributed_sessions_by_their_own_cwd"
@@ -83,8 +83,8 @@
   {
     "name": "report every session in a directory rather than one entry per directory",
     "file": "src/bridge/dashboard.py",
-    "old": "        if session.cwd not in paths and session.cwd not in seen:",
-    "new": "        if session.cwd not in paths:",
+    "old": "        if session.cwd not in seen:",
+    "new": "        if True:",
     "tests": [
       "tests/test_api.py::test_two_sessions_in_the_same_directory_report_the_newest"
     ],
@@ -93,7 +93,7 @@
   {
     "name": "never surface the unattributed directories, so the page cannot render their bands",
     "file": "src/bridge/dashboard.py",
-    "old": "            \"unattributed\": _unattributed(live_state, self.store),",
+    "old": "            \"unattributed\": _unattributed(live_state, self.store, cards),",
     "new": "            \"unattributed\": [],",
     "tests": [
       "tests/test_api.py::test_a_session_outside_any_project_is_shown_with_its_directory"
@@ -167,6 +167,16 @@
     "new": "  if (false) setBandState(band, status);",
     "tests": [
       "tests/test_static_js.py::test_live_js_patches_a_band_from_a_snapshot"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "attribute unattributed sessions by exact path again, so a subdirectory session reads as homeless",
+    "file": "src/bridge/dashboard.py",
+    "old": "        state, store.alias_map(), [card.path for card in cards]",
+    "new": "        state, store.alias_map(), []",
+    "tests": [
+      "tests/test_dashboard.py::test_a_subdirectory_session_is_not_listed_as_belonging_to_no_project"
     ],
     "expect_count": 1
   }

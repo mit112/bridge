@@ -175,7 +175,7 @@ class DashboardBuilder:
             },
             "card_order": [card.project_id for card in cards],
             "cards": card_data,
-            "unattributed": _unattributed(live_state, self.store),
+            "unattributed": _unattributed(live_state, self.store, cards),
         }
 
 
@@ -207,12 +207,22 @@ def _card_update(card: Card) -> dict:
     }
 
 
-def _unattributed(state: AgentsState, store: Store) -> list[dict]:
-    paths = {row["path"] for row in store.projects()}
+def _unattributed(state: AgentsState, store: Store, cards: list[Card]) -> list[dict]:
+    """The sessions belonging to no project, on the same basis as the count.
+
+    `agents.by_project`, not a `cwd in paths` test: a session started in a
+    SUBDIRECTORY of a registered project is attributed to that project's card,
+    and the exact-path test listed it here anyway -- so this list and the
+    `unattributed_sessions` count `overview.count_summary` derives from the
+    same grouping could contradict each other on the same frame.
+    """
+    grouped = agents.by_project(
+        state, store.alias_map(), [card.path for card in cards]
+    )
     out = []
     seen = set()
-    for session in state.sessions:
-        if session.cwd not in paths and session.cwd not in seen:
+    for session in grouped.get(agents.UNATTRIBUTED, []):
+        if session.cwd not in seen:
             out.append({"path": session.cwd, "status": session.status,
                         "started_at": session.started_at})
             seen.add(session.cwd)

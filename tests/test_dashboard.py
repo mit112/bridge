@@ -170,3 +170,58 @@ def test_the_envelope_carries_the_secondary_magnitudes_and_their_wording(tmp_pat
     assert topbar["captions"]["unattributed"] == (
         "1 session running in a directory Bridge has no project for."
     )
+
+
+def test_a_subdirectory_session_is_not_listed_as_belonging_to_no_project(tmp_path):
+    """The wire list and the count are one basis or they contradict each other.
+
+    `agents.by_project` attributes a session started in a SUBDIRECTORY of a
+    registered project to that project's card, and `count_summary` counts it
+    the same way. The envelope's `unattributed` list used an exact-path test,
+    so the same frame could say "0 sessions running in a directory Bridge has
+    no project for" while listing one.
+    """
+    cfg = load({"db_path": tmp_path / "subdir.db", "spool_dir": tmp_path / "spool-subdir"})
+    store = Store(cfg.db_path)
+    store.upsert_project("/p/parent", "parent")
+
+    def agents_fn():
+        return AgentsState(status="ok", sessions=[LiveSession(
+            session_id="nested", cwd="/p/parent/services/api", kind="interactive",
+            status="busy",
+        )])
+
+    builder = DashboardBuilder(
+        store, cfg, RefreshCoordinator(store, cfg),
+        probe_fn=lambda _p: GitState(status="ok", branch="main"),
+        agents_fn=agents_fn, now_fn=lambda: 500,
+    )
+    update = builder.full_update()
+    store.close()
+
+    assert update["topbar"]["unattributed_sessions"] == 0
+    assert update["unattributed"] == []
+
+
+def test_a_session_in_no_registered_project_is_still_listed(tmp_path):
+    """The guard above must not be satisfied by emptying the list."""
+    cfg = load({"db_path": tmp_path / "stray.db", "spool_dir": tmp_path / "spool-stray"})
+    store = Store(cfg.db_path)
+    store.upsert_project("/p/parent", "parent")
+
+    def agents_fn():
+        return AgentsState(status="ok", sessions=[LiveSession(
+            session_id="stray", cwd="/nowhere/at/all", kind="interactive",
+            status="busy",
+        )])
+
+    builder = DashboardBuilder(
+        store, cfg, RefreshCoordinator(store, cfg),
+        probe_fn=lambda _p: GitState(status="ok", branch="main"),
+        agents_fn=agents_fn, now_fn=lambda: 500,
+    )
+    update = builder.full_update()
+    store.close()
+
+    assert update["topbar"]["unattributed_sessions"] == 1
+    assert [row["path"] for row in update["unattributed"]] == ["/nowhere/at/all"]
