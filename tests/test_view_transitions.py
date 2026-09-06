@@ -24,6 +24,8 @@ from pathlib import Path
 
 import pytest
 
+from .test_swap_lifecycle import run_js
+
 CSS = Path(__file__).resolve().parent.parent / "src" / "bridge" / "static" / "app.css"
 
 # Groups whose old and new snapshots hold DIFFERENT content, so any opacity
@@ -247,3 +249,95 @@ def test_the_moving_nav_pill_keeps_its_cross_fade():
             "between two rail positions, which is what carries continuity across "
             "the document swap"
         )
+
+
+# --- The same-document half: what actually fires on the primary path ---------
+#
+# `@view-transition { navigation: auto }` above is a CROSS-document opt-in. The
+# router intercepts every in-app click and swaps by fetch + DOM replace, and
+# `pushState` is not a navigation -- so on the path users take, none of the
+# rules this module gates could ever apply. They reached the screen only on the
+# fallbacks (JS off, or the `location.assign` in navigate()'s catch).
+# `document.startViewTransition` is the same-document form of the same feature:
+# it drives the same pseudo tree from the same stylesheet, so wrapping the swap
+# in it is what makes the CSS above live.
+#
+# These run the real router.js against the mini-DOM. That harness models no
+# layout and cannot animate, so what is provable here is the CONTRACT -- the
+# swap goes through the API, the ordering inside it is unchanged, and the whole
+# thing degrades when the API is absent. That the pill visibly slides is a
+# real-browser check, not one of these.
+
+TRANSITION_STUB = """
+globalThis.document.startViewTransition = (update) => {
+  order.push("capture");
+  // Called asynchronously, as the real API does: the old snapshot is taken
+  // first and the callback runs later. A synchronous stub would hide the
+  // supersede window that the epoch guard inside the callback exists for.
+  const done = new Promise((resolve, reject) => setImmediate(() => {
+    try { update(); resolve(); } catch (error) { reject(error); }
+  }));
+  return { ready: done.then(() => {}, () => {}), updateCallbackDone: done, finished: done };
+};
+"""
+
+SWAP_STUBS = """
+const order = [];
+globalThis.fetch = async () => ({ ok: true, status: 200, text: async () => "fragment" });
+globalThis.parseFragment = () => ({ marker: "fragment" });
+globalThis.applyFragment = () => { order.push("apply"); return APPLY_OK; };
+globalThis.window.scrollTo = () => { order.push("arrive"); };
+globalThis.history = { pushState() { order.push("push"); } };
+window.bridgePage.onEnter(() => order.push("enter"));
+"""
+
+
+def _run_swap(tmp_path, *, transition: bool, apply_ok: bool = True) -> dict:
+    body = SWAP_STUBS.replace("APPLY_OK", "true" if apply_ok else "false")
+    if transition:
+        body += TRANSITION_STUB
+    body += """
+(async () => {
+  await window.bridgeNavigate("/projects");
+  report({ order, assigned: globalThis.__calls.locationAssign ?? null });
+})();
+"""
+    return run_js(body, ["shell.js", "router.js"], tmp_path)
+
+
+def test_the_swap_runs_inside_a_same_document_view_transition(tmp_path):
+    """Without this the ~150 lines of `::view-transition-*` rules above are
+    dead on every click a user actually makes.
+
+    The ordering is asserted, not just the fact of the call: the swap, the
+    history push, the enter hooks and the arrival announcement all have to
+    stay inside ONE update callback. Splitting them around the await would put
+    a supersede window between the DOM landing and `bridgePage.enter()`.
+    """
+    got = _run_swap(tmp_path, transition=True)
+    assert got["order"] == ["capture", "apply", "push", "enter", "arrive"], (
+        "the router must hand the whole critical section to "
+        "document.startViewTransition, in the order it ran before"
+    )
+
+
+def test_the_swap_still_happens_where_view_transitions_do_not_exist(tmp_path):
+    """Firefox has no `document.startViewTransition`. Missing the API must cost
+    the animation and nothing else -- an unguarded call would throw into
+    navigate()'s catch and turn every link into a full page load."""
+    got = _run_swap(tmp_path, transition=False)
+    assert got["order"] == ["apply", "push", "enter", "arrive"]
+    assert got["assigned"] is None, (
+        "a browser without view transitions fell back to a real navigation"
+    )
+
+
+def test_a_failed_swap_inside_a_transition_still_falls_back(tmp_path):
+    """The update callback runs inside the transition now, so its failure has
+    to travel back out of the API to navigate()'s catch. If it did not, an
+    unusable fragment would leave the user on a link that did nothing --
+    silently, because the transition swallowed the error."""
+    got = _run_swap(tmp_path, transition=True, apply_ok=False)
+    assert got["assigned"] == "/projects", (
+        "a failed swap inside the view transition never reached the fallback"
+    )

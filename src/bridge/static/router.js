@@ -120,6 +120,40 @@ function announceArrival(restore) {
   if (body) body.scrollTop = 0;
 }
 
+// The view transition. `@view-transition { navigation: auto }` in app.css is a
+// CROSS-document opt-in: it fires when the browser replaces one document with
+// another. This router exists to stop that happening, and `pushState` is not a
+// navigation, so on the path users actually take -- every sidebar link and
+// every workspace tab -- none of the `::view-transition-*` rules in app.css
+// could ever apply. They only reached the screen on the fallbacks: a no-JS
+// load, or the `location.assign` in navigate()'s catch.
+//
+// `document.startViewTransition` is the same-document form and drives the same
+// pseudo tree from the same stylesheet, so the sliding nav pill (the one group
+// app.css deliberately keeps animating) now plays on the primary path with no
+// new CSS. Firefox has no such method; there it degrades to the bare swap,
+// which is exactly the behaviour that shipped before this. Reduced motion needs
+// nothing here either -- app.css's `prefers-reduced-motion: reduce` block
+// already switches every group off, so the transition runs but nothing moves.
+//
+// `update` carries the WHOLE critical section (swap, history, enter hooks,
+// arrival), not just the DOM replacement. Splitting it would put an `await`
+// between the swap and `bridgePage.enter()`, opening a window for a newer
+// navigation to supersede this one after its DOM had already landed.
+async function withViewTransition(update) {
+  if (typeof document.startViewTransition !== "function") { update(); return; }
+  const transition = document.startViewTransition(update);
+  // `ready` rejects when the update callback throws, and when a newer
+  // transition skips this one. Both are handled through `updateCallbackDone`
+  // below or by the epoch guard; this only keeps the rejection from surfacing
+  // as an unhandled one.
+  transition.ready.catch(() => {});
+  // Awaited: `updateCallbackDone`, NOT `finished`. What the caller needs is the
+  // DOM update; waiting for the animation to end would hold navigate()'s error
+  // path -- and the focus move inside the callback -- behind the pill slide.
+  await transition.updateCallbackDone;
+}
+
 // A monotonic counter, bumped once per `navigate()` call. Two rapid
 // navigations (a fast double-click, or a click racing a popstate) can have
 // their `leave()`/`fetch()` steps resolve in EITHER order -- nothing about
@@ -152,13 +186,20 @@ async function navigate(href, { push = true, restore = null } = {}) {
     if (epoch !== navEpoch) return;  // superseded while the fetch was in flight
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const parsed = parseFragment(await response.text());
-    if (!parsed || !applyFragment(parsed)) throw new Error("unusable fragment");
-    if (push) {
-      saveScrollPosition(departure);
-      window.history.pushState({ bridge: true }, "", url.href);
-    }
-    window.bridgePage.enter();
-    announceArrival(restore);
+    if (!parsed) throw new Error("unusable fragment");
+    await withViewTransition(() => {
+      // The outgoing snapshot is taken before this callback runs, so a newer
+      // navigation can have superseded this one in between. Same rule as every
+      // other await here: touch neither the DOM nor the session history.
+      if (epoch !== navEpoch) return;
+      if (!applyFragment(parsed)) throw new Error("unusable fragment");
+      if (push) {
+        saveScrollPosition(departure);
+        window.history.pushState({ bridge: true }, "", url.href);
+      }
+      window.bridgePage.enter();
+      announceArrival(restore);
+    });
   } catch (error) {
     if (epoch !== navEpoch) return;  // a newer navigation already took over
     // Never strand the user on a link that did nothing. A real navigation is
