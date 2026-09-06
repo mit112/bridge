@@ -120,6 +120,19 @@ def build_router(
         row = store.get_handoff(handoff_id)
         if row is None:
             raise HTTPException(status_code=404, detail="unknown handoff")
+        # Only a queued handoff is editable at all -- the same "no longer
+        # pending" rule `patch_schedule` applies, and for the same reason.
+        # Without it a consumed, dismissed or superseded row could be set back
+        # to `queued` and re-launched, replaying a prompt the user already ran,
+        # and its text could be rewritten after the fact so the card no longer
+        # matches what any launch actually did. `launching` is excluded too: a
+        # spawn is mid-flight and `revert_claimed_handoff` owns that row.
+        if row["status"] != "queued":
+            raise HTTPException(
+                status_code=409,
+                detail=f"handoff is {row['status']}, not queued; "
+                       "only a queued handoff can be edited",
+            )
 
         if body.next_prompt is not None:
             project = store.get_project(row["project_id"])
