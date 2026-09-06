@@ -1274,11 +1274,11 @@ def test_the_project_state_card_humanises_the_live_status():
 
 
 def test_the_live_status_class_hook_still_keys_off_the_raw_word():
-    """Only the visible text is humanised: `data-live-path` and the class the
+    """Only the visible text is humanised: `data-live-parent` and the class the
     live tick writes stay machine-readable, or live.js and the CSS stop
     agreeing with the template."""
     html = _render_current("busy")
-    assert 'data-live-path="/p/demo"' in html
+    assert 'data-live-parent="/p/demo"' in html
     state = html.split("data-live-status>", 1)[1].split("<", 1)[0]
     assert state == "Busy"
 

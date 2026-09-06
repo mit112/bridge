@@ -2077,7 +2077,7 @@ def test_the_wire_payload_keys_unattributed_sessions_by_their_own_cwd(
     patch" and keying by cwd would make the client hunt for a band that does not
     exist, "or, worse, find an unrelated one". The dashboard now renders those
     bands itself, so the first is false; and an unattributed cwd cannot equal
-    any card's `data-live-path`, because `by_project` only puts a session in the
+    any card's `data-live-parent`, because `by_project` only puts a session in the
     bucket after it has failed both an exact and a prefix match against every
     registered path — so the second cannot happen either.
 
@@ -2786,7 +2786,7 @@ def test_a_session_inside_a_project_stays_on_its_card(client, monkeypatch):
 
     body = c.get(f"/project/{pid}?tab=current").text
     assert "Running outside any project" not in body
-    assert f'data-live-path="{DEMO}"' in body
+    assert f'data-live-parent="{DEMO}"' in body
 
 
 # --- Pin ----------------------------------------------------------------------

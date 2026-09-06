@@ -21,7 +21,7 @@
 {% set state = card.live.status if card.live else ("unknown" if card.live_unavailable else "ended") %}
 <p class="live live--{{ state }}" data-live-parent="{{ card.path }}">
   <span class="live__dot" aria-hidden="true">●</span>
-  <span data-live-path="{{ card.path }}" data-live-status>{{ state }}</span>
+  <span data-live-status>{{ state }}</span>
   <span data-live-age>{% if card.live %}· {{ card.live.started_at | ago_epoch }}{% endif %}</span>
   {# model/effort come from OUR tables: the liveness sensor has neither. #}
   <span data-live-model>{% if card.session and card.session.model %}· {{ card.session.model }}{% endif %}</span>
