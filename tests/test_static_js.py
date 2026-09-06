@@ -1595,7 +1595,6 @@ for (const name of ["projects", "running", "queued", "scheduled", "today",
 // match for a git/burn/sparkline selector -- the realistic "leaf absent"
 // case, not a missing method.
 const liveWord = node();
-liveWord.attrs["data-live-path"] = "/Users/you/dev/demo";
 const projectCard = node({ "data-project-card": "1" });
 projectCard.querySelector = (sel) => (sel === "[data-live-status]" ? liveWord : null);
 
