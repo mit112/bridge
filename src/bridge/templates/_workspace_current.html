@@ -22,7 +22,7 @@
          to touch, so the client never has to re-derive staleness in the
          browser -- and only queued rows are ever listed, since the PATCH
          endpoint 409s anything else. #}
-      {% set stale_ids = card.handoffs | selectattr("session_since") | map(attribute="id") | list %}
+      {% set stale_ids = card.handoffs | selectattr("overtaken") | map(attribute="id") | list %}
       {% if stale_ids | length > 1 %}
       <p class="handoff-bulk">
         <button type="button" class="btn btn--quiet"

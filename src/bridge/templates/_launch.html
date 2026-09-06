@@ -98,16 +98,16 @@
 {% macro handoff_block(card, handoff, totals, collapse_prompt=False) %}
   {% if handoff %}
     {% set hid = "handoff-" ~ handoff.id %}
-    {# `session_since` (store.queued_handoffs) says a session in this project
-       STARTED after this prompt was written, so the prompt may already be
-       overtaken. Supersession is deliberately scoped to the source session, so
-       nothing retires these rows and a project can stack six equally loud
-       "Ready" badges. Demote rather than lie: the badge states the observed
-       fact instead of a readiness nobody checked, the summary and the whole
-       prompt go behind one disclosure, and the row stays fully launchable.
-       Nothing here writes a status -- Dismiss is still the only thing that
-       retires a handoff. #}
-    {% set demoted = handoff.session_since %}
+    {# `overtaken` (store.queued_handoffs) says a later session in this project
+       has DONE WORK since this prompt was written -- it wrote a handoff of its
+       own, or it was substantive rather than a glance. Supersession is
+       deliberately scoped to the source session, so nothing retires these rows
+       and a project can stack six equally loud "Ready" badges. Demote rather
+       than lie: the badge states the observed fact instead of a readiness
+       nobody checked, the summary and the whole prompt go behind one
+       disclosure, and the row stays fully launchable. Nothing here writes a
+       status -- Dismiss is still the only thing that retires a handoff. #}
+    {% set demoted = handoff.overtaken %}
     {# The h2 falls back to the summary's first line before the "<name> is
        ready to continue" boilerplate, which names the project and says nothing
        about the work. Only the last resort is content-free. #}
@@ -138,7 +138,7 @@
            screen reader in the same words it reaches the eye -- never colour
            or weight alone. #}
         <span class="pill {{ "pill--idle" if demoted else "pill--work" }} continuation-status"
-              id="{{ hid }}-state">{{ "A session has run since" if demoted else "Ready" }}</span>
+              id="{{ hid }}-state">{{ "Work has continued since" if demoted else "Ready" }}</span>
       </div>
       {% if demoted %}
       {# One disclosure, not two: a demoted handoff skips the `handoff-prompt`

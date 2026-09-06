@@ -4,11 +4,13 @@ import sqlite3
 import stat
 import threading
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
 
+from bridge import store as bridge_store
 from bridge.models import Handoff, Launch, ScheduledRun, SessionRecord
-from bridge.store import Store, to_epoch
+from bridge.store import WORKED_TOKENS, Store, to_epoch
 from tests.conftest import launch_by_session
 
 DEMO = "/Users/you/dev/demo"
@@ -859,10 +861,15 @@ def test_handoffs_are_scoped_to_their_project(store):
     assert store.queued_handoff(b)["id"] == "hb"
 
 
-# --- `session_since`: has work continued past the point this prompt was
-# --- written? Supersession is scoped to the source session, so any session
+# --- `overtaken`: has a later session actually DONE WORK since this prompt
+# --- was written? Supersession is scoped to the source session, so a session
 # --- started outside Bridge leaves its predecessor's handoff queued forever;
 # --- this is the computed signal that says so, and it never writes a status.
+# ---
+# --- The rule used to be "any session STARTED since". That marked every row on
+# --- a busy project, the newest included, because 94% of the sessions on this
+# --- machine are one-message glances. Now a later session has to have written a
+# --- handoff of its own, or to have cost `WORKED_TOKENS` of real traffic.
 
 
 def _iso(epoch: int) -> str:
@@ -872,45 +879,168 @@ def _iso(epoch: int) -> str:
     )
 
 
-def test_a_session_started_after_the_handoff_marks_it(store):
+def _worked(sid: str, started: int, **kw) -> SessionRecord:
+    """A later session that plainly did work: over the token threshold."""
+    return rec(sid, started_at=_iso(started),
+               tokens_in=WORKED_TOKENS, tokens_out=0, **kw)
+
+
+def _glance(sid: str, started: int, **kw) -> SessionRecord:
+    """Opened, one question, closed. `rec`'s defaults are already this shape
+    (1 user message, 11 tokens); the epoch is what varies."""
+    return rec(sid, started_at=_iso(started), **kw)
+
+
+def test_a_substantive_later_session_overtakes_a_handoff(store):
     pid = store.upsert_project("/proj/a", "a")
     store.create_handoff(
         handoff("h1", project_path="/proj/a", source_session_id="sess-1",
                 created_at=1_000_000), pid)
-    store.upsert_session(rec("later", started_at=_iso(1_000_060)), pid)
+    store.upsert_session(_worked("later", 1_000_060), pid)
 
-    assert store.queued_handoffs(pid)[0]["session_since"] == 1
+    assert store.queued_handoffs(pid)[0]["overtaken"] == 1
 
 
-def test_a_session_started_before_the_handoff_does_not_mark_it(store):
-    """The direction of the comparison is the whole predicate.
+def test_a_later_session_that_did_nothing_does_not_overtake(store):
+    """The change of rule, stated as a test.
 
-    The handoff's OWN source session started before the prompt was written --
-    that is the normal case for every handoff ever captured, so a reversed or
-    unanchored comparison would badge every row on the panel as overtaken.
+    A session that opened, asked one question and closed did not move the
+    project, and the prompt saved before it is still the next thing to do. The
+    old rule marked this handoff purely because a process started.
     """
     pid = store.upsert_project("/proj/a", "a")
-    store.upsert_session(rec("sess-1", started_at=_iso(999_000)), pid)
+    store.create_handoff(
+        handoff("h1", project_path="/proj/a", source_session_id="sess-1",
+                created_at=1_000_000), pid)
+    store.upsert_session(_glance("aborted", 1_000_060), pid)
+
+    assert store.queued_handoffs(pid)[0]["overtaken"] == 0
+
+
+def test_the_token_threshold_is_the_boundary_it_says_it_is(store):
+    """One token either side of `WORKED_TOKENS`, so the constant is what the
+    query reads rather than a number that happens to agree with it."""
+    pid = store.upsert_project("/proj/a", "a")
+    store.create_handoff(
+        handoff("h1", project_path="/proj/a", source_session_id="sess-1",
+                created_at=1_000_000), pid)
+    store.upsert_session(
+        rec("under", started_at=_iso(1_000_060),
+            tokens_in=WORKED_TOKENS - 2, tokens_out=1), pid)
+    assert store.queued_handoffs(pid)[0]["overtaken"] == 0
+
+    store.upsert_session(
+        rec("over", started_at=_iso(1_000_070),
+            tokens_in=WORKED_TOKENS - 1, tokens_out=1), pid)
+    assert store.queued_handoffs(pid)[0]["overtaken"] == 1
+
+
+def test_a_later_session_that_wrote_its_own_handoff_overtakes_however_cheap(store):
+    """Writing a handoff is a session declaring it reached a real boundary.
+
+    That is definitive whatever it cost, so it is its own clause: this session
+    is under the token threshold and still overtakes. Its OWN handoff is not
+    overtaken by it -- the session started before it wrote it.
+    """
+    pid = store.upsert_project("/proj/a", "a")
+    store.create_handoff(
+        handoff("old", project_path="/proj/a", source_session_id="sess-1",
+                created_at=1_000_000), pid)
+    store.upsert_session(_glance("boundary", 1_000_500), pid)
+    store.create_handoff(
+        handoff("its-own", project_path="/proj/a",
+                source_session_id="boundary", created_at=1_001_000), pid)
+
+    by_id = {r["id"]: r["overtaken"] for r in store.queued_handoffs(pid)}
+
+    assert by_id == {"old": 1, "its-own": 0}
+
+
+def test_the_rule_still_discriminates_with_no_session_meta_present(store):
+    """`~/.claude/usage-data/session-meta` is empty on the real machine, and
+    ARCHITECTURE calls the source "Optional, incomplete". A rule that leaned on
+    it would mark nothing at all -- the opposite failure, and invisible in a
+    test that populates the meta files itself. Nothing in this module reads
+    that directory: both clauses live in `sessions` and `handoffs`, and they
+    still separate a glance from real work with no meta anywhere on disk.
+    """
+    imports = [
+        line for line in Path(bridge_store.__file__)
+        .read_text(encoding="utf-8").splitlines()
+        if line.startswith(("import ", "from "))
+    ]
+    assert not [line for line in imports if "sessionmeta" in line]
+
+    pid = store.upsert_project("/proj/a", "a")
+    store.create_handoff(
+        handoff("glanced-at", project_path="/proj/a", source_session_id="s0",
+                created_at=1_000_000), pid)
+    store.upsert_session(_glance("nothing", 1_000_100), pid)
+    store.create_handoff(
+        handoff("worked-on", project_path="/proj/a", source_session_id="s1",
+                created_at=1_000_200), pid)
+    store.upsert_session(_worked("something", 1_000_300), pid)
+
+    by_id = {r["id"]: r["overtaken"] for r in store.queued_handoffs(pid)}
+
+    assert by_id == {"glanced-at": 1, "worked-on": 1}
+    # ...and it is the WORK that decided it, not the passage of sessions: drop
+    # the working session and both rows go back to full weight.
+    store.conn.execute("DELETE FROM sessions WHERE id='something'")
+    assert {r["overtaken"] for r in store.queued_handoffs(pid)} == {0}
+
+
+def test_the_newest_handoff_is_not_privileged_by_ordering(store):
+    """Freshness falls out of the evidence, not out of the sort.
+
+    The project's NEWEST queued handoff -- the one nothing has been written
+    after -- is judged on exactly the same evidence as any other row. A glance
+    after it leaves it at full weight (the old rule marked it); a session that
+    did work overtakes it (a rule that spared row one on principle would not).
+    """
+    pid = store.upsert_project("/proj/a", "a")
+    store.create_handoff(
+        handoff("newest", project_path="/proj/a", source_session_id="s0",
+                created_at=1_000_000), pid)
+    assert [r["id"] for r in store.queued_handoffs(pid)] == ["newest"]
+
+    store.upsert_session(_glance("just-looked", 1_000_100), pid)
+    assert store.queued_handoffs(pid)[0]["overtaken"] == 0
+
+    store.upsert_session(_worked("did-work", 1_000_200), pid)
+    assert store.queued_handoffs(pid)[0]["overtaken"] == 1
+
+
+def test_a_session_started_before_the_handoff_does_not_overtake_it(store):
+    """The direction of the comparison is half the predicate.
+
+    The handoff's OWN source session started before the prompt was written --
+    that is the normal case for every handoff ever captured, and it is a
+    working session by definition, so a reversed or unanchored comparison would
+    badge every row on the panel as overtaken.
+    """
+    pid = store.upsert_project("/proj/a", "a")
+    store.upsert_session(_worked("sess-1", 999_000), pid)
     store.create_handoff(
         handoff("h1", project_path="/proj/a", source_session_id="sess-1",
                 created_at=1_000_000), pid)
 
-    assert store.queued_handoffs(pid)[0]["session_since"] == 0
+    assert store.queued_handoffs(pid)[0]["overtaken"] == 0
 
 
-def test_a_handoff_with_no_session_at_all_is_not_marked(store):
+def test_a_handoff_with_no_session_at_all_is_not_overtaken(store):
     pid = store.upsert_project("/proj/a", "a")
     store.create_handoff(
         handoff("h1", project_path="/proj/a", source_session_id=None,
                 created_at=1_000_000), pid)
 
-    assert store.queued_handoffs(pid)[0]["session_since"] == 0
+    assert store.queued_handoffs(pid)[0]["overtaken"] == 0
 
 
-def test_session_since_is_decided_per_handoff_not_per_project(store):
-    """One session between two handoffs marks the older one and only it.
+def test_overtaken_is_decided_per_handoff_not_per_project(store):
+    """One working session between two handoffs marks the older one and only it.
 
-    A project-level "has anything run lately" flag would mark both, which is
+    A project-level "has anything worked lately" flag would mark both, which is
     the failure that makes the signal useless: the newest handoff was written
     AFTER that session started and is exactly the one still worth running.
     """
@@ -918,43 +1048,43 @@ def test_session_since_is_decided_per_handoff_not_per_project(store):
     store.create_handoff(
         handoff("old", project_path="/proj/a", source_session_id="sess-1",
                 created_at=1_000_000), pid)
-    store.upsert_session(rec("between", started_at=_iso(1_000_500)), pid)
+    store.upsert_session(_worked("between", 1_000_500), pid)
     store.create_handoff(
         handoff("new", project_path="/proj/a", source_session_id="sess-2",
                 created_at=1_001_000), pid)
 
-    by_id = {r["id"]: r["session_since"] for r in store.queued_handoffs(pid)}
+    by_id = {r["id"]: r["overtaken"] for r in store.queued_handoffs(pid)}
 
     assert by_id == {"old": 1, "new": 0}
 
 
-def test_session_since_ignores_another_projects_sessions(store):
+def test_overtaken_ignores_another_projects_sessions(store):
     pid = store.upsert_project("/proj/a", "a")
     other = store.upsert_project("/proj/b", "b")
     store.create_handoff(
         handoff("h1", project_path="/proj/a", source_session_id="sess-1",
                 created_at=1_000_000), pid)
-    store.upsert_session(rec("elsewhere", started_at=_iso(1_000_060)), other)
+    store.upsert_session(_worked("elsewhere", 1_000_060), other)
 
-    assert store.queued_handoffs(pid)[0]["session_since"] == 0
+    assert store.queued_handoffs(pid)[0]["overtaken"] == 0
 
 
-def test_session_since_leaves_the_stored_status_alone(store):
+def test_overtaken_leaves_the_stored_status_alone(store):
     """A presentation signal, not a state transition: Dismiss is still the only
     thing that retires a handoff, so the row stays `queued` and stays listed."""
     pid = store.upsert_project("/proj/a", "a")
     store.create_handoff(
         handoff("h1", project_path="/proj/a", source_session_id="sess-1",
                 created_at=1_000_000), pid)
-    store.upsert_session(rec("later", started_at=_iso(1_000_060)), pid)
+    store.upsert_session(_worked("later", 1_000_060), pid)
 
     rows = store.queued_handoffs(pid)
     assert [r["id"] for r in rows] == ["h1"]
-    assert rows[0]["session_since"] == 1
+    assert rows[0]["overtaken"] == 1
     assert store.get_handoff("h1")["status"] == "queued"
 
 
-def test_an_unparseable_started_at_never_marks_a_handoff(store):
+def test_an_unparseable_started_at_never_overtakes_a_handoff(store):
     """`started_at` is a transcript-supplied string; `strftime` returns NULL for
     anything it cannot read, and NULL must fail the comparison rather than
     badge the handoff on a timestamp nobody could parse."""
@@ -962,10 +1092,14 @@ def test_an_unparseable_started_at_never_marks_a_handoff(store):
     store.create_handoff(
         handoff("h1", project_path="/proj/a", source_session_id="sess-1",
                 created_at=1_000_000), pid)
-    store.upsert_session(rec("broken", started_at="not a timestamp"), pid)
-    store.upsert_session(rec("missing", started_at=None), pid)
+    store.upsert_session(
+        rec("broken", started_at="not a timestamp",
+            tokens_in=WORKED_TOKENS, tokens_out=0), pid)
+    store.upsert_session(
+        rec("missing", started_at=None,
+            tokens_in=WORKED_TOKENS, tokens_out=0), pid)
 
-    assert store.queued_handoffs(pid)[0]["session_since"] == 0
+    assert store.queued_handoffs(pid)[0]["overtaken"] == 0
 
 
 def test_consumed_at_is_stamped_only_by_the_consumed_transition(store):

@@ -16,7 +16,7 @@ from bridge.models import (
     LiveSession,
     SessionRecord,
 )
-from bridge.store import Store
+from bridge.store import WORKED_TOKENS, Store
 from bridge.workspace import build_workspace
 
 
@@ -1288,12 +1288,14 @@ def test_recent_activity_lists_only_things_a_person_did():
 # --- Lane D: the stacked-handoff surface on the Current tab ------------------
 
 
-def _client_with_stack(tmp_path, overtaken: int):
+def _client_with_stack(tmp_path, overtaken: int, worked: bool = True):
     """A project with three queued handoffs, the oldest `overtaken` of which
-    have a session that started after they were written.
+    have a session that ran after they were written.
 
     Handoff `created_at` values straddle the session's `started_at`, so the
     boundary is set by the DATA rather than by a flag the template is handed.
+    `worked` decides whether that session DID anything: a glance overtakes
+    nothing, whenever it started.
     """
     cfg = load({"db_path": tmp_path / "stack.db", "spool_dir": tmp_path / "spool",
                 "session_meta_dir": tmp_path / "session-meta"})
@@ -1313,6 +1315,7 @@ def _client_with_stack(tmp_path, overtaken: int):
         title="Ran outside Bridge",
         started_at=datetime.fromtimestamp(session_epoch, timezone.utc).isoformat(),
         ended_at=_ended(5),
+        tokens_in=WORKED_TOKENS if worked else 11, tokens_out=0,
     ), pid)
     return TestClient(create_app(store, cfg)), store, pid
 
@@ -1342,7 +1345,7 @@ def test_an_overtaken_handoff_is_demoted_and_the_freshest_is_not(tmp_path):
     c, store, pid = _client_with_stack(tmp_path, overtaken=2)
     html = c.get(f"/project/{pid}?tab=current").text
 
-    assert html.count("A session has run since") == 2
+    assert html.count("Work has continued since") == 2
     assert html.count(">Ready</span>") == 1
     assert 'data-handoff-stale="h0"' in html
     assert 'data-handoff-stale="h1"' in html
@@ -1350,6 +1353,23 @@ def test_an_overtaken_handoff_is_demoted_and_the_freshest_is_not(tmp_path):
     for hid in ("h0", "h1", "h2"):
         assert f'data-handoff-section="{hid}"' in html
         assert store.get_handoff(hid)["status"] == "queued"
+    store.close()
+
+
+def test_a_later_session_that_did_no_work_demotes_nothing(tmp_path):
+    """Rule C end to end, from the sessions table to the badge.
+
+    Same three handoffs, same session started after the oldest two -- but this
+    time it opened, asked one question and closed. Under the old "any session
+    STARTED since" rule those two rows were demoted and the panel's badge
+    became furniture; work is what demotes now, and nothing here did any.
+    """
+    c, store, pid = _client_with_stack(tmp_path, overtaken=2, worked=False)
+    html = c.get(f"/project/{pid}?tab=current").text
+
+    assert "Work has continued since" not in html
+    assert html.count(">Ready</span>") == 3
+    assert "data-handoff-stale" not in html
     store.close()
 
 
