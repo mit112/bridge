@@ -553,6 +553,23 @@ a { color: var(--text); text-underline-offset: .16em; }
 }
 @media (max-width: 1023px) { .menu-toggle { display: inline-flex; align-items: center; } }
 
+/* Below 1024px the nav is collapsed BEHIND that button, not rendered open
+   above the content with a "Menu" button sitting beside the already-open menu
+   it claims to control. `.menu-toggle`'s own `aria-expanded` is the single
+   piece of state: the server renders it `false`, shell.js flips it on click,
+   and this rule is the only thing that reads it visually -- so the button and
+   what is on screen cannot disagree.
+
+   Gated on `data-js`, which base.html's inline head script sets pre-paint:
+   with no JS the button cannot reopen the nav, so a no-JS load must keep it
+   visible rather than collapsed out of reach. Same script that applies the
+   theme, so this is decided before first paint and never flashes. */
+@media (max-width: 1023px) {
+  :root[data-js] .sidebar:has(.menu-toggle[aria-expanded="false"]) .sidebar__nav {
+    display: none;
+  }
+}
+
 /* The inverse of .menu-toggle's breakpoint, so the two are never both exposed.
    Square because it is a glyph-only control: the width floor matches the height
    floor so the hit area stays square at every density (WCAG 2.5.8 wants 24px;

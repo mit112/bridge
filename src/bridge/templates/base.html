@@ -30,6 +30,12 @@
      attribute on <html> costs nothing on the pages that ignore it. #}
   <script>
   (function () {
+    // `data-js` says only "this script ran": app.css collapses the narrow-width
+    // nav behind the Menu button, which is useless without the JS that opens
+    // it, so the collapse must not apply to a no-JS load. Set outside the
+    // try/catch below -- a blocked localStorage must not cost the page its JS
+    // affordances.
+    document.documentElement.setAttribute('data-js', '');
     try {
       var theme = localStorage.getItem('bridge.appearance') || 'system';
       var dark = theme === 'dark' || (theme !== 'light' &&
@@ -169,7 +175,11 @@
             <path d="M9.5 4.5v15" />
           </svg>
         </button>
-        <button type="button" class="menu-toggle" aria-expanded="true" aria-controls="primary-nav">Menu</button>
+        {# aria-expanded="false": below 1024px -- the only width this button is
+           exposed at -- app.css collapses the nav behind it, so the server's
+           rendered state has to say collapsed. At 1024px and up the button is
+           display:none and the nav is shown by the same stylesheet. #}
+        <button type="button" class="menu-toggle" aria-expanded="false" aria-controls="primary-nav">Menu</button>
       </div>
       {{ app_nav(active) }}
       <div class="shell-status">
