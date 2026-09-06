@@ -974,3 +974,50 @@ def test_a_brand_new_project_still_fires_under_the_narrowed_watcher_scope(tmp_pa
         assert fired.wait(2.0), "a brand-new project's first transcript was missed"
     finally:
         watcher.stop()
+
+
+def _scan_state_reads_during(store, cfg) -> int:
+    """How many scan_state READ calls one reindex makes."""
+    # `hasattr` so the count, not an AttributeError, is what fails against an
+    # implementation that has no bulk read.
+    names = [n for n in ("get_scan_state", "all_scan_states") if hasattr(store, n)]
+    originals = {n: getattr(store, n) for n in names}
+    calls = {"n": 0}
+
+    def counting(fn):
+        def wrapper(*a, **kw):
+            calls["n"] += 1
+            return fn(*a, **kw)
+        return wrapper
+
+    for name in names:
+        setattr(store, name, counting(originals[name]))
+    try:
+        reindex(store, cfg)
+    finally:
+        for name in names:
+            setattr(store, name, originals[name])
+    return calls["n"]
+
+
+def test_scan_state_reads_do_not_grow_with_the_file_count(env):
+    """Reindex read `scan_state` once per transcript, on a table it reads whole.
+
+    On the real corpus that was 9,202 single-row queries -- 29 ms of a ~106 ms
+    run that fires on every detected change and on every 15s tick -- and the
+    cost grew with the corpus. The shape, not the clock, is the guard: the
+    number of scan_state reads must be the same for one file as for many.
+    """
+    cfg, store, projects = env
+    write(projects, "s.jsonl", transcript_lines())
+    few = _scan_state_reads_during(store, cfg)
+
+    for i in range(60):
+        sid = f"{i:08x}-3333-3333-3333-333333333333"
+        write(projects, f"{sid}.jsonl", transcript_lines(sid=sid))
+    many = _scan_state_reads_during(store, cfg)
+
+    assert many == few, (
+        f"reindex made {many} scan_state reads against 61 files "
+        f"but {few} against one"
+    )
