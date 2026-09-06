@@ -79,6 +79,45 @@ def test_claim_one_due_is_a_single_winner_under_a_repeat_claim(store):
     assert store.claim_one_due(now=1500) is None     # already launching, not re-claimed
 
 
+def test_a_contended_claim_on_one_row_has_exactly_one_winner(store):
+    """Two callers arriving together on the SAME row: one claims it, one gets None.
+
+    The sequential tests above call the claim twice from one thread, which only
+    proves the row is no longer `pending` the second time. The claim that
+    ARCHITECTURE's Durability section actually makes -- a run-now cannot
+    double-fire -- is about contention: the scheduler tick thread and an HTTP
+    run-now share one `Store`, so both can be inside `claim_specific` for the
+    same id at once. What makes that safe is `WHERE ... AND status='pending'`
+    plus the rowcount check; without them both callers read a claimed row back
+    and the job fires twice.
+    """
+    _job(store, "a", scheduled_for=1000)
+    gate = threading.Barrier(4)
+    claims: list = []
+    errors: list[Exception] = []
+
+    def racer():
+        try:
+            gate.wait(timeout=5)      # nobody claims until everybody is here
+            claims.append(store.claim_specific("a"))
+        except Exception as e:        # noqa: BLE001
+            errors.append(e)
+
+    threads = [threading.Thread(target=racer) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=10)
+        assert not t.is_alive(), "a claiming thread never finished"
+
+    assert errors == []
+    winners = [c for c in claims if c is not None]
+    assert len(winners) == 1, f"{len(winners)} callers claimed the same run"
+    assert winners[0]["status"] == "launching"
+    # And the scheduler tick cannot pick up what run-now already took.
+    assert store.claim_one_due(now=1500) is None
+
+
 def test_claim_one_due_fires_a_job_due_exactly_at_now(store):
     _job(store, "a", scheduled_for=1500)      # due exactly at `now`
     row = store.claim_one_due(now=1500)
