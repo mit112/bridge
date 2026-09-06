@@ -8,6 +8,7 @@ aborts a run.
 import dataclasses
 import logging
 import os
+import sqlite3
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -89,6 +90,11 @@ def reindex(
         store.set_alias(alias, canonical)
     aliases = store.alias_map()
 
+    # One read of `scan_state` for the whole run instead of one per file. The
+    # loop below asks about every file it globs, so the per-file lookup was
+    # 9,200 queries against a table this reads in full anyway.
+    scan_states = store.all_scan_states()
+
     # Config seeds; the database overrides. Which archived paths are new has to
     # be settled BEFORE indexing, because indexing is what creates their rows.
     unseen_archived = [
@@ -100,7 +106,7 @@ def reindex(
         if progress:
             progress(i + 1, total)
         try:
-            _index_one(store, path, stats, aliases)
+            _index_one(store, path, stats, aliases, scan_states.get(str(path)))
         except OSError:
             continue  # file vanished or unreadable mid-run; never fatal
         except (AttributeError, TypeError, ValueError) as exc:
@@ -239,10 +245,15 @@ def _link_background_launches(store: Store) -> int:
 
 
 def _index_one(
-    store: Store, path: Path, stats: IndexStats, aliases: dict[str, str]
+    store: Store,
+    path: Path,
+    stats: IndexStats,
+    aliases: dict[str, str],
+    prior: sqlite3.Row | None,
 ) -> None:
+    """`prior` is this file's `scan_state` row, handed in by the caller's one
+    bulk read rather than fetched here per file."""
     st = path.stat()
-    prior = store.get_scan_state(str(path))
     start, prev = 0, None
 
     if prior is not None:
