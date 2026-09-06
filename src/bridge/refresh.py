@@ -4,6 +4,31 @@ The server is the only process that indexes transcripts and writes the derived
 database.  This coordinator adds one process-local gate so an explicit refresh
 and the periodic worker cannot scan from the same stale scan-state boundary at
 the same time.
+
+**The 15s periodic reindex is not a duplicate of the watcher's 15s full
+reconcile, and must not be collapsed into it.** It looks like one -- same
+interval, same `reindex` call -- but the watcher fires `on_change` only when a
+transcript's file set or an (mtime, size) pair actually moved, and four things
+depend on a run happening even when nothing under the transcripts root did:
+
+  * **Repo discovery.** `backfill.discovery_repos` cards a git repo under a
+    discovery path that has no transcripts yet. Its input is `~/dev`, which the
+    watcher does not watch, so a freshly cloned repo would never appear until
+    something unrelated wrote a transcript.
+  * **Vanished-project archiving.** The auto-archive pass stats every project
+    row's directory. Deleting a project directory changes nothing inside the
+    transcripts root, so nothing would ever fire the pass.
+  * **`generation`, and with it the SSE full update.** `/events` sends a
+    `full_update` frame only when `generation` moves, and `live_patch` strips
+    `git` and `burn` from every card. A no-op reindex bumping `generation` is
+    therefore the only thing that pushes changed git state to a connected tab
+    when the change came from outside Claude.
+  * **The watcher-failed fallback.** `serve` explicitly tolerates a watcher
+    that cannot start, on the grounds that this loop still covers changes at
+    its own interval. Remove the loop and that degradation becomes an outage.
+
+A no-op run is cheap and is what makes those four honest; the cost worth
+attacking is the run itself, not its cadence.
 """
 
 from __future__ import annotations
