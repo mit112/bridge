@@ -50,7 +50,7 @@ from bridge.launcher import (
 from bridge.models import Handoff
 from bridge.registry import resolve_project
 from bridge.store import Store
-from tests.conftest import RealBridgeDirTouched, launch_by_session
+from tests.conftest import REAL_BRIDGE_DIR, RealBridgeDirTouched, launch_by_session
 
 # --- Phase 3: the launcher ---------------------------------------------------
 
@@ -1164,14 +1164,20 @@ def test_gc_removes_stale_prompt_files_and_keeps_fresh_ones(cfg):
 # --- the conftest guard -----------------------------------------------------
 
 
-def test_the_conftest_guard_fires_when_launches_dir_is_not_overridden(store, tmp_path):
+def test_the_conftest_guard_fires_on_the_real_launches_dir(store, tmp_path):
     """A launch WRITES, so a fixture that forgets the override must fail loudly.
 
     `RealBridgeDirTouched` derives from `BaseException` on purpose, so no
     well-behaved catch-all can swallow it -- including the ones inside `launch`.
+
+    The real directory is named here rather than left to `Config`'s default,
+    because `home_is_a_tmp_dir` now redirects that default into tmp: the two
+    guards defend different failures, and this one still has to be exercised
+    against the path it actually refuses.
     """
-    unguarded = load({"db_path": tmp_path / "b.db", "spool_dir": tmp_path / "spool"})
-    assert unguarded.launches_dir == Path.home() / ".bridge" / "launches"
+    unguarded = load({"db_path": tmp_path / "b.db", "spool_dir": tmp_path / "spool",
+                      "launches_dir": REAL_BRIDGE_DIR / "launches"})
+    assert unguarded.launches_dir == REAL_BRIDGE_DIR / "launches"
     ran = recorder(proc(0))
 
     with pytest.raises(RealBridgeDirTouched, match="launches_dir"):

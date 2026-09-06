@@ -104,10 +104,10 @@ def test_the_guard_rejects_a_write_to_the_real_bridge_dir():
     `RealBridgeDirTouched` derives from BaseException, so this cannot be caught
     with `pytest.raises(Exception)`.
     """
-    from tests.conftest import RealBridgeDirTouched
+    from tests.conftest import REAL_BRIDGE_DIR, RealBridgeDirTouched
 
     with pytest.raises(RealBridgeDirTouched):
-        schedspool.journal(job(), Path.home() / ".bridge" / "spool")
+        schedspool.journal(job(), REAL_BRIDGE_DIR / "spool")
 
 
 NOW = 1_500_000_000
