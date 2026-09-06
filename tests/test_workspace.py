@@ -1232,7 +1232,7 @@ def test_history_tables_use_tabular_numerals():
 # --- The Project state card must not show the raw live enum -----------------
 
 
-def _render_current(live_status):
+def _render_current(live_status, git_state=None):
     """`_workspace_current.html` rendered on its own, the way test_components
     renders the shared macros: the route reaches this template through
     `build_workspace`, which takes its live session from the sensor, and the
@@ -1255,7 +1255,7 @@ def _render_current(live_status):
         launch_efforts=["medium"],
         launch_permission_modes=[PermissionChoice("", "Ask as usual")],
     )
-    model = SimpleNamespace(card=card, git=None)
+    model = SimpleNamespace(card=card, git=git_state)
     totals = SimpleNamespace(last_5h=0)
     return env.get_template("_workspace_current.html").render(model=model, totals=totals)
 
@@ -1277,3 +1277,21 @@ def test_the_live_status_class_hook_still_keys_off_the_raw_word():
     assert 'data-live-path="/p/demo"' in html
     state = html.split("data-live-status>", 1)[1].split("<", 1)[0]
     assert state == "Busy"
+
+
+def test_the_project_state_facts_do_not_repeat_their_own_labels():
+    """"Usage today: 2.5M today" and "Last 5h: 834k last 5h" said the same word
+    twice in a two-column `<dl>` whose left column IS the label."""
+    html = _render_current("busy")
+    today = html.split("data-burn-today>", 1)[1].split("<", 1)[0]
+    last5h = html.split("data-burn-last-5h>", 1)[1].split("<", 1)[0]
+    assert "today" not in today, today
+    assert "last 5h" not in last5h, last5h
+
+
+def test_recent_activity_lists_only_things_a_person_did():
+    """"Project state indexed 0m ago" is when Bridge last probed the git cache
+    -- system bookkeeping, in a list of human activity."""
+    # A cache hit is the only state that ever rendered the line at all.
+    html = _render_current("busy", git_state=GitState(status="ok", cached_at=1_780_000_000))
+    assert "Project state indexed" not in html

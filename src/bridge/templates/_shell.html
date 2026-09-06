@@ -64,7 +64,14 @@
 </nav>
 {% endmacro %}
 
-{% macro freshness_status(state, age, generated_at=none, generation=none, index_at=none, server=none) %}
+{# `state_visible=False` keeps the strip and both its leaves in the DOM but
+   takes the words off the screen: Overview's page header used to repeat the
+   sidebar's own Connected/Indexed readout verbatim, two live indicators for
+   one fact. The nodes stay because live.js patches them by hook and because
+   the label is the `role="status"` region that announces a connection state
+   changing -- it is the visual duplicate that goes, not the announcement. #}
+{% macro freshness_status(state, age, generated_at=none, generation=none, index_at=none, server=none, state_visible=True) %}
+{% set hide = "" if state_visible else " visually-hidden" %}
 <section class="freshness-strip" data-freshness-strip
          {% if generated_at is not none %}data-generated-at="{{ generated_at }}"{% endif %}
          {% if generation is not none %}data-generation="{{ generation }}"{% endif %}
@@ -76,8 +83,8 @@
       two have to be capitalised in the same shape here and in live.js's
       `stateLabel`, because the first SSE tick overwrites this text -- casing
       only the template would revert within a second. -#}
-  <span class="freshness-strip__label" data-freshness-label role="status" aria-live="polite">{{ state | capitalize }}</span>
-  <span class="card__note" data-freshness-age>{{ age }}</span>
+  <span class="freshness-strip__label{{ hide }}" data-freshness-label role="status" aria-live="polite">{{ state | capitalize }}</span>
+  <span class="card__note{{ hide }}" data-freshness-age>{{ age }}</span>
   {% if caller %}{{ caller() }}{% endif %}
 </section>
 {% endmacro %}

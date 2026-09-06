@@ -41,8 +41,8 @@
         <div class="workspace-fact"><dt>Branch</dt><dd class="mono"{% if git and git.branch %} title="{{ git.branch }}"{% endif %}>{{ git.branch if git and git.branch else "Unavailable" }}</dd></div>
         <div class="workspace-fact"><dt>Working tree</dt><dd{% if git and git.dirty_count %} class="workspace-fact--risk"{% endif %}>{% if git and git.dirty_count %}{{ git.dirty_count }} file{{ "" if git.dirty_count == 1 else "s" }} changed{% else %}Clean{% endif %}</dd></div>
         <div class="workspace-fact"><dt>Remote</dt><dd>{% if git and git.behind %}{{ git.behind }} behind{% elif git and git.ahead %}{{ git.ahead }} ahead{% else %}Synced{% endif %}</dd></div>
-        <div class="workspace-fact"><dt>Usage today</dt><dd class="mono" data-burn-today>{{ card.tokens_today | kilo }} today</dd></div>
-        <div class="workspace-fact"><dt>Last 5h</dt><dd class="mono"><span data-burn-last-5h>{{ card.tokens_5h | kilo }} last 5h</span><svg class="workspace-spark" viewBox="0 0 72 20" width="72" height="20" aria-hidden="true" focusable="false"><polyline data-sparkline points="{{ card.spark | spark_points }}" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/></svg></dd></div>
+        <div class="workspace-fact"><dt>Usage today</dt><dd class="mono" data-burn-today>{{ card.tokens_today | kilo }}</dd></div>
+        <div class="workspace-fact"><dt>Last 5h</dt><dd class="mono"><span data-burn-last-5h>{{ card.tokens_5h | kilo }}</span><svg class="workspace-spark" viewBox="0 0 72 20" width="72" height="20" aria-hidden="true" focusable="false"><polyline data-sparkline points="{{ card.spark | spark_points }}" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/></svg></dd></div>
       </dl>
     </section>
 
@@ -57,10 +57,7 @@
       {% if git and git.last_commit_summary %}
       <div class="workspace-activity"><span class="workspace-activity__rail" aria-hidden="true"></span><p>{{ git.last_commit_summary }}<time>{% if git.last_commit_at %}{{ git.last_commit_at | ago_epoch }} ago{% else %}Last recorded commit{% endif %}</time></p></div>
       {% endif %}
-      {% if git and git.cached_at %}
-      <div class="workspace-activity"><span class="workspace-activity__rail" aria-hidden="true"></span><p>Project state indexed<time>{{ git.cached_at | ago_epoch }} ago</time></p></div>
-      {% endif %}
-      {% if not card.handoff and not card.session and not (git and git.cached_at) %}<p class="empty">No recent activity.</p>{% endif %}
+      {% if not card.handoff and not card.session and not (git and git.last_commit_summary) %}<p class="empty">No recent activity.</p>{% endif %}
     </section>
   </aside>
 </div>

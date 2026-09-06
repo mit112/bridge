@@ -90,15 +90,5 @@
       "tests/test_cards.py::test_a_later_good_probe_replaces_the_cached_state"
     ],
     "expect_count": 1
-  },
-  {
-    "name": "render the cached age with `ago` instead of `ago_epoch`, the filter that takes an ISO string",
-    "file": "src/bridge/templates/_workspace_current.html",
-    "old": "Project state indexed<time>{{ git.cached_at | ago_epoch }} ago",
-    "new": "Project state indexed<time>{{ git.cached_at | ago }} ago",
-    "tests": [
-      "tests/test_api.py::test_a_stale_git_probe_renders_the_last_good_state_and_its_age"
-    ],
-    "expect_count": 1
   }
 ]

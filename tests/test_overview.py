@@ -897,3 +897,43 @@ def test_overview_route_keeps_freshness_strip_and_total_hooks_for_live_js(tmp_pa
         r'<span class="command-cell__num" data-dashboard-total=', html)) == 6
     assert "data-diagnostics-alert" in html
     store.close()
+
+
+# --- Readability: one connection readout, and no all-"Recent" pill column ---
+
+
+def test_overview_does_not_repeat_the_sidebars_connection_readout(tmp_path):
+    """The page header showed "Connected · 3s ago" directly above a sidebar
+    already saying Connected/Indexed. The strip and both its leaves stay in the
+    DOM -- live.js patches them by hook, and the label is the `role="status"`
+    region that announces a connection state changing -- but the words come off
+    the screen. The Refresh button and its own status region stay visible.
+    """
+    c, store, _ = _route_client(tmp_path)
+    html = c.get("/").text
+    store.close()
+
+    for hook in ("data-freshness-label", "data-freshness-age"):
+        leaf = html[html.rindex("<span", 0, html.index(hook)):]
+        leaf = leaf[:leaf.index(">")]
+        assert "visually-hidden" in leaf, f"{hook} is still on screen: {leaf}"
+    assert "data-freshness-strip" in html      # live.js still finds the strip
+    assert "data-dashboard-refresh>Refresh</button>" in html
+    assert "data-refresh-status" in html
+
+
+def test_the_recent_projects_rows_carry_no_status_pill(tmp_path):
+    """Every project with a real state -- queued, running, uncommitted, a
+    failed run -- is an attention item and excluded from `recent`, so the pill
+    here only ever read "Recent" or "Idle": a column of the same word."""
+    c, store, cfg = _route_client(tmp_path)
+    pid = store.upsert_project("/p/quiet", "quiet")
+    store.upsert_session(SessionRecord(
+        session_id="s-quiet", transcript_path="/t/s-quiet", title="Did work",
+        ended_at="2026-07-30T10:00:00.000Z"), pid)
+    html = c.get("/").text
+    store.close()
+
+    recent = html[html.index('class="projects-list"'):]
+    assert "/p/quiet" in recent, "the row under test did not render"
+    assert 'class="pill' not in recent, "the rows still carry a status pill"
