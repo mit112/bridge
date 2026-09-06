@@ -112,3 +112,69 @@ def test_tick_never_fires_future_or_cancelled(store, cfg):
     from bridge import scheduler
 
     assert scheduler.tick(store, cfg, (lambda *a, **k: None), now=1500) == 0
+
+
+def test_a_job_half_an_hour_late_still_fires(store, cfg):
+    """The catch-up window is what makes a closed lid or a restarted panel
+    harmless: the run is still owed and the user is still expecting it."""
+    _job(store, "a", scheduled_for=10_000)
+    calls = []
+
+    def fake(store, cfg, spec, handoff_id=None, **kw):
+        from bridge.launcher import LaunchResult
+
+        calls.append(spec)
+        return LaunchResult("L1", "started")
+
+    from bridge import scheduler
+
+    assert scheduler.tick(store, cfg, fake, now=10_000 + 1800) == 1
+    assert store.get_scheduled_run("a")["status"] == "fired"
+    assert len(calls) == 1
+
+
+def test_a_job_two_hours_late_is_missed_and_never_launched(store, cfg):
+    """Firing retroactively would spawn a session at an unpredictable moment
+    for work the user may have forgotten scheduling -- the refusal
+    `schedspool.rebuild_if_empty` already makes after a database loss."""
+    from bridge import schedspool, scheduler
+
+    _job(store, "stale", scheduled_for=10_000)
+    _job(store, "due", scheduled_for=10_000 + 7000)
+    calls = []
+
+    def fake(store, cfg, spec, handoff_id=None, **kw):
+        from bridge.launcher import LaunchResult
+
+        calls.append(spec.prompt)
+        return LaunchResult("L1", "started")
+
+    when = 10_000 + 7200
+    assert scheduler.tick(store, cfg, fake, now=when) == 1
+
+    stale = store.get_scheduled_run("stale")
+    assert stale["status"] == "missed"
+    assert stale["completed_at"] == when
+    assert stale["launch_id"] is None
+    assert len(calls) == 1, "only the in-window job may fire"
+    assert store.get_scheduled_run("due")["status"] == "fired"
+
+    # Journalled, so a database loss replays it as missed rather than as owed.
+    record = cfg.spool_dir / "schedules" / f"stale.{when}.status.json"
+    assert record.exists()
+    assert schedspool._load_status(record).status == "missed"
+
+
+def test_a_missed_job_is_still_retryable(store, cfg):
+    """`missed` is terminal, not a dead end: recovery is an explicit retry,
+    and that is the only reason refusing to fire it is acceptable."""
+    from bridge import scheduler
+
+    _job(store, "stale", scheduled_for=10_000)
+    scheduler.tick(store, cfg, (lambda *a, **k: None), now=10_000 + 7200)
+
+    row = store.retry_terminal("stale", new_id="retry-1")
+
+    assert row is not None
+    assert row["status"] == "launching"
+    assert row["retry_of"] == "stale"
