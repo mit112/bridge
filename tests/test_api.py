@@ -821,6 +821,36 @@ def test_a_live_post_is_journaled_so_the_database_stays_disposable(tmp_path):
     store2.close()
 
 
+def test_the_git_fingerprint_survives_a_database_loss(tmp_path):
+    """The named failure mode of the whole feature, and the reason
+    `create_handoff`'s INSERT had to grow four columns rather than only the
+    POST path.
+
+    The journal is what survives `rm ~/.bridge/bridge.db`. A fingerprint that
+    reached the database but not the rebuild would disappear on the one
+    operation that is supposed to restore it -- and only for handoffs written
+    before the rebuild, which is the hardest possible shape to notice.
+    """
+    cfg = load({"db_path": tmp_path / "fp.db", "spool_dir": tmp_path / "spool"})
+    store = Store(cfg.db_path)
+    c = TestClient(create_app(store, cfg))
+    c.post("/api/handoff", json=body("fp", prompt="carry on", **FP))
+    store.close()
+
+    cfg.db_path.unlink()
+    for suffix in ("-wal", "-shm"):
+        Path(str(cfg.db_path) + suffix).unlink(missing_ok=True)
+
+    store2 = Store(cfg.db_path)
+    assert spool.rebuild_if_empty(store2, cfg.spool_dir).drained == 1
+    row = store2.get_handoff("fp")
+    assert row["created_branch"] == FP["created_branch"]
+    assert row["created_head"] == FP["created_head"]
+    assert row["created_dirty"] == 3
+    assert row["created_ahead"] == 20
+    store2.close()
+
+
 def test_a_queued_prompt_is_html_escaped_on_the_card(handoff_app):
     """A prompt is arbitrary text and routinely contains markup.
 
@@ -1066,6 +1096,119 @@ def test_a_successful_launch_consumes_the_handoff(launch_app):
     # Consumption and its journal record are the launcher's, which is why the id
     # reaching it matters more here than the status write itself.
     assert fake.calls[0][1] == "h1"
+
+
+# --- the fingerprint, and the drift it makes visible -------------------------
+
+
+FP = {"created_branch": "feat/x", "created_head": "672c726" + "a" * 33,
+      "created_dirty": 3, "created_ahead": 20}
+
+
+def test_a_handoffs_git_fingerprint_is_stored_and_read_back(handoff_app):
+    """Captured CLI-side at authoring time, so the server's only job is to not
+    lose it between the POST and the row."""
+    c, store, _ = handoff_app
+    c.post("/api/handoff", json=body("h1", **FP))
+
+    row = store.get_handoff("h1")
+    assert row["created_branch"] == FP["created_branch"]
+    assert row["created_head"] == FP["created_head"]
+    assert row["created_dirty"] == 3
+    assert row["created_ahead"] == 20
+
+
+def test_a_handoff_posted_without_a_fingerprint_is_still_accepted(handoff_app):
+    """An older `bridge` on the same machine posts exactly this body, and a
+    handoff must never be refused over a field that did not exist when the
+    client shipped."""
+    c, store, _ = handoff_app
+    assert c.post("/api/handoff", json=body("h1")).status_code == 201
+    assert store.get_handoff("h1")["created_head"] is None
+
+
+def test_a_drifted_handoff_launches_with_a_preamble_naming_what_moved(launch_app):
+    """The prompt states a branch and a commit as fact. When the panel can see
+    that both have moved, the next session is told so in the bytes it receives
+    -- a badge on a card it will never look at is not where that belongs."""
+    c, store, _, fake = launch_app
+    pid = c.post("/api/handoff", json=body("h1", prompt="carry on", **FP)
+                 ).json()["project_id"]
+    store.put_git_cache(
+        pid, GitState(status="ok", branch="main", head="efb7759" + "b" * 33), 1000)
+
+    c.post("/api/launch", json={"project_path": DEMO, "handoff_id": "h1"})
+
+    ran = fake.calls[0][0].prompt
+    assert ran.startswith("[bridge]")
+    assert "feat/x" in ran and "main" in ran
+    assert ran.endswith("carry on"), "the authored prompt must survive verbatim"
+
+
+def test_an_undrifted_handoff_launches_the_authored_bytes_untouched(launch_app):
+    """The counterpart that makes the test above mean something. A repo that has
+    not moved must add nothing at all -- a preamble on every launch would be
+    noise the next session learns to skip, which costs it the one time it is
+    real."""
+    c, store, _, fake = launch_app
+    same = GitState(status="ok", branch=FP["created_branch"], head=FP["created_head"])
+    pid = c.post("/api/handoff", json=body("h1", prompt="carry on", **FP)
+                 ).json()["project_id"]
+    store.put_git_cache(pid, same, 1000)
+
+    c.post("/api/launch", json={"project_path": DEMO, "handoff_id": "h1"})
+
+    assert fake.calls[0][0].prompt == "carry on"
+
+
+def test_a_handoff_with_no_fingerprint_never_gets_a_preamble(launch_app):
+    """Silence, not a guess: nothing was recorded to compare, so the repo may
+    have moved a hundred commits and Bridge has no standing to say."""
+    c, store, _, fake = launch_app
+    pid = c.post("/api/handoff", json=body("h1", prompt="carry on")
+                 ).json()["project_id"]
+    store.put_git_cache(
+        pid, GitState(status="ok", branch="main", head="e" * 40), 1000)
+
+    c.post("/api/launch", json={"project_path": DEMO, "handoff_id": "h1"})
+
+    assert fake.calls[0][0].prompt == "carry on"
+
+
+def test_an_unreadable_repo_adds_no_preamble(launch_app):
+    """A cache miss is not evidence of stillness either, and a launch must never
+    block on a fresh `git` call in a repo that is slow or gone."""
+    c, _, _, fake = launch_app
+    c.post("/api/handoff", json=body("h1", prompt="carry on", **FP))
+
+    c.post("/api/launch", json={"project_path": DEMO, "handoff_id": "h1"})
+
+    assert fake.calls[0][0].prompt == "carry on"
+
+
+def test_an_edited_prompt_still_gets_the_drift_preamble(launch_app):
+    """The panel's Run-now posts the textarea's bytes alongside the handoff id.
+    An edit changes the instruction, not the premise: it is still this handoff,
+    and the tree it was written against has still moved."""
+    c, store, _, fake = launch_app
+    pid = c.post("/api/handoff", json=body("h1", prompt="original", **FP)
+                 ).json()["project_id"]
+    store.put_git_cache(
+        pid, GitState(status="ok", branch="main", head="e" * 40), 1000)
+
+    c.post("/api/launch", json={"project_path": DEMO, "handoff_id": "h1",
+                                "prompt": "edited on the card"})
+
+    assert fake.calls[0][0].prompt.endswith("edited on the card")
+    assert fake.calls[0][0].prompt.startswith("[bridge]")
+
+
+def test_a_launch_with_no_handoff_at_all_gets_no_preamble(launch_app):
+    """An ad-hoc prompt has no fingerprint and no premise to have rotted."""
+    c, _, _, fake = launch_app
+    c.post("/api/launch", json={"project_path": DEMO, "prompt": "just run this"})
+
+    assert fake.calls[0][0].prompt == "just run this"
 
 
 def test_a_launch_with_an_explicit_handoff_id_and_no_prompt_uses_its_next_prompt(launch_app):

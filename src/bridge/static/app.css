@@ -1092,6 +1092,21 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
   letter-spacing: .05em;
   text-transform: uppercase;
 }
+/* Reuses `--review`, the palette's existing "needs attention" hue, rather than
+   introducing a fifth status colour for one line. It is already contrast-
+   checked in both themes by `test_contrast`. */
+.continuation-panel .handoff__drift {
+  margin: var(--space-2) 0 0;
+  color: var(--review);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+}
+.continuation-panel .handoff__drift-label {
+  font-weight: 700;
+  letter-spacing: .03em;
+  text-transform: uppercase;
+  font-size: var(--text-xs);
+}
 .continuation-panel .handoff__title {
   display: -webkit-box;
   max-width: 34ch;

@@ -51,6 +51,12 @@ def probe(path: Path, timeout: float = 2.0) -> GitState:
         _, branch_out = _git(path, "rev-parse", "--abbrev-ref", "HEAD", timeout=timeout)
         g.branch = branch_out.strip()
 
+        # A repo with no commits yet has no HEAD to resolve, and `rev-parse`
+        # exits non-zero there. That is a normal state, not a probe failure, so
+        # it leaves `head` None rather than failing the whole probe.
+        code, head_out = _git(path, "rev-parse", "HEAD", timeout=timeout)
+        g.head = head_out.strip() if code == 0 else None
+
         _, porcelain = _git(path, "status", "--porcelain", "-z", timeout=timeout)
         entries = _porcelain_paths(porcelain)
         g.dirty_count = len(entries)

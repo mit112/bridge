@@ -14,7 +14,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 
-from bridge import agents, gitprobe, hooks
+from bridge import agents, drift, gitprobe, hooks
 from bridge.config import Config, ModelChoice
 from bridge.models import AgentsState, Card, GitState, SessionRecord
 from bridge.store import Store, now_epoch, to_epoch
@@ -395,7 +395,7 @@ def build_cards(
         if git_cache is None:
             git = _settle_cache(store, row["id"], git, now)
 
-        handoffs = _handoffs(store, row["id"])
+        handoffs = _handoffs(store, row["id"], git)
         handoff = handoffs[0] if handoffs else None
         cards.append(
             Card(
@@ -449,7 +449,7 @@ def _session(store: Store, project_id: int) -> SessionRecord | None:
     )
 
 
-def _handoffs(store: Store, project_id: int) -> list[dict]:
+def _handoffs(store: Store, project_id: int, git: GitState) -> list[dict]:
     """Each handoff's own source session's title, not the project's latest one.
 
     A project can have several handoffs queued at once, from different
@@ -463,11 +463,18 @@ def _handoffs(store: Store, project_id: int) -> list[dict]:
     `overtaken` arrives as SQLite's 0/1 and is narrowed to a real bool here
     so the template branches on a Python truth value rather than an integer.
     It is a rendering hint -- the row's stored `status` is untouched.
+
+    `drift` is the same shape of hint and is computed against the `git` this
+    card build already probed, so it costs no subprocess of its own. `overtaken`
+    says a later SESSION did work; `drift` says the REPO moved. They are
+    independent -- a rebase with nobody working, and a session that changed
+    nothing, are each one without the other.
     """
     out: list[dict] = []
     for row in store.queued_handoffs(project_id):
         handoff = dict(row)
         handoff["overtaken"] = bool(handoff["overtaken"])
+        handoff["drift"] = drift.compare(row, git)
         out.append(handoff)
     return out
 

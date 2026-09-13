@@ -675,7 +675,10 @@ def test_handoff_titles_come_from_one_query_not_a_row_per_handoff(store, tmp_pat
     store.queued_handoffs = counting_queued
     store.session_row = refuse_session_row
     try:
-        rows = cards_module._handoffs(store, pid)
+        # `not_a_repo` keeps drift out of this test's way: it is about query
+        # COUNT, and a git state that could produce drift would add nothing to
+        # that while giving the assertion a second reason to move.
+        rows = cards_module._handoffs(store, pid, GitState(status="not_a_repo"))
     finally:
         del store.queued_handoffs
         del store.session_row
@@ -730,3 +733,26 @@ def test_card_no_handoffs_is_empty_list(store, tmp_path):
     card = next(c for c in cards if c.path == "/proj/b")
     assert card.handoffs == []
     assert card.handoff is None
+
+
+def test_drift_reaches_the_card_from_the_git_this_build_already_probed(store, tmp_path):
+    """No second probe: `build_cards` has the git state in hand, and a handoff
+    panel that shelled out per card would pay a subprocess on every SSE tick."""
+    from bridge.models import Handoff
+
+    path = str(tmp_path)
+    pid = store.upsert_project(path, "p")
+    store.create_handoff(
+        Handoff(id="h", project_path=path, next_prompt="go",
+                created_branch="feat/x", created_head="a" * 40, created_at=1),
+        pid,
+    )
+
+    moved = build_cards(store, load({"db_path": tmp_path / "c.db"}), probe_fn=lambda p: GitState(
+        status="ok", branch="main", head="b" * 40))[0]
+    assert moved.handoffs[0]["drift"]["branch_then"] == "feat/x"
+    assert moved.handoffs[0]["drift"]["branch_now"] == "main"
+
+    still = build_cards(store, load({"db_path": tmp_path / "c.db"}), probe_fn=lambda p: GitState(
+        status="ok", branch="feat/x", head="a" * 40))[0]
+    assert still.handoffs[0]["drift"] is None

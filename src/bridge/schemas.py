@@ -39,6 +39,13 @@ class HandoffIn(BaseModel):
     suggested_model: str | None = None
     suggested_effort: str | None = None
     created_at: int | None = None
+    # Optional in the strongest sense: an older `bridge` on the same machine
+    # posts without them, and must keep working. Absent means "not recorded",
+    # which `drift.compare` reads as nothing to say.
+    created_branch: str | None = None
+    created_head: str | None = None
+    created_dirty: int | None = None
+    created_ahead: int | None = None
 
     @field_validator("id")
     @classmethod

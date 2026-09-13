@@ -773,3 +773,88 @@ def test_resume_exits_one_and_execs_nothing_when_the_panel_is_down(
     assert code == 1
     assert execs == []
     assert not list(Path(cfg.spool_dir).glob("*.json")) if Path(cfg.spool_dir).is_dir() else True
+
+
+# --- the git fingerprint is captured where the repo actually is --------------
+
+
+def git_repo(tmp_path) -> Path:
+    """A real repo with one real commit. `_git_fingerprint` shells out to the
+    real `git`, so a fake would test the parsing and none of the invocation."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    env = {"PATH": "/usr/bin:/bin", "HOME": str(tmp_path),
+           "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@e",
+           "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@e"}
+    def git(*args):
+        subprocess.run(["/usr/bin/git", *args], cwd=repo, env=env, check=True,
+                       capture_output=True)
+    git("init", "-q", "-b", "feat/x")
+    (repo / "f.txt").write_text("hi\n")
+    git("add", "f.txt")
+    git("commit", "-qm", "first")
+    return repo
+
+
+def test_handoff_captures_the_branch_and_head_it_was_written_against(
+    monkeypatch, tmp_path, fake_server
+):
+    """Captured client-side, in the project directory. The server cannot do
+    this: a handoff routinely spools while the panel is down and drains hours
+    later, when the repo is somewhere else entirely."""
+    repo = git_repo(tmp_path)
+    head = subprocess.run(["/usr/bin/git", "rev-parse", "HEAD"], cwd=repo,
+                          capture_output=True, text=True).stdout.strip()
+
+    run_handoff(monkeypatch, tmp_path, fake_server["port"], argv=[
+        "handoff", "--summary", "s", "--prompt-file", "-", "--project", str(repo),
+    ])
+
+    posted = fake_server["posts"][0]
+    assert posted["created_branch"] == "feat/x"
+    assert posted["created_head"] == head
+    assert posted["created_dirty"] == 0
+
+
+def test_handoff_counts_uncommitted_files_at_capture_time(
+    monkeypatch, tmp_path, fake_server
+):
+    repo = git_repo(tmp_path)
+    (repo / "f.txt").write_text("changed\n")
+    (repo / "new.txt").write_text("new\n")
+
+    run_handoff(monkeypatch, tmp_path, fake_server["port"], argv=[
+        "handoff", "--summary", "s", "--prompt-file", "-", "--project", str(repo),
+    ])
+
+    assert fake_server["posts"][0]["created_dirty"] == 2
+
+
+def test_handoff_outside_a_git_repo_records_no_fingerprint_and_still_succeeds(
+    monkeypatch, tmp_path, fake_server
+):
+    """Roughly half of all tracked project paths are not repos. None of them are
+    a reason to fail a capture, and none of them may produce a fingerprint that
+    `drift` would then compare against something."""
+    plain = tmp_path / "not-a-repo"
+    plain.mkdir()
+
+    code, _ = run_handoff(monkeypatch, tmp_path, fake_server["port"], argv=[
+        "handoff", "--summary", "s", "--prompt-file", "-", "--project", str(plain),
+    ])
+
+    assert code == 0
+    posted = fake_server["posts"][0]
+    assert posted["created_branch"] is None and posted["created_head"] is None
+
+
+def test_a_broken_git_never_fails_a_capture(monkeypatch, tmp_path, fake_server):
+    """The whole point of the surrounding try/except. `bridge handoff` holds the
+    only copy of something the session is about to throw away, so no probe may
+    ever be the reason it does not get written down."""
+    monkeypatch.setattr(cli, "GIT", "/nonexistent/git")
+
+    code, _ = run_handoff(monkeypatch, tmp_path, fake_server["port"])
+
+    assert code == 0
+    assert fake_server["posts"][0]["created_head"] is None

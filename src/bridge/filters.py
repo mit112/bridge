@@ -9,6 +9,7 @@ the route module to reach it.
 
 from datetime import datetime, timezone
 
+from bridge import drift
 from bridge.cards import spark_points
 
 
@@ -96,6 +97,12 @@ def register_template_filters(env) -> None:
     env.filters["spark_points"] = spark_points
     env.filters["group_projects"] = group_projects
     env.filters["status_label"] = status_label
+    # The one-line form of a `drift.compare` result. A filter rather than logic
+    # in the template, because "only the branch changed" and "only the commit
+    # changed" are both ordinary and the sentence has to stay whole in each --
+    # a Jinja transcription of that would be a second implementation free to
+    # disagree with the one the launch preamble uses.
+    env.filters["drift_text"] = drift.describe
     env.globals["shell_freshness"] = lambda: {
         "server": "available", "index_at": None, "index_age_seconds": None,
     }

@@ -132,6 +132,18 @@
           {% if not demoted %}
           <p class="handoff__summary" title="{{ handoff.summary or 'Continue from the exact saved prompt.' }}">{{ handoff.summary or "Continue from the exact saved prompt." }}</p>
           {% endif %}
+          {# The repo moved under this prompt. Rendered for a demoted handoff
+             too, not just a live one: a prompt that is BOTH overtaken and
+             written against a different tree is the most rotten thing on the
+             page, and showing only half of that would be showing the wrong
+             half. `drift` is None whenever nothing was recorded to compare, so
+             this stays absent rather than claiming nothing changed. #}
+          {% if handoff.drift %}
+          <p class="handoff__drift">
+            <span class="handoff__drift-label">Repo moved</span>
+            {{ handoff.drift | drift_text }}
+          </p>
+          {% endif %}
         </div>
         {# The pill is the section's accessible name alongside the title
            (`aria-labelledby` above lists both), so the demotion reaches a
