@@ -143,6 +143,49 @@ cp commands/handoff.md ~/.claude/commands/handoff.md
 The handoff is durable: if the panel is down, `bridge handoff` spools the prompt
 to `~/.bridge/spool/` and the server ingests it on the next boot.
 
+### What a handoff records about its repo
+
+At capture time the CLI stamps the branch, HEAD, uncommitted-file count and
+ahead-of-upstream count into the handoff. Days later, when the prompt says "on
+`feat/x` at `672c726`" and neither is true any more, the card says so:
+
+```
+Repo moved — written against feat/x @ 672c726; the repo is now at main @ efb7759
+```
+
+The same sentence is prepended to the prompt a drifted handoff launches, so the
+next session is told its premise moved rather than reading a stale one as fact.
+Nothing is recorded outside a git repo, and nothing is claimed when the panel
+cannot read the repo — absence is never reported as "nothing changed".
+
+### Threads
+
+A session launched from a handoff can ask which one:
+
+```bash
+bridge origin            # prints that handoff's id, and nothing else
+```
+
+and report back on it when it writes its own:
+
+```bash
+bridge handoff --closes <id> --outcome done|partial|dropped ...
+```
+
+The project's Handoffs tab then shows a history rather than a pile.
+
+### Kinds
+
+```bash
+bridge handoff --kind next      # the real continuation (default)
+bridge handoff --kind blocked   # needs a person before anything can proceed
+bridge handoff --kind parked    # a real idea, deliberately deferred
+```
+
+A `blocked` handoff gets its own entry on the Overview — *Blocked on you* —
+instead of sitting in a queue labelled "ready to continue". A project whose only
+queued work is `parked` asks for nothing at all.
+
 ## Launching a session
 
 Press ▶ on a card to open the queued prompt as a real session in a new Terminal
@@ -151,6 +194,20 @@ window, with the model and effort chosen beside the button. From the shell:
 ```bash
 bridge launch [--project P] [--mode terminal|background] [--model M] [--effort E]
 ```
+
+### Resuming in the terminal you are already in
+
+`bridge launch` spawns elsewhere — a new Terminal window, or `claude --bg` — and
+refuses when several handoffs are queued. When you are already sitting in a
+terminal in the project directory:
+
+```bash
+cd ~/dev/myproject && bridge resume
+```
+
+takes the **newest** queued handoff, records the launch, and `exec`s `claude`
+right there in that window. Model and effort default to whatever the authoring
+session suggested; `--model`, `--effort` and `--permission-mode` override them.
 
 ## Configuration
 
@@ -192,8 +249,10 @@ port = 8787
 
 ```
 bridge handoff   Record a next-session prompt
-bridge launch    Launch the queued prompt as a session
+bridge launch    Launch the queued prompt as a session (new Terminal window)
+bridge resume    Run the newest queued handoff in THIS terminal
 bridge next      Print the queued prompt to stdout
+bridge origin    Print the id of the handoff this session was launched from
 bridge status    Show panel and handoff state
 bridge open      Open the panel in a browser
 bridge setup     Interactive first-time setup
