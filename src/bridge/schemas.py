@@ -131,13 +131,20 @@ def _validate_prompt_field(value: str | None) -> str | None:
 
 
 def _check_known_mode(value: str) -> str:
-    """Shared by `ScheduleIn` and `SchedulePatch`. Checks against the same
-    closed set `LaunchIn._known_mode` does, written once here rather than
-    copied into both, which is also what keeps the mutation harness's anchor
+    """Shared by `ScheduleIn` and `SchedulePatch`, written once here rather than
+    copied into both -- which is also what keeps the mutation harness's anchor
     into `LaunchIn`'s own check (`tools/mutations/phase3-task4.json`) matching
-    exactly once."""
-    if value not in launcher.MODES:
-        raise ValueError(f"mode must be one of {launcher.MODES}")
+    exactly once.
+
+    Checks `SCHEDULABLE_MODES`, a NARROWER set than the `MODES` that
+    `LaunchIn._known_mode` accepts. `exec` is launchable but not schedulable:
+    it spawns nothing and hands argv back to a caller that execs it, and at the
+    scheduled moment there is no such caller. Accepting it here would let a
+    schedule consume its handoff and record a `started` launch for a session
+    that never runs anywhere.
+    """
+    if value not in launcher.SCHEDULABLE_MODES:
+        raise ValueError(f"mode must be one of {launcher.SCHEDULABLE_MODES}")
     return value
 
 

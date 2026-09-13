@@ -30,12 +30,14 @@ from bridge.launcher import (
     MAX_PROMPT_BYTES,
     MAX_SESSION_ID_ATTEMPTS,
     MODES,
+    SCHEDULABLE_MODES,
     SESSION_ID_RE,
     LaunchError,
     LaunchSpec,
     as_quote,
     build_applescript,
     build_bg_argv,
+    build_exec_argv,
     build_shell_command,
     default_title,
     gc_prompt_files,
@@ -418,10 +420,21 @@ def test_a_bad_prompt_is_refused_before_anything_is_constructed(bad, monkeypatch
 # --- the value type ---------------------------------------------------------
 
 
-def test_launch_spec_carries_the_two_modes_and_nothing_else_is_expected():
-    assert MODES == ("terminal", "background")
+def test_launch_spec_carries_the_three_modes_and_nothing_else_is_expected():
+    assert MODES == ("terminal", "background", "exec")
     assert LaunchSpec(project_path="/p", prompt="hi").mode == "terminal"
     assert LaunchSpec(project_path="/p", prompt="hi").session_id is None
+
+
+def test_exec_is_launchable_but_deliberately_not_schedulable():
+    """The two vocabularies are no longer the same tuple, and must not collapse
+    back into one. `exec` spawns nothing -- it hands argv to a caller that execs
+    it -- so at a scheduled moment, with that caller long gone, a scheduled
+    `exec` run would consume its handoff and record a `started` launch for a
+    session running nowhere."""
+    assert SCHEDULABLE_MODES == ("terminal", "background")
+    assert "exec" in MODES and "exec" not in SCHEDULABLE_MODES
+    assert set(SCHEDULABLE_MODES) < set(MODES)
 
 
 # --- Task 3: the spawn, the prompt file, and the outcome ---------------------
@@ -1345,3 +1358,128 @@ def test_a_file_is_not_a_project_directory(store, cfg, tmp_path, fake_claude):
 
     with pytest.raises(LaunchError):
         launcher.launch(store, cfg, spec(project_path=str(a_file)))
+
+
+# --- exec mode: the one launch that spawns nothing ---------------------------
+#
+# Every other mode's central risk is what it puts on a command line. This one's
+# is the opposite: it must NOT spawn, because the caller is going to. A test
+# that only checked the returned argv would pass just as happily against an
+# implementation that opened a Terminal window as well.
+
+
+def test_exec_mode_spawns_nothing_at_all(store, cfg, project, fake_claude):
+    """The discriminating property. `run` is handed in and must never be called:
+    an exec launch that also spawned would start the session twice, once in a
+    window nobody asked for."""
+    calls = []
+
+    result = launcher.launch(
+        store, cfg,
+        spec(project_path=str(project), mode="exec", session_id=None),
+        run=lambda *a, **k: calls.append(a) or proc(0),
+    )
+
+    assert calls == []
+    assert result.outcome == "started"
+    assert result.argv is not None
+
+
+def test_exec_mode_delivers_the_prompt_as_one_verbatim_argv_element(
+    store, cfg, project, fake_claude
+):
+    """No shell, no prompt file, no `$(cat …)`: the layer that was RCE-adjacent
+    in terminal mode does not exist here, so the prompt is one element and it is
+    byte-exact."""
+    result = launcher.launch(
+        store, cfg,
+        spec(project_path=str(project), mode="exec", session_id=None),
+        run=lambda *a, **k: proc(0),
+    )
+
+    assert result.argv[-1] == NORMALISED
+    assert result.argv[-1].encode("utf-8") == NORMALISED.encode("utf-8")
+    # Absence, not just presence: nothing quoted it, nothing split it, and no
+    # shell fragment was constructed to carry it.
+    assert [a for a in result.argv[:-1] if NORMALISED in a] == []
+    assert not any("$(" in a for a in result.argv[:-1])
+
+
+def test_exec_mode_pre_assigns_a_session_id_and_records_it(
+    store, cfg, project, fake_claude
+):
+    """Unlike `--bg`, which mints its own and ignores the flag. A foreground
+    `claude` accepts a pre-assigned id, so the launch correlates to
+    `<uuid>.jsonl` on the indexer's next scan -- the same join terminal mode
+    gets, and the reason `--session-id` is emitted here at all."""
+    result = launcher.launch(
+        store, cfg,
+        spec(project_path=str(project), mode="exec", session_id=None),
+        run=lambda *a, **k: proc(0),
+    )
+
+    assert SESSION_ID_RE.match(result.session_id)
+    argv = list(result.argv)
+    assert argv[argv.index("--session-id") + 1] == result.session_id
+    assert only_launch(store, str(project))["session_id"] == result.session_id
+    assert launch_by_session(store, result.session_id)["id"] == result.launch_id
+
+
+def test_exec_mode_consumes_its_handoff(store, cfg, project, fake_claude):
+    """A started launch consumes, whoever ends up running the process."""
+    hid = queue_handoff(store, str(project))
+
+    result = launcher.launch(
+        store, cfg,
+        spec(project_path=str(project), mode="exec", session_id=None),
+        hid,
+        run=lambda *a, **k: proc(0),
+    )
+
+    assert result.outcome == "started"
+    assert store.get_handoff(hid)["status"] == "consumed"
+
+
+def test_an_exec_refusal_leaves_no_launch_row_and_no_claimed_handoff(
+    store, cfg, project, fake_claude
+):
+    """argv is built BEFORE the row, matching every other refusal in the module.
+    A permission mode that is not in the closed set must cost nothing: no row to
+    correlate, and a handoff still queued for someone to run."""
+    hid = queue_handoff(store, str(project))
+
+    with pytest.raises(LaunchError):
+        launcher.launch(
+            store, cfg,
+            spec(project_path=str(project), mode="exec", session_id=None,
+                 permission_mode="rm -rf /"),
+            hid,
+            run=lambda *a, **k: proc(0),
+        )
+
+    assert store.launches(resolve_project(store, str(project))) == []
+    assert store.get_handoff(hid)["status"] == "queued"
+
+
+def test_build_exec_argv_omits_what_is_unset_and_never_emits_it_empty():
+    bare = spec(mode="exec", model=None, effort=None, title=None,
+                session_id=None)
+    argv = build_exec_argv(bare, claude=CLAUDE)
+
+    for flag in ("--model", "--effort", "-n", "--session-id", "--bg"):
+        assert flag not in argv
+    assert argv == [CLAUDE, HOSTILE_PROMPT]
+
+
+def test_build_exec_argv_refuses_a_malformed_session_id():
+    """Emitted unquoted into argv rather than a shell, so the format gate is
+    what keeps it a single token `claude` will accept."""
+    with pytest.raises(LaunchError):
+        build_exec_argv(spec(mode="exec", session_id="NOT-A-UUID"),
+                        claude=CLAUDE)
+
+
+def test_build_exec_argv_never_emits_the_bg_flag():
+    """`--bg` and `exec` are mutually exclusive by construction: one backgrounds
+    the session away from the caller, the other hands it to the caller."""
+    assert "--bg" not in build_exec_argv(spec(mode="exec"), claude=CLAUDE)
