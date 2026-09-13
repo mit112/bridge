@@ -1,0 +1,72 @@
+[
+  {
+    "name": "resume exec's whatever argv the panel returned, guard removed",
+    "file": "src/bridge/cli.py",
+    "old": "        isinstance(argv, list)\n        and len(argv) >= 2",
+    "new": "        True or isinstance(argv, list)\n        and len(argv) >= 2",
+    "tests": [
+      "tests/test_cli.py::test_resume_will_not_exec_an_argv_that_is_not_claude"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "resume checks for claude AFTER claiming, so a missing one consumes the handoff",
+    "file": "src/bridge/cli.py",
+    "old": "    if shutil.which(\"claude\") is None:\n        print(\"bridge resume: claude is not on PATH; nothing was claimed\",\n              file=sys.stderr)\n        return 1\n",
+    "new": "",
+    "tests": [
+      "tests/test_cli.py::test_resume_checks_claude_is_on_path_before_claiming_anything"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "resume takes the OLDEST queued handoff instead of the newest",
+    "file": "src/bridge/cli.py",
+    "old": "    h = handoffs[0]  # newest first, per `store.queued_handoffs`",
+    "new": "    h = handoffs[-1]",
+    "tests": [
+      "tests/test_cli.py::test_resume_takes_the_newest_where_launch_refuses_to_choose"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "resume ignores the handoff's suggested model and effort",
+    "file": "src/bridge/cli.py",
+    "old": "        \"model\": args.model or h.get(\"suggested_model\"),\n        \"effort\": args.effort or h.get(\"suggested_effort\"),",
+    "new": "        \"model\": args.model,\n        \"effort\": args.effort,",
+    "tests": [
+      "tests/test_cli.py::test_resume_defaults_to_the_handoffs_suggestions_and_an_explicit_flag_wins"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "a schedule may use exec, so it fires a session nothing ever execs",
+    "file": "src/bridge/schemas.py",
+    "old": "    if value not in launcher.SCHEDULABLE_MODES:\n        raise ValueError(f\"mode must be one of {launcher.SCHEDULABLE_MODES}\")",
+    "new": "    if value not in launcher.MODES:\n        raise ValueError(f\"mode must be one of {launcher.MODES}\")",
+    "tests": [
+      "tests/test_api.py::test_schedule_rejects_exec_mode_even_though_launch_accepts_it"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "an exec construction refusal leaves the handoff stuck at 'launching'",
+    "file": "src/bridge/launcher.py",
+    "old": "        if handoff_id:\n            store.revert_claimed_handoff(handoff_id)\n        raise\n    launch_id = _new_row(store, spec, prompt, project_id, handoff_id, session_id)",
+    "new": "        raise\n    launch_id = _new_row(store, spec, prompt, project_id, handoff_id, session_id)",
+    "tests": [
+      "tests/test_launcher.py::test_an_exec_refusal_leaves_no_launch_row_and_no_claimed_handoff"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "exec mode spawns as well as handing back argv, starting the session twice",
+    "file": "src/bridge/launcher.py",
+    "old": "    if spec.mode == \"exec\":\n        return _launch_exec(store, cfg, spec, prompt, project_id,\n                            handoff_id, claude)",
+    "new": "    if spec.mode == \"exec\":\n        run([OSASCRIPT, \"-e\", \"\"], capture_output=True, text=True)\n        return _launch_exec(store, cfg, spec, prompt, project_id,\n                            handoff_id, claude)",
+    "tests": [
+      "tests/test_launcher.py::test_exec_mode_spawns_nothing_at_all"
+    ],
+    "expect_count": 1
+  }
+]

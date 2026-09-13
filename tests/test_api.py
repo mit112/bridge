@@ -2996,6 +2996,16 @@ def test_schedule_rejects_bad_mode_and_prompt(client):
         "scheduled_for": 1000, "mode": "background"}).status_code == 422
 
 
+def test_schedule_rejects_exec_mode_even_though_launch_accepts_it(client):
+    """The narrowing that keeps `SCHEDULABLE_MODES` a real distinction. `exec`
+    returns argv for a caller to run in its own terminal; at the scheduled
+    moment there is no such caller, so accepting it here would consume a handoff
+    and record a `started` launch for a session running nowhere."""
+    c, _, _ = client
+    assert c.post("/api/schedule", json={"project_path": DEMO, "prompt": "x",
+        "scheduled_for": 1000, "mode": "exec"}).status_code == 422
+
+
 def test_schedule_create_rejects_an_unknown_source_handoff(client):
     """Mirrors `post_launch`'s check for `handoff_id`: a made-up id must 404
     at creation, before a row exists, rather than only failing at fire time."""

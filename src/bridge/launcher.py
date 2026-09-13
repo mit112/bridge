@@ -49,7 +49,16 @@ CAT = "/bin/cat"
 OSASCRIPT = "/usr/bin/osascript"
 
 # `mode` values, shared with `launches.mode` and `POST /api/launch`.
-MODES = ("terminal", "background")
+MODES = ("terminal", "background", "exec")
+
+# The subset a SCHEDULED run may use, and the reason the two vocabularies are no
+# longer the same tuple. `exec` spawns nothing: it hands argv back to a caller
+# that execs it in a terminal it is already sitting in. At a scheduled moment
+# there is no such caller -- the process that asked is long gone -- so a
+# scheduled `exec` run would consume its handoff and mark a launch `started`
+# with no session anywhere. `schemas._check_known_mode` validates against this,
+# `LaunchIn._known_mode` against `MODES`.
+SCHEDULABLE_MODES = ("terminal", "background")
 
 # Measured, not guessed: ARG_MAX on this machine is 1,048,576; 900 KiB launched
 # fine and 1024 KiB failed with "argument list too long" (rc 127). The prompt
@@ -295,6 +304,46 @@ def build_bg_argv(spec: LaunchSpec, claude: str | None = None) -> list[str]:
     return argv
 
 
+def build_exec_argv(spec: LaunchSpec, claude: str | None = None) -> list[str]:
+    """argv for a session the CALLER execs in a terminal it already owns.
+
+    No shell, no quoting -- argv passes bytes, exactly as `build_bg_argv` does,
+    and for the same reason. There is no prompt file and no `"$(cat …)"`: the
+    prompt is one argv element, so none of `build_shell_command`'s escaping
+    reasoning applies. That is not an optimisation, it is the removal of the
+    only layer in this module that was ever RCE-adjacent.
+
+    Unlike `build_bg_argv` this DOES emit `--session-id`. `--bg` mints its own
+    and warns if handed one; an exec'd session is an ordinary foreground
+    `claude`, so the id can be pre-assigned and the indexer joins the launch to
+    `<uuid>.jsonl` on its next scan -- the same correlation terminal mode gets.
+    """
+    validate_prompt(spec.prompt)
+    claude = claude or resolve_claude()
+
+    argv = [claude]
+    if spec.session_id:
+        if not SESSION_ID_RE.match(spec.session_id):
+            raise LaunchError(
+                f"session id {spec.session_id!r} is not lowercase 8-4-4-4-12 hex"
+            )
+        argv += ["--session-id", spec.session_id]
+    if spec.model:
+        argv += ["--model", spec.model]
+    if spec.effort:
+        argv += ["--effort", spec.effort]
+    if permission_flag(spec):
+        argv += ["--permission-mode", spec.permission_mode]
+    exec_title = sanitize_title(spec.title or "")
+    if exec_title:
+        argv += ["-n", exec_title]
+    # One element, verbatim, and necessarily the LAST one: `claude` reads its
+    # trailing argument as the prompt, so anything appended after it would be
+    # swallowed into the prompt text rather than parsed as a flag.
+    argv.append(spec.prompt)
+    return argv
+
+
 # --- spawning ----------------------------------------------------------------
 #
 # The order below is fixed and load-bearing: resolve `claude`, write the prompt
@@ -343,6 +392,11 @@ class LaunchResult:
     short_id: str | None = None
     error: str | None = None
     note: str | None = None
+    # `exec` mode only, and the whole point of that mode: the argv the CALLER
+    # is expected to exec. A tuple, not a list, because this dataclass is
+    # frozen and a mutable default would let a caller edit the argv a launch
+    # was recorded as having run. None in every spawning mode.
+    argv: tuple[str, ...] | None = None
 
 
 def write_prompt_file(launches_dir: str | Path, session_id: str, prompt: str) -> Path:
@@ -508,6 +562,9 @@ def launch(
     if spec.mode == "background":
         return _launch_background(store, cfg, spec, prompt, project_id,
                                   handoff_id, claude, run)
+    if spec.mode == "exec":
+        return _launch_exec(store, cfg, spec, prompt, project_id,
+                            handoff_id, claude)
     return _launch_terminal(store, cfg, spec, prompt, project_id,
                             handoff_id, claude, run)
 
@@ -527,6 +584,45 @@ def _new_row(store, spec, prompt, project_id, handoff_id, session_id) -> str:
         outcome="pending",
     ))
     return launch_id
+
+
+def _launch_exec(store, cfg, spec, prompt, project_id, handoff_id, claude):
+    """Record the launch and hand back argv. The one mode that spawns nothing.
+
+    It takes no `run`, and that absence is the signature: there is no
+    `osascript`, no `subprocess`, and no window. `bridge resume` execs the
+    returned argv in the terminal the user is already in, so this function's
+    job ends at the database write.
+
+    argv is built BEFORE the row, matching every other refusal in this module:
+    an oversize prompt or an unknown permission mode must leave no `launches`
+    row behind, and `build_exec_argv` is what raises on both.
+
+    Terminal mode's session-id retry loop has no equivalent here, deliberately.
+    That loop exists because `osascript`'s exit status makes a collision
+    detectable; nothing reports back before the caller execs, so there is
+    nothing to retry on. A uuid4 collision needs the transcript file to exist
+    already, and if it somehow does, `claude` prints "Session ID … is already
+    in use" straight into the user's own terminal -- visible, unlike a Terminal
+    window that opens and closes before it can be read.
+    """
+    session_id = spec.session_id or new_session_id()
+    try:
+        argv = build_exec_argv(
+            replace(spec, session_id=session_id, prompt=prompt), claude=claude
+        )
+    except LaunchError:
+        # `launch()` claims the handoff BEFORE dispatching here, so a refusal at
+        # construction time has to hand it back explicitly. Without this the row
+        # sits at `launching` forever: nothing else clears that state, and a card
+        # hides a `launching` handoff on the assumption a spawn is in flight --
+        # so the user loses a queued handoff to a validation error.
+        if handoff_id:
+            store.revert_claimed_handoff(handoff_id)
+        raise
+    launch_id = _new_row(store, spec, prompt, project_id, handoff_id, session_id)
+    return _started(store, cfg, launch_id, handoff_id,
+                    session_id=session_id, argv=tuple(argv))
 
 
 def _launch_terminal(store, cfg, spec, prompt, project_id, handoff_id, claude, run):
@@ -611,7 +707,7 @@ def _launch_background(store, cfg, spec, prompt, project_id, handoff_id, claude,
 
 
 def _started(store, cfg, launch_id, handoff_id, session_id=None, short_id=None,
-             note=None) -> LaunchResult:
+             note=None, argv=None) -> LaunchResult:
     store.set_launch_outcome(launch_id, "started")
     if handoff_id:
         # Journal first, then update: the journal is what survives
@@ -624,7 +720,7 @@ def _started(store, cfg, launch_id, handoff_id, session_id=None, short_id=None,
         # the only state it can legitimately be in; anything else means
         # something else moved the row and consumption must not clobber it.
         store.set_handoff_status(handoff_id, "consumed", expect="launching")
-    return LaunchResult(launch_id, "started", session_id, short_id, None, note)
+    return LaunchResult(launch_id, "started", session_id, short_id, None, note, argv)
 
 
 def _failed(store, launch_id, handoff_id, error) -> LaunchResult:

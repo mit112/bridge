@@ -613,3 +613,163 @@ def test_the_cli_refuses_a_mode_the_binary_does_not_accept(monkeypatch, tmp_path
     ])
     assert code != 0
     assert fake_server["posts"] == []
+
+
+# --- `bridge resume`: the one command that becomes the session ---------------
+#
+# Everything else here asserts what got POSTed. These also have to assert what
+# got EXEC'd, because that is where this command differs: `launch` hands off to
+# the panel and returns, `resume` replaces itself with `claude`. `os.execv` is
+# stubbed in every test below -- a real one would end the test run.
+
+
+@pytest.fixture
+def fake_claude_bin(tmp_path, monkeypatch):
+    """A real executable really named `claude`, because `_execable` checks both.
+
+    A stub returning a plausible-looking string would pass a test that asserts
+    the argv and prove nothing about the guard, which is the only part of this
+    command doing safety work.
+    """
+    exe = tmp_path / "claude"
+    exe.write_text("#!/bin/sh\nexit 0\n")
+    exe.chmod(0o755)
+    monkeypatch.setattr("shutil.which", lambda name: str(exe) if name == "claude" else None)
+    return exe
+
+
+@pytest.fixture
+def execs(monkeypatch):
+    """Records `os.execv` instead of performing it."""
+    calls = []
+    monkeypatch.setattr(cli.os, "execv", lambda path, argv: calls.append((path, argv)))
+    return calls
+
+
+def run_resume(monkeypatch, tmp_path, port, argv=None):
+    cfg = cfg_for(tmp_path, port)
+    monkeypatch.setattr(cli, "load", lambda overrides=None: cfg)
+    return cli.main(argv or ["resume", "--project", DEMO]), cfg
+
+
+def test_resume_takes_the_newest_where_launch_refuses_to_choose(
+    monkeypatch, tmp_path, fake_server, fake_claude_bin, execs
+):
+    """The whole reason this command exists. `launch` refuses a project with
+    several queued handoffs and makes the caller name an id -- correct there,
+    because it cannot know which one was meant. `resume` was asked for "the
+    latest", so several queued is not an ambiguity: it is the normal case, and
+    `queued_handoffs` already returns newest first."""
+    fake_server["code"] = 200
+    fake_server["handoffs_body"] = [
+        {"id": "newest", "summary": "most recent"},
+        {"id": "older", "summary": "earlier"},
+    ]
+    fake_server["post_body"] = started(
+        argv=[str(fake_claude_bin), "--session-id", "x", "go"], prompt="go")
+
+    code, _ = run_resume(monkeypatch, tmp_path, fake_server["port"])
+
+    assert code == 0
+    posted = fake_server["posts"][0]
+    assert posted["handoff_id"] == "newest"
+    assert posted["mode"] == "exec", "resume must never ask the panel to spawn"
+
+
+def test_resume_execs_exactly_the_argv_the_panel_returned(
+    monkeypatch, tmp_path, fake_server, fake_claude_bin, execs
+):
+    """The panel stays the authority on how a session is constructed; this
+    process only becomes it. An argv assembled client-side would be a second
+    place that decides what a launch runs."""
+    argv = [str(fake_claude_bin), "--session-id",
+            "0f9c2b1a-1111-4222-8333-444455556666", "--model", "opus", "go"]
+    fake_server["code"] = 200
+    fake_server["post_body"] = started(argv=argv, prompt="go")
+
+    code, _ = run_resume(monkeypatch, tmp_path, fake_server["port"])
+
+    assert code == 0
+    assert execs == [(str(fake_claude_bin), argv)]
+
+
+def test_resume_defaults_to_the_handoffs_suggestions_and_an_explicit_flag_wins(
+    monkeypatch, tmp_path, fake_server, fake_claude_bin, execs
+):
+    """`suggested_model`/`suggested_effort` were captured for exactly this, and
+    nothing read them on the CLI path before."""
+    fake_server["code"] = 200
+    fake_server["handoffs_body"] = [{"id": "h", "summary": "s",
+                                     "suggested_model": "opus",
+                                     "suggested_effort": "high"}]
+    fake_server["post_body"] = started(argv=[str(fake_claude_bin), "go"],
+                                       prompt="go")
+
+    run_resume(monkeypatch, tmp_path, fake_server["port"])
+    assert fake_server["posts"][0]["model"] == "opus"
+    assert fake_server["posts"][0]["effort"] == "high"
+
+    fake_server["posts"].clear()
+    run_resume(monkeypatch, tmp_path, fake_server["port"],
+               argv=["resume", "--project", DEMO, "--model", "sonnet"])
+    assert fake_server["posts"][0]["model"] == "sonnet"
+    assert fake_server["posts"][0]["effort"] == "high", "effort still defaults"
+
+
+def test_resume_checks_claude_is_on_path_before_claiming_anything(
+    monkeypatch, tmp_path, fake_server, capsys
+):
+    """Ordering, not just the refusal. Discovering a missing `claude` AFTER the
+    POST would leave the handoff consumed for a session that can never start,
+    so the check has to happen before a single request goes out."""
+    monkeypatch.setattr("shutil.which", lambda name: None)
+
+    code, _ = run_resume(monkeypatch, tmp_path, fake_server["port"])
+
+    assert code == 1
+    assert fake_server["posts"] == [], "it claimed a handoff it could not run"
+    assert fake_server["gets"] == [], "it did not even need to ask"
+    assert "not on PATH" in capsys.readouterr().err
+
+
+def test_resume_will_not_exec_an_argv_that_is_not_claude(
+    monkeypatch, tmp_path, fake_server, fake_claude_bin, execs, capsys
+):
+    """The guard, tested against something that would otherwise run. By this
+    point the handoff is consumed, so refusing has to also put the prompt where
+    the user can still reach it -- the same last-resort contract `handoff`
+    applies when spooling fails."""
+    fake_server["code"] = 200
+    fake_server["post_body"] = started(argv=["/bin/sh", "-c", "echo pwned"],
+                                       prompt="the prompt that must survive")
+
+    code, _ = run_resume(monkeypatch, tmp_path, fake_server["port"])
+
+    assert code == 1
+    assert execs == [], "it exec'd something that was not claude"
+    assert "the prompt that must survive" in capsys.readouterr().err
+
+
+def test_resume_with_nothing_queued_exits_two_and_posts_nothing(
+    monkeypatch, tmp_path, fake_server, fake_claude_bin, execs, capsys
+):
+    fake_server["handoffs_body"] = []
+
+    code, _ = run_resume(monkeypatch, tmp_path, fake_server["port"])
+
+    assert code == 2
+    assert fake_server["posts"] == []
+    assert execs == []
+    assert "nothing queued" in capsys.readouterr().err
+
+
+def test_resume_exits_one_and_execs_nothing_when_the_panel_is_down(
+    monkeypatch, tmp_path, fake_claude_bin, execs, capsys
+):
+    """Like `launch` and unlike `handoff`: loud, and never spooled. A resume
+    that could not reach the panel has lost nothing."""
+    code, cfg = run_resume(monkeypatch, tmp_path, closed_port())
+
+    assert code == 1
+    assert execs == []
+    assert not list(Path(cfg.spool_dir).glob("*.json")) if Path(cfg.spool_dir).is_dir() else True

@@ -239,6 +239,11 @@ def build_router(
             # a card rendered before someone else edited it — can still put the
             # right bytes on the clipboard when the launch fails.
             "prompt": prompt,
+            # `exec` mode only; None for every mode that spawns. This is the
+            # argv `bridge resume` execs in the caller's own terminal, so the
+            # panel stays the single authority on how a session is constructed
+            # even though it is not the process that starts this one.
+            "argv": result.argv,
         }
 
     return router

@@ -23,6 +23,12 @@ than never firing: a session appearing hours later, in some other context, on a
 prompt that has since been done by hand. So a launch either happens now or fails
 loudly.
 
+**`bridge resume` is the only command that becomes the session.** Every other
+launch path asks the panel to spawn somewhere else — a new Terminal window, or
+`claude --bg`. `resume` asks the panel to record the launch and hand back argv,
+then `execv`s it in the terminal the user is already sitting in. The panel stays
+the authority on what runs; this process just stops being itself.
+
 This uses `urllib` from the stdlib rather than `httpx`. The plan allowed one
 dependency; none is needed. It keeps the end-of-session path free of import cost
 and means the command cannot fail because a virtualenv is missing a package.
@@ -313,6 +319,129 @@ def cmd_launch(args, cfg) -> int:
     return 0
 
 
+def _execable(argv) -> bool:
+    """Whether an argv from the panel is one this command will become.
+
+    The panel is local and already supplies the prompt bytes every launch runs,
+    so this is not a trust boundary the way a network response would be. It is
+    still a bigger step to *exec* what the server said than to print it, and the
+    check costs three lines: every element a string, and `argv[0]` an executable
+    file actually named `claude`. A malformed or unexpected response then fails
+    loudly instead of running something nobody asked for.
+    """
+    return (
+        isinstance(argv, list)
+        and len(argv) >= 2
+        and all(isinstance(a, str) for a in argv)
+        and os.path.basename(argv[0]) == "claude"
+        and os.access(argv[0], os.X_OK)
+    )
+
+
+def cmd_resume(args, cfg) -> int:
+    """Run this project's newest queued handoff in THIS terminal.
+
+    The one command that execs rather than asking the panel to spawn. `bridge
+    launch` opens a NEW Terminal window, which is the wrong answer when the
+    caller is already sitting in one -- and it refuses outright when several
+    handoffs are queued, which is the normal state of a project worked on more
+    than once. `resume` takes the newest and goes: several queued handoffs is
+    not an ambiguity to refuse here, because picking the newest is precisely
+    what was asked for.
+
+    The panel still owns every decision -- which handoff, what argv, and the
+    `launches` row correlating the two -- so this process only checks what it is
+    about to exec and then becomes it.
+
+    Exits like `launch`, loudly and never spooling, for the same reason: a
+    resume that cannot reach the panel has lost nothing.
+    """
+    import shutil
+
+    project = args.project or os.getcwd()
+
+    # Resolved BEFORE anything is claimed. `claude` missing from PATH is the one
+    # likely failure on this path, and discovering it after the POST would mean
+    # the handoff is already consumed for a session that can never start.
+    if shutil.which("claude") is None:
+        print("bridge resume: claude is not on PATH; nothing was claimed",
+              file=sys.stderr)
+        return 1
+
+    query = urllib.parse.urlencode({"project_path": project})
+    try:
+        status, body = _request("GET", f"{_base(cfg)}/api/handoffs?{query}")
+    except Exception as exc:  # noqa: BLE001 - refused, timed out, DNS, anything
+        print(f"bridge resume: panel unreachable "
+              f"({type(exc).__name__}: {exc}); nothing was resumed",
+              file=sys.stderr)
+        return 1
+    if not 200 <= status < 300:
+        print(f"bridge resume: server returned {status}{_detail(body)}",
+              file=sys.stderr)
+        return 1
+
+    handoffs = body or []
+    if not handoffs:
+        print(f"bridge resume: nothing queued for {project}", file=sys.stderr)
+        return 2
+    h = handoffs[0]  # newest first, per `store.queued_handoffs`
+
+    payload = {
+        "project_path": project,
+        "mode": "exec",
+        "handoff_id": h["id"],
+        # The authoring session's suggestions are the default -- which is what
+        # `suggested_model`/`suggested_effort` were captured for in the first
+        # place. An explicit flag still wins.
+        "model": args.model or h.get("suggested_model"),
+        "effort": args.effort or h.get("suggested_effort"),
+        "permission_mode": args.permission_mode,
+    }
+    try:
+        status, body = _request("POST", f"{_base(cfg)}/api/launch", payload)
+    except Exception as exc:  # noqa: BLE001
+        print(f"bridge resume: panel unreachable "
+              f"({type(exc).__name__}: {exc}); nothing was resumed",
+              file=sys.stderr)
+        return 1
+    if not 200 <= status < 300:
+        print(f"bridge resume: server returned {status}{_detail(body)}",
+              file=sys.stderr)
+        return 1
+
+    result = body or {}
+    if result.get("outcome") != "started":
+        print(f"bridge resume: {result.get('error') or 'nothing was resumed'}",
+              file=sys.stderr)
+        return 1
+
+    # Past this point the handoff is CONSUMED, so every remaining failure has to
+    # put the prompt somewhere the user can still reach it -- the same
+    # last-resort contract `handoff` applies when spooling itself fails.
+    prompt = result.get("prompt") or h.get("next_prompt") or ""
+    argv = result.get("argv") or []
+    if not _execable(argv):
+        print(f"bridge resume: the panel returned an argv this command will "
+              f"not exec: {argv[:1]}\n"
+              f"bridge resume: the handoff was already consumed, so the prompt "
+              f"follows and is not lost:\n{prompt}", file=sys.stderr)
+        return 1
+
+    summary = h.get("summary") or "no summary"
+    print(f"bridge: resuming handoff {h['id']} ({summary})", file=sys.stderr)
+    try:
+        os.execv(argv[0], argv)
+    except OSError as exc:
+        print(f"bridge resume: exec failed ({exc}); the handoff was already "
+              f"consumed, so the prompt follows and is not lost:\n{prompt}",
+              file=sys.stderr)
+        return 1
+    # Unreachable: `execv` either replaces this process or raises. Present so a
+    # reader does not have to prove that to themselves.
+    return 0
+
+
 def cmd_status(args, cfg) -> int:
     project = args.project or os.getcwd()
     # The spool count is local, so status still says something useful offline.
@@ -476,6 +605,19 @@ def build_parser() -> argparse.ArgumentParser:
     la.add_argument("--handoff",
                     help="launch this queued handoff by id")
 
+    r = sub.add_parser(
+        "resume",
+        help="run this project's newest queued handoff in this terminal",
+    )
+    r.add_argument("--project")
+    r.add_argument("--model")
+    r.add_argument("--effort")
+    # Restated rather than imported, exactly as `launch`'s copy is, and gated
+    # again server-side against `launcher.PERMISSION_MODES`.
+    r.add_argument("--permission-mode",
+                   choices=("acceptEdits", "auto", "bypassPermissions",
+                            "manual", "dontAsk", "plan"))
+
     n = sub.add_parser("next", help="print the queued prompt to stdout")
     n.add_argument("--project")
 
@@ -527,6 +669,7 @@ def build_parser() -> argparse.ArgumentParser:
 HANDLERS = {
     "handoff": cmd_handoff,
     "launch": cmd_launch,
+    "resume": cmd_resume,
     "next": cmd_next,
     "status": cmd_status,
     "update": cmd_update,
