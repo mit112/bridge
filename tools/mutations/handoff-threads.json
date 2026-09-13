@@ -1,0 +1,92 @@
+[
+  {
+    "name": "origin ignores the short id, so a background session cannot find itself",
+    "file": "src/bridge/store.py",
+    "old": "\"WHERE l.session_id=? OR (l.short_id IS NOT NULL AND l.short_id=?) \"",
+    "new": "\"WHERE l.session_id=? AND ?=? \"",
+    "tests": [
+      "tests/test_api.py::test_origin_matches_a_background_launch_by_its_short_id"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "origin returns the oldest launch of a relaunched session",
+    "file": "src/bridge/store.py",
+    "old": "\"ORDER BY l.launched_at DESC LIMIT 1\",",
+    "new": "\"ORDER BY l.launched_at ASC LIMIT 1\",",
+    "tests": [
+      "tests/test_api.py::test_origin_returns_the_most_recent_launch_of_a_relaunched_session"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "origin prints a banner on stdout, poisoning $(bridge origin)",
+    "file": "src/bridge/cli.py",
+    "old": "    sys.stdout.write(body[\"id\"])\n    return 0",
+    "new": "    print(f\"handoff: {body['id']}\")\n    return 0",
+    "tests": [
+      "tests/test_cli.py::test_origin_prints_exactly_the_id_on_stdout"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "an outcome is accepted with no handoff to attach it to",
+    "file": "src/bridge/schemas.py",
+    "old": "        if self.parent_outcome is not None and not self.parent_handoff_id:",
+    "new": "        if False:",
+    "tests": [
+      "tests/test_api.py::test_an_outcome_with_no_handoff_to_judge_is_refused"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "drop the thread link from the INSERT, so it dies with the database",
+    "file": "src/bridge/store.py",
+    "old": "                    h.parent_handoff_id, h.parent_outcome, h.kind or \"next\",",
+    "new": "                    None, None, h.kind or \"next\",",
+    "tests": [
+      "tests/test_api.py::test_the_thread_survives_a_database_loss"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "a blocked handoff renders as an ordinary ready-to-continue one",
+    "file": "src/bridge/overview.py",
+    "old": "                kind=\"blocked_handoff\" if blocked else \"handoff\",",
+    "new": "                kind=\"handoff\",",
+    "tests": [
+      "tests/test_overview.py::test_a_blocked_handoff_is_a_different_ask_not_a_different_style"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "a parked handoff still nags from the attention list",
+    "file": "src/bridge/overview.py",
+    "old": "    actionable = [h for h in handoffs if (h.get(\"kind\") or \"next\") != \"parked\"]",
+    "new": "    actionable = list(handoffs)",
+    "tests": [
+      "tests/test_overview.py::test_a_project_whose_only_queued_work_is_parked_asks_for_nothing"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "kind ranking is dropped, so the newest handoff always wins",
+    "file": "src/bridge/overview.py",
+    "old": "    return sorted(actionable, key=lambda h: KIND_RANK.get(h.get(\"kind\"), 1))[0]",
+    "new": "    return actionable[0]",
+    "tests": [
+      "tests/test_overview.py::test_blocked_outranks_next_even_when_next_is_newer"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "a handoff with no kind becomes its own fourth category",
+    "file": "src/bridge/overview.py",
+    "old": "KIND_RANK = {\"blocked\": 0, \"next\": 1, None: 1, \"parked\": 2}",
+    "new": "KIND_RANK = {\"blocked\": 0, \"next\": 1, None: 3, \"parked\": 2}",
+    "tests": [
+      "tests/test_overview.py::test_a_handoff_captured_before_kinds_existed_reads_as_next"
+    ],
+    "expect_count": 1
+  }
+]
