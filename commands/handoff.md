@@ -62,11 +62,30 @@ Read the draft back before recording it, and check that it answers all five:
 A "no" is not a reason to abandon the handoff — it is the thing to go and find out, or to
 state as unknown. An unknown written down is useful; a guess written as fact is not.
 
-## 2. Record
+## 2. Close the thread you were handed
 
-Run exactly this, substituting your summary and prompt:
+If this session was launched from a handoff, say what became of it. `bridge
+origin` prints that handoff's id and nothing else, so it substitutes directly:
+
+```
+done     you finished it
+partial  you made real progress and the rest is in the prompt you are writing
+dropped  you did not do it, and the next session should know why not
+```
+
+A session started by hand has no origin; `bridge origin` exits non-zero with
+empty output and the flags below simply disappear. Do not invent one.
+
+## 3. Record
+
+Run exactly this, substituting your summary, your prompt, and — if there is an
+origin — the outcome:
 
 ```bash
+# Empty for a session nobody launched from a handoff, which is the normal case.
+closes=$(bridge origin 2>/dev/null || true)
+outcome=done          # done | partial | dropped — only read when `closes` is set
+
 summary=$(cat <<'BRIDGE_SUMMARY'
 <your one-line summary>
 BRIDGE_SUMMARY
@@ -75,10 +94,32 @@ bridge handoff \
   --summary "$summary" \
   --session-id "$CLAUDE_CODE_SESSION_ID" \
   --effort "$CLAUDE_EFFORT" \
+  ${closes:+--closes "$closes" --outcome "$outcome"} \
   --prompt-file - <<'BRIDGE_PROMPT'
 <your next-session prompt, as many paragraphs as it needs>
 BRIDGE_PROMPT
 ```
+
+`${closes:+…}` expands to nothing at all when `closes` is empty, so one form of
+the command covers both cases. Its result is word-split, which is safe here and
+only here: a handoff id is a UUID, so it cannot contain a space. Do not reuse
+that shape for the summary or the prompt.
+
+## 4. Say what kind of handoff it is
+
+Add `--kind` when this is not an ordinary continuation:
+
+- **`--kind blocked`** — nothing can proceed until a *person* does something:
+  a credential, a purchase, an access grant, a decision only they can take.
+  Bridge surfaces these separately, as things waiting on them rather than work
+  waiting for a session. Use it for the thing you would otherwise have written
+  down somewhere they will never look.
+- **`--kind parked`** — a real idea, deliberately deferred. It stays on the
+  project and stops asking to be done.
+
+The default is `next`, which is what almost everything is. Reach for `blocked`
+only when a session genuinely cannot make the next move alone — a handoff that
+needs a decision but could still be *started* is a `next` that says so.
 
 Rules that matter:
 
@@ -99,7 +140,7 @@ Rules that matter:
 - Pick a delimiter that does not appear in your prompt. If the prompt might contain
   `BRIDGE_PROMPT`, use another one.
 
-## 3. Interpret the exit status
+## 5. Interpret the exit status
 
 - **Exit 0, stderr says `queued for <path>`** — recorded in the panel. Done.
 - **Exit 0, stderr says `spooled to <path>`** — also success. The panel is not running,
@@ -110,10 +151,14 @@ Rules that matter:
 - **Non-zero** — a real failure. The usual cause is an empty prompt, which exits 2. Fix and
   rerun; nothing was recorded.
 
-## 4. Confirm
+## 6. Confirm
 
 Tell the user in one line what was captured and where it went. If the panel is running, they
 can see it at http://127.0.0.1:8787; otherwise mention it will appear on next `bridge serve`.
+
+Worth mentioning once, if they do not already know it: from a terminal in the
+project directory, `bridge resume` runs the newest queued handoff right there,
+in that window, rather than opening a new one.
 
 ## Installation note
 
