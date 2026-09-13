@@ -231,6 +231,22 @@ COLUMN_MIGRATIONS: dict[str, dict[str, str]] = {
         "created_head": "TEXT",
         "created_dirty": "INTEGER",
         "created_ahead": "INTEGER",
+        # The handoff whose session wrote this one, and what that session
+        # reported about it: done | partial | dropped. Both live on the CHILD,
+        # never on the parent. The child is the row the journal already carries,
+        # so a thread and its verdicts survive `rm bridge.db` with no second
+        # journal record type -- and the session making the claim is the one
+        # whose record holds it. Deliberately not a foreign key: a pruned or
+        # hand-deleted parent must leave a dangling pointer, not fail the insert
+        # of a handoff that is the only copy of something.
+        "parent_handoff_id": "TEXT",
+        "parent_outcome": "TEXT",
+        # next | blocked | parked. NULL on every handoff captured before this
+        # existed, and read as `next` everywhere -- which is what those handoffs
+        # were, since it was the only thing a handoff could be. Kept out of a
+        # CHECK constraint for the same reason `status` is: the writing code is
+        # the authority, and a new value should not be a table rebuild.
+        "kind": "TEXT",
     },
     # The id of the failed/indeterminate run this row was created to retry.
     # NULL for every schedule a person authored. Deliberately not a foreign key:
@@ -625,8 +641,9 @@ class Store:
             self.conn.execute(
                 "INSERT INTO handoffs(id, project_id, source_session_id, summary, "
                 "next_prompt, suggested_model, suggested_effort, status, created_at, "
-                "created_branch, created_head, created_dirty, created_ahead) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING",
+                "created_branch, created_head, created_dirty, created_ahead, "
+                "parent_handoff_id, parent_outcome, kind) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING",
                 (
                     h.id, project_id, h.source_session_id, h.summary, h.next_prompt,
                     h.suggested_model, h.suggested_effort, h.status or "queued",
@@ -636,6 +653,7 @@ class Store:
                     # statement, and a fingerprint that survived a panel outage
                     # but not a database rebuild would be worse than none.
                     h.created_branch, h.created_head, h.created_dirty, h.created_ahead,
+                    h.parent_handoff_id, h.parent_outcome, h.kind or "next",
                 ),
             )
         return h.id
@@ -745,7 +763,18 @@ class Store:
         with self._lock:
             return list(
                 self.conn.execute(
-                    f"SELECT * FROM handoffs {where} {order} LIMIT ? OFFSET ?",
+                    # The parent's summary rides along so the history table can
+                    # name the thread a handoff continues without a query per
+                    # row. A correlated subquery rather than a self-join, so the
+                    # outer table keeps its bare name and `where`/`order` -- both
+                    # built elsewhere, against unqualified columns -- need no
+                    # rewriting to stay unambiguous. It runs only for rows that
+                    # actually have a parent, and returns NULL for a pointer left
+                    # dangling by a pruned one.
+                    f"SELECT *, (SELECT summary FROM handoffs p "
+                    f"           WHERE p.id = handoffs.parent_handoff_id) "
+                    f"          AS parent_summary "
+                    f"FROM handoffs {where} {order} LIMIT ? OFFSET ?",
                     params,
                 )
             )
@@ -920,6 +949,30 @@ class Store:
                 "UPDATE launches SET session_id=?, short_id=? WHERE id=?",
                 (session_id, short_id, launch_id),
             )
+
+    def handoff_for_session(self, session_id: str) -> sqlite3.Row | None:
+        """The handoff a session was launched from, or None.
+
+        The launch table has held this join since it was written; nothing ever
+        asked it the question. `bridge origin` is what asks: a session started
+        from a handoff has no other way to learn which one, because the prompt
+        it received carries the TEXT of the handoff and not its identity.
+
+        `short_id` is matched as well as `session_id`. A background launch is
+        recorded before `claude --bg` has printed a handle, so a session that
+        asks early finds its own row under the 8-hex prefix and nothing under
+        the full id. Ordered newest-first because one session id can in
+        principle appear on a relaunch, and the most recent launch is the one
+        that produced the running session.
+        """
+        with self._lock:
+            return self.conn.execute(
+                "SELECT h.*, l.id AS launch_id, l.launched_at "
+                "FROM launches l JOIN handoffs h ON h.id = l.handoff_id "
+                "WHERE l.session_id=? OR (l.short_id IS NOT NULL AND l.short_id=?) "
+                "ORDER BY l.launched_at DESC LIMIT 1",
+                (session_id, session_id[:8]),
+            ).fetchone()
 
     def unlinked_launches(self, since_epoch: int) -> list[sqlite3.Row]:
         """Background launches still waiting to be matched to a session.

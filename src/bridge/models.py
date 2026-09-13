@@ -130,6 +130,18 @@ class Handoff:
     created_head: str | None = None
     created_dirty: int | None = None
     created_ahead: int | None = None
+    # The handoff whose session wrote this one, and what that session reported
+    # about it: done | partial | dropped. Both live on the CHILD. The parent is
+    # not updated, so a thread needs no cross-row write and no second journal
+    # record type -- and the verdict sits on the record of the session that is
+    # actually making the claim.
+    parent_handoff_id: str | None = None
+    parent_outcome: str | None = None
+    # What this handoff IS, not what state it is in -- `status` already answers
+    # that. `next` is the real continuation, `blocked` needs a human before
+    # anyone can proceed, `parked` is deliberately deferred. Before this existed
+    # every handoff was a `next`, which is why None reads as one.
+    kind: str | None = None
 
 
 @dataclass

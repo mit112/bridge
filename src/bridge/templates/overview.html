@@ -114,6 +114,7 @@
         exists to read, so that row is omitted. -#}
     {% set status_map = {
       "handoff": ("st-attention", "Ready to continue", "queued", "Your input to continue"),
+      "blocked_handoff": ("st-risk", "Blocked on you", "blocked", "A decision only you can make"),
       "running": ("st-run", "Working now", "running", ""),
       "session_input": ("st-attention", "Needs input", "needs input", "Your answer in the session"),
       "session_failed": ("st-risk", "Failed", "session failed", "A look at what stopped"),

@@ -51,6 +51,9 @@ def build_router(
             created_head=body.created_head,
             created_dirty=body.created_dirty,
             created_ahead=body.created_ahead,
+            parent_handoff_id=body.parent_handoff_id,
+            parent_outcome=body.parent_outcome,
+            kind=body.kind,
         )
         # Journal before inserting, so a handoff is recoverable from the moment
         # it is acknowledged. A journal failure must not cost the user the
@@ -110,6 +113,23 @@ def build_router(
     @router.get("/api/handoffs/{project_id}")
     def list_handoffs(project_id: int):
         return [dict(r) for r in store.queued_handoffs(project_id)]
+
+    @router.get("/api/origin")
+    def get_origin(session_id: str):
+        """The handoff a session came from, for `bridge origin`.
+
+        A session launched from a handoff receives that handoff's TEXT as its
+        opening message and nothing else -- no id, no provenance. Without this
+        it cannot report back on the thing it was asked to do, because it does
+        not know which record to report against.
+
+        204 rather than 404 for "this session did not come from a handoff",
+        which is the ordinary case: most sessions are started by hand.
+        """
+        row = store.handoff_for_session(session_id)
+        if row is None:
+            return Response(status_code=204)
+        return dict(row)
 
     @router.patch("/api/handoff/{handoff_id}")
     def patch_handoff(handoff_id: str, body: HandoffPatch):

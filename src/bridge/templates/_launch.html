@@ -149,8 +149,20 @@
            (`aria-labelledby` above lists both), so the demotion reaches a
            screen reader in the same words it reaches the eye -- never colour
            or weight alone. #}
+        {# Kind before demotion: "blocked" is what this handoff IS, and it stays
+           true whether or not a later session has worked in the project. A
+           blocked item rendered as "Ready" is the failure this pill exists to
+           prevent -- it is the one state no session can clear on its own. #}
+        {% if handoff.kind == "blocked" %}
+        <span class="pill pill--stale continuation-status"
+              id="{{ hid }}-state">Blocked on you</span>
+        {% elif handoff.kind == "parked" %}
+        <span class="pill pill--idle continuation-status"
+              id="{{ hid }}-state">Parked</span>
+        {% else %}
         <span class="pill {{ "pill--idle" if demoted else "pill--work" }} continuation-status"
               id="{{ hid }}-state">{{ "Work has continued since" if demoted else "Ready" }}</span>
+        {% endif %}
       </div>
       {% if demoted %}
       {# One disclosure, not two: a demoted handoff skips the `handoff-prompt`

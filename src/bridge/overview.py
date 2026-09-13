@@ -62,6 +62,31 @@ LIVE_ATTENTION = {
 }
 
 
+# Which queued handoff a project leads with, most urgent first. `blocked` needs
+# a person and outranks work a session could simply pick up; `parked` was
+# deferred on purpose and is last. A handoff captured before `kind` existed has
+# None, which is read as `next` -- that is what it was, since nothing else
+# existed to be.
+KIND_RANK = {"blocked": 0, "next": 1, None: 1, "parked": 2}
+
+
+def _featured_handoff(handoffs: list[dict]) -> dict | None:
+    """The one handoff a project's attention entry speaks for, or None.
+
+    None when everything queued is `parked`: those were deferred deliberately,
+    and a project whose only queued work is parked is not asking for anything.
+    It falls through to the live/stale branches like any other project, rather
+    than sitting in the attention list being ignored until the list stops being
+    read at all.
+
+    Ties keep `queued_handoffs`' newest-first order, because `sorted` is stable.
+    """
+    actionable = [h for h in handoffs if (h.get("kind") or "next") != "parked"]
+    if not actionable:
+        return None
+    return sorted(actionable, key=lambda h: KIND_RANK.get(h.get("kind"), 1))[0]
+
+
 @dataclass(frozen=True)
 class Action:
     """A single primary action: label text + the href it goes to."""
@@ -264,20 +289,27 @@ def _attention_from_cards(cards: list[Card]) -> list[AttentionItem]:
     """
     items: list[AttentionItem] = []
     for card in cards:
-        if card.handoffs:
+        featured = _featured_handoff(card.handoffs)
+        if featured is not None:
             # ONE entry per project, not one per handoff. Six queued handoffs
             # on one project used to contribute six items, so the page
             # headlined 17 "items" against the Projects page's 9 projects for
             # the same state. The remaining handoffs are a magnitude on this
             # one entry (`handoff_count`), and the project page lists them.
-            h = card.handoffs[0]
+            h = featured
+            blocked = (h.get("kind") == "blocked")
             items.append(AttentionItem(
-                kind="handoff",
+                # A blocked handoff is a different ASK, not a different style of
+                # the same one: `handoff` means "a session can carry this on",
+                # `blocked_handoff` means nothing can proceed until a person
+                # does something. Rendering them alike is what left decisions
+                # needing a human sitting in a queue labelled "ready".
+                kind="blocked_handoff" if blocked else "handoff",
                 project_id=card.project_id,
                 title=(h.get("session_title") or card.name),
                 summary=(h.get("summary") or h.get("next_prompt", "")),
                 primary_action=Action(
-                    "Continue in Terminal",
+                    "See what is needed" if blocked else "Continue in Terminal",
                     f"/project/{card.project_id}?tab=current",
                 ),
                 meta={
@@ -289,6 +321,7 @@ def _attention_from_cards(cards: list[Card]) -> list[AttentionItem]:
                     "branch": card.git.branch,
                     "dirty_count": card.git.dirty_count,
                     "path": card.path,
+                    "kind": h.get("kind") or "next",
                 },
             ))
         elif card.live is not None and card.live.status in LIVE_ATTENTION:
