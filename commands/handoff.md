@@ -5,6 +5,31 @@ description: Capture a next-session prompt for this project in Bridge
 Record a handoff for the next session in this project. Compose it first, then hand it to
 the `bridge` CLI on stdin.
 
+## 0. Probe
+
+Compose from what the repo says, not from what you remember. At the end of a long session
+the commit you think you made and the branch you think you are on are both guesses, and a
+handoff that states them wrongly sends the next session somewhere that does not exist.
+
+Run this first and keep the output in front of you:
+
+```bash
+git rev-parse --abbrev-ref HEAD
+git rev-parse --short HEAD
+git status --porcelain | wc -l
+git rev-list --left-right --count '@{u}...HEAD' 2>/dev/null || echo "no upstream"
+git log --oneline -5
+```
+
+`@{u}...HEAD` prints `<behind>` then `<ahead>`, in that order. A non-zero ahead count means
+the work is committed but **not pushed** — say so in as many words. "Done" and "pushed" are
+different claims, and the next session will act on the difference.
+
+Then add whatever else your claims rest on: the repo's named gate and its real exit status
+(`make check`, `.claude/verify.sh` — run it, do not recall it), the test count, the measured
+number you are about to quote. Anything you cannot re-derive right now, write down as an
+uncertainty rather than as a fact.
+
 ## 1. Compose
 
 From the session so far, write two things:
@@ -13,13 +38,29 @@ From the session so far, write two things:
 Not "worked on the CLI" but "added the bridge CLI with spool-on-failure; 7/7 mutations caught".
 
 **A next-session prompt** — addressed to the next Claude, who will start with no memory of
-this conversation. A good one states: the repo and branch, what is done and committed, what
-is next and why, any decision already taken that should not be relitigated, and any trap
-worth knowing. Write it as an instruction, not a status report: it becomes that session's
-opening message.
+this conversation. A good one states: the repo and branch, what is done and whether it is
+committed *and* pushed, what is next and why, what was deliberately **not** done and why
+not, any decision already taken that should not be relitigated, and any trap worth knowing.
+Write it as an instruction, not a status report: it becomes that session's opening message.
 
 Be specific about state that is expensive to rediscover — exact commands, file paths,
-commit hashes, measured numbers.
+commit hashes, measured numbers. Take them from the probe above, not from memory.
+
+**"Deliberately not done" earns its place.** A prompt that is all forward motion invites the
+next session to reopen a question this one already closed, or to "fix" something that was
+left alone on purpose. One line naming what you skipped, and why, is worth more than another
+paragraph of plan.
+
+Read the draft back before recording it, and check that it answers all five:
+
+1. Which branch, and is the work pushed or only committed?
+2. What exact command proves the tree is green, and what did it actually say?
+3. Which decision is settled and must not be relitigated?
+4. Which trap costs the next session an hour if nobody mentions it?
+5. Could someone with no memory of this session start work in under two minutes?
+
+A "no" is not a reason to abandon the handoff — it is the thing to go and find out, or to
+state as unknown. An unknown written down is useful; a guess written as fact is not.
 
 ## 2. Record
 
