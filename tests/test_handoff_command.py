@@ -163,6 +163,60 @@ def test_the_documented_command_captures_a_realistic_prompt(live_server, tmp_pat
     assert "${BRACES}" in row["next_prompt"]
 
 
+def test_the_documented_command_closes_the_thread_it_was_launched_from(
+    live_server, tmp_path
+):
+    """The `${closes:+…}` branch, taken.
+
+    The realistic-prompt test above always runs with an EMPTY `closes`, because
+    nothing launched it -- so it proves the fragment collapses to nothing and
+    says exactly nothing about the case the fragment exists for. Here a launch
+    row makes `bridge origin` answer, and the same documented block has to come
+    out the other side with a thread recorded.
+    """
+    from bridge.models import Handoff, Launch
+
+    cfg, store = live_server
+    project = tmp_path / "threaded"
+    project.mkdir()
+    pid = store.upsert_project(str(project), "threaded")
+    store.create_handoff(
+        Handoff(id="parent-handoff", project_path=str(project),
+                next_prompt="the previous plan", summary="Built Task 4",
+                created_at=1000),
+        pid,
+    )
+    store.create_launch(Launch(id="l1", project_id=pid,
+                               handoff_id="parent-handoff",
+                               session_id=SESSION_ID, mode="terminal",
+                               prompt="the previous plan", launched_at=1001))
+
+    script = (
+        command_template()
+        .replace("<your one-line summary>", "Finished Task 4")
+        .replace("<your next-session prompt, as many paragraphs as it needs>",
+                 "Start Task 5.")
+    )
+    proc = subprocess.run(
+        ["/bin/bash", "-c", script], cwd=str(project),
+        capture_output=True, text=True,
+        env={
+            "PATH": f"{Path(sys.executable).parent}:/usr/bin:/bin",
+            "HOME": str(tmp_path / "home2"),
+            "BRIDGE_PORT": str(cfg.port),
+            "CLAUDE_CODE_SESSION_ID": SESSION_ID,
+            "CLAUDE_EFFORT": "high",
+            "PYTHONDONTWRITEBYTECODE": "1",
+        },
+    )
+
+    assert proc.returncode == 0, f"stdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
+    written = [h for h in store.handoffs(pid) if h["id"] != "parent-handoff"]
+    assert len(written) == 1, "the documented command wrote no new handoff"
+    assert written[0]["parent_handoff_id"] == "parent-handoff"
+    assert written[0]["parent_outcome"] == "done"
+
+
 def test_the_command_file_documents_the_quoted_heredoc_and_stdin(live_server=None):
     """The two rules that keep a prompt from being executed or truncated."""
     md = (REPO / "commands" / "handoff.md").read_text()
@@ -175,3 +229,8 @@ def test_the_command_file_documents_the_quoted_heredoc_and_stdin(live_server=Non
     )
     assert '--summary "$summary"' in template
     assert "spooled to" in md, "the command must state that a spool message is success"
+    assert "${closes:+" in template, (
+        "the thread flags must stay conditional: a session nobody launched has "
+        "no origin, and `--closes ''` would post a link to nothing"
+    )
+    assert "bridge origin" in md, "the command must say where `closes` comes from"
