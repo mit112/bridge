@@ -222,6 +222,16 @@ COLUMN_MIGRATIONS: dict[str, dict[str, str]] = {
     # Epoch of the first reindex that found this project's path gone, so a later
     # manual restore in the panel is never re-archived. NULL = never seen missing.
     "projects": {"missing_archived_at": "INTEGER"},
+    # The repo state a handoff was written against, stamped by the CLI at
+    # capture time. All NULL for every handoff captured before this existed, and
+    # for every project that is not a git repo -- which is why `drift.compare`
+    # treats absence as "nothing to say" and never as "nothing changed".
+    "handoffs": {
+        "created_branch": "TEXT",
+        "created_head": "TEXT",
+        "created_dirty": "INTEGER",
+        "created_ahead": "INTEGER",
+    },
     # The id of the failed/indeterminate run this row was created to retry.
     # NULL for every schedule a person authored. Deliberately not a foreign key:
     # `prune_scheduled_runs` reaps an old original before its newer retry, and a
@@ -614,12 +624,18 @@ class Store:
                 )
             self.conn.execute(
                 "INSERT INTO handoffs(id, project_id, source_session_id, summary, "
-                "next_prompt, suggested_model, suggested_effort, status, created_at) "
-                "VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING",
+                "next_prompt, suggested_model, suggested_effort, status, created_at, "
+                "created_branch, created_head, created_dirty, created_ahead) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING",
                 (
                     h.id, project_id, h.source_session_id, h.summary, h.next_prompt,
                     h.suggested_model, h.suggested_effort, h.status or "queued",
                     h.created_at or now_epoch(),
+                    # Carried through here and not only on the live POST: the
+                    # spool drain and the journal rebuild reach this same
+                    # statement, and a fingerprint that survived a panel outage
+                    # but not a database rebuild would be worse than none.
+                    h.created_branch, h.created_head, h.created_dirty, h.created_ahead,
                 ),
             )
         return h.id

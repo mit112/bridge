@@ -16,7 +16,7 @@ from collections.abc import Callable
 
 from fastapi import APIRouter, HTTPException, Query, Response
 
-from bridge import launcher, spool
+from bridge import drift, launcher, spool
 from bridge.config import Config
 from bridge.firing import LaunchFn, fire
 from bridge.models import Handoff
@@ -47,6 +47,10 @@ def build_router(
             suggested_model=body.suggested_model,
             suggested_effort=body.suggested_effort,
             created_at=body.created_at or now_epoch(),
+            created_branch=body.created_branch,
+            created_head=body.created_head,
+            created_dirty=body.created_dirty,
+            created_ahead=body.created_ahead,
         )
         # Journal before inserting, so a handoff is recoverable from the moment
         # it is acknowledged. A journal failure must not cost the user the
@@ -207,6 +211,16 @@ def build_router(
             raise HTTPException(status_code=404, detail="unknown handoff")
         if prompt is None:
             prompt = handoff["next_prompt"]
+        if handoff is not None:
+            # Read from the cache the card build already wrote, never a fresh
+            # probe: a launch must not block on `git` in a repo that is slow or
+            # gone, and a cache miss simply means no preamble. Applied even when
+            # the caller sent its own prompt bytes, because an edited prompt is
+            # still this handoff's prompt and its premise has moved just the same.
+            cached = store.get_git_cache(handoff["project_id"])
+            moved = drift.compare(handoff, cached[0] if cached else None)
+            if moved:
+                prompt = drift.preamble(moved) + prompt
         title = body.title or launcher.default_title(
             handoff["summary"] if handoff else None, display_name(canonical)
         )

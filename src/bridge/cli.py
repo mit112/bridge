@@ -117,6 +117,50 @@ def _reject(h: Handoff, cfg, status: int, body) -> int:
     return 0
 
 
+GIT = "/usr/bin/git"
+
+
+def _git_fingerprint(project: str) -> dict:
+    """The repo state this handoff is being written against.
+
+    Captured HERE, in the project directory, at the moment of capture. The
+    server cannot do this: a handoff routinely spools while the panel is down
+    and drains hours later, so a fingerprint taken at ingest would describe the
+    repo as it was when the panel next booted -- exactly the drift the
+    fingerprint exists to distinguish from.
+
+    Every failure yields a missing key rather than an exception. `bridge
+    handoff` must never fail because of Bridge, and a handoff is the one thing
+    stored here that cannot be regenerated; no fingerprint is worth that.
+    """
+    def out(*args: str) -> str | None:
+        try:
+            proc = subprocess.run([GIT, *args], cwd=project, capture_output=True,
+                                  text=True, timeout=2.0)
+        except (OSError, subprocess.SubprocessError):
+            return None
+        return proc.stdout.strip() if proc.returncode == 0 else None
+
+    if out("rev-parse", "--is-inside-work-tree") != "true":
+        return {}
+    fp: dict = {
+        "created_branch": out("rev-parse", "--abbrev-ref", "HEAD"),
+        "created_head": out("rev-parse", "HEAD"),
+    }
+    porcelain = out("status", "--porcelain")
+    if porcelain is not None:
+        fp["created_dirty"] = len([ln for ln in porcelain.splitlines() if ln.strip()])
+    counts = out("rev-list", "--left-right", "--count", "@{u}...HEAD")
+    if counts and "\t" in counts:
+        # `<behind>\t<ahead>`; only ahead is kept. "Committed but not pushed"
+        # is the claim a handoff most often gets wrong about itself.
+        try:
+            fp["created_ahead"] = int(counts.split("\t")[1])
+        except ValueError:
+            pass
+    return {k: v for k, v in fp.items() if v is not None}
+
+
 def cmd_handoff(args, cfg) -> int:
     try:
         prompt = _read_prompt(args.prompt_file)
@@ -129,15 +173,22 @@ def cmd_handoff(args, cfg) -> int:
         print("bridge handoff: refusing to record an empty prompt", file=sys.stderr)
         return 2
 
+    project_path = args.project or os.getcwd()
+    try:
+        fingerprint = _git_fingerprint(project_path)
+    except Exception:  # noqa: BLE001 - belt and braces; see `_git_fingerprint`
+        fingerprint = {}
+
     h = Handoff(
         id=str(uuid.uuid4()),
-        project_path=args.project or os.getcwd(),
+        project_path=project_path,
         next_prompt=prompt,
         source_session_id=args.session_id,
         summary=args.summary,
         suggested_model=args.model,
         suggested_effort=args.effort,
         created_at=int(time.time()),
+        **fingerprint,
     )
 
     reason = None
@@ -149,6 +200,8 @@ def cmd_handoff(args, cfg) -> int:
                 "next_prompt": h.next_prompt, "session_id": h.source_session_id,
                 "summary": h.summary, "suggested_model": h.suggested_model,
                 "suggested_effort": h.suggested_effort, "created_at": h.created_at,
+                "created_branch": h.created_branch, "created_head": h.created_head,
+                "created_dirty": h.created_dirty, "created_ahead": h.created_ahead,
             },
         )
         if 200 <= status < 300:

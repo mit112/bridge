@@ -37,6 +37,10 @@ class GitState:
 
     status: str
     branch: str | None = None
+    # Full HEAD sha. The one field here that exists for comparison rather than
+    # display: `drift` needs a stable identity for "the commit this handoff was
+    # written against", and a summary line is not one.
+    head: str | None = None
     dirty_count: int = 0
     ahead: int | None = None
     behind: int | None = None
@@ -114,6 +118,18 @@ class Handoff:
     suggested_effort: str | None = None
     created_at: int = 0
     status: str = "queued"
+    # The repo state this handoff was WRITTEN against, captured by the CLI in
+    # the project directory at capture time -- never by the server at ingest.
+    # A handoff routinely spools while the panel is down and drains hours later,
+    # and a fingerprint taken then would describe the repo as it was when the
+    # panel next booted: precisely the drift this exists to detect. All four are
+    # None outside a git repo, and None on any probe failure -- a handoff is the
+    # one thing here that cannot be regenerated, and nothing about a missing
+    # fingerprint is worth risking it for.
+    created_branch: str | None = None
+    created_head: str | None = None
+    created_dirty: int | None = None
+    created_ahead: int | None = None
 
 
 @dataclass
