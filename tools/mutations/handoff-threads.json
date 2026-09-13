@@ -85,6 +85,7 @@
     "old": "KIND_RANK = {\"blocked\": 0, \"next\": 1, None: 1, \"parked\": 2}",
     "new": "KIND_RANK = {\"blocked\": 0, \"next\": 1, None: 3, \"parked\": 2}",
     "tests": [
+      "tests/test_overview.py::test_a_legacy_null_kind_outranks_parked_rather_than_sorting_below_it",
       "tests/test_overview.py::test_a_handoff_captured_before_kinds_existed_reads_as_next"
     ],
     "expect_count": 1

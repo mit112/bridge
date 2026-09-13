@@ -1262,6 +1262,22 @@ def test_a_handoff_captured_before_kinds_existed_reads_as_next(tmp_path):
     store.close()
 
 
+def test_a_legacy_null_kind_outranks_parked_rather_than_sorting_below_it(tmp_path):
+    """`kind == "handoff"` is decided by one equality check, so a single-handoff
+    test passes whatever `KIND_RANK` says about None -- it never gets sorted
+    against anything. This is the one that makes NULL's rank load-bearing:
+    ranked below `parked`, a legacy handoff would lose the entry to work that
+    was explicitly deferred."""
+    store = _kind_store(tmp_path)
+    path = str(tmp_path)
+    _queue(store, path, "legacy", created_at=100)
+    store.conn.execute("UPDATE handoffs SET kind=NULL WHERE id='legacy'")
+    _queue(store, path, "parked-one", kind="parked", created_at=999)
+
+    assert _first(store, tmp_path).meta["handoff_id"] == "legacy"
+    store.close()
+
+
 def test_a_project_whose_only_queued_work_is_parked_asks_for_nothing(tmp_path):
     """Parked was deferred on purpose. A project sitting in the attention list
     that nobody intends to act on is how the list stops being read at all."""
