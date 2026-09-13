@@ -873,3 +873,96 @@ def test_a_broken_git_never_fails_a_capture(monkeypatch, tmp_path, fake_server):
 
     assert code == 0
     assert fake_server["posts"][0]["created_head"] is None
+
+
+# --- `bridge origin`: stdout is the id, and only the id ----------------------
+
+
+def run_origin(monkeypatch, tmp_path, port, argv=None):
+    cfg = cfg_for(tmp_path, port)
+    monkeypatch.setattr(cli, "load", lambda overrides=None: cfg)
+    return cli.main(argv or ["origin", "--session-id", "sess-abc"]), cfg
+
+
+def test_origin_prints_exactly_the_id_on_stdout(monkeypatch, tmp_path,
+                                                fake_server, capsys):
+    """Meant to be substituted -- `--closes "$(bridge origin)"` -- so a banner
+    on stdout ends up inside the value. Same discipline as `bridge next`."""
+    fake_server["get_body"] = {"id": "h-parent", "summary": "Built the CLI"}
+
+    code, _ = run_origin(monkeypatch, tmp_path, fake_server["port"])
+
+    out = capsys.readouterr()
+    assert code == 0
+    assert out.out == "h-parent", f"stdout was not just the id: {out.out!r}"
+    assert "Built the CLI" in out.err, "the human half still gets reported"
+
+
+def test_origin_exits_one_with_empty_stdout_for_a_hand_started_session(
+    monkeypatch, tmp_path, fake_server, capsys
+):
+    """The ordinary case. `$(bridge origin)` must come back empty rather than
+    with an apology that would then be passed as a handoff id."""
+    fake_server["get_body"] = None  # the stub answers 204
+
+    code, _ = run_origin(monkeypatch, tmp_path, fake_server["port"])
+
+    out = capsys.readouterr()
+    assert code == 1
+    assert out.out == ""
+
+
+def test_origin_falls_back_to_the_session_id_in_the_environment(
+    monkeypatch, tmp_path, fake_server, capsys
+):
+    """The skill runs inside a session that knows its own id only as
+    `$CLAUDE_CODE_SESSION_ID`."""
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "sess-from-env")
+    fake_server["get_body"] = {"id": "h1", "summary": "s"}
+
+    run_origin(monkeypatch, tmp_path, fake_server["port"], argv=["origin"])
+
+    # Discriminating on its own: with the fallback gone, `origin` with no
+    # `--session-id` is a usage error that exits 2 and prints nothing.
+    assert capsys.readouterr().out == "h1"
+
+
+def test_origin_without_any_session_id_is_a_usage_error(
+    monkeypatch, tmp_path, fake_server, capsys
+):
+    monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
+
+    code, _ = run_origin(monkeypatch, tmp_path, fake_server["port"],
+                         argv=["origin"])
+
+    assert code == 2
+    assert fake_server["gets"] == []
+
+
+def test_handoff_posts_the_thread_it_closes(monkeypatch, tmp_path, fake_server):
+    """`--closes` and `--outcome` are what make a pile of prompts a history."""
+    run_handoff(monkeypatch, tmp_path, fake_server["port"], argv=[
+        "handoff", "--summary", "s", "--prompt-file", "-", "--project", DEMO,
+        "--closes", "h-parent", "--outcome", "partial",
+    ])
+
+    posted = fake_server["posts"][0]
+    assert posted["parent_handoff_id"] == "h-parent"
+    assert posted["parent_outcome"] == "partial"
+
+
+def test_an_unknown_outcome_is_rejected_before_anything_is_posted(
+    monkeypatch, tmp_path, fake_server
+):
+    """argparse `choices` refuses locally, so a typo cannot reach the panel and
+    cannot become a category nothing counts."""
+    cfg = cfg_for(tmp_path, fake_server["port"])
+    monkeypatch.setattr(cli, "load", lambda overrides=None: cfg)
+
+    # `main` converts argparse's SystemExit into a return code rather than
+    # letting it escape, so this asserts the code, not the exception.
+    code = cli.main(["handoff", "--summary", "s", "--prompt-file", "-",
+                     "--project", DEMO, "--closes", "p", "--outcome", "mostly"])
+
+    assert code == 2
+    assert fake_server["posts"] == []

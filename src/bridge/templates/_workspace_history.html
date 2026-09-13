@@ -29,7 +29,21 @@
     <tr>
       <td class="status--{{ h['status'] }}">{{ h["status"] }}</td>
       <td><time datetime="{{ h['created_at'] }}">{{ h["created_at"] | ago_epoch }} ago</time></td>
-      <td>{{ h["summary"] or "(no summary)" }}</td>
+      <td>{{ h["summary"] or "(no summary)" }}
+        {# The thread. A handoff written by a session that was itself launched
+           from one names its predecessor and says what became of it, which is
+           what turns this table from a pile into a history. `parent_summary`
+           is NULL when the parent has been pruned -- the verdict still stands,
+           it just has nothing left to name. #}
+        {% if h["parent_handoff_id"] %}
+        <span class="handoff-thread">
+          ↳ continues {{ h["parent_summary"] or "an earlier handoff" }}
+          {%- if h["parent_outcome"] %}
+          <span class="handoff-thread__outcome handoff-thread__outcome--{{ h['parent_outcome'] }}">{{ h["parent_outcome"] }}</span>
+          {%- endif %}
+        </span>
+        {% endif %}
+      </td>
     </tr>
     {% endfor %}
   </tbody>

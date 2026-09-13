@@ -1095,6 +1095,25 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
 /* Reuses `--review`, the palette's existing "needs attention" hue, rather than
    introducing a fifth status colour for one line. It is already contrast-
    checked in both themes by `test_contrast`. */
+/* The thread line under a handoff's summary in the history table. `--done`
+   reuses the palette's success hue and the other two reuse `--review`; no new
+   status colour is introduced for three words, and both are already contrast-
+   checked in light and dark by `test_contrast`. */
+.handoff-thread {
+  display: block;
+  margin-top: var(--space-1);
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+.handoff-thread__outcome {
+  font-weight: 700;
+  text-transform: uppercase;
+  font-size: var(--text-xs);
+  letter-spacing: .03em;
+}
+.handoff-thread__outcome--done { color: var(--work); }
+.handoff-thread__outcome--partial,
+.handoff-thread__outcome--dropped { color: var(--review); }
 .continuation-panel .handoff__drift {
   margin: var(--space-2) 0 0;
   color: var(--review);

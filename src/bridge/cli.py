@@ -188,6 +188,9 @@ def cmd_handoff(args, cfg) -> int:
         suggested_model=args.model,
         suggested_effort=args.effort,
         created_at=int(time.time()),
+        parent_handoff_id=args.closes,
+        parent_outcome=args.outcome,
+        kind=args.kind,
         **fingerprint,
     )
 
@@ -202,6 +205,8 @@ def cmd_handoff(args, cfg) -> int:
                 "suggested_effort": h.suggested_effort, "created_at": h.created_at,
                 "created_branch": h.created_branch, "created_head": h.created_head,
                 "created_dirty": h.created_dirty, "created_ahead": h.created_ahead,
+                "parent_handoff_id": h.parent_handoff_id,
+                "parent_outcome": h.parent_outcome, "kind": h.kind,
             },
         )
         if 200 <= status < 300:
@@ -253,6 +258,42 @@ def cmd_next(args, cfg) -> int:
     # Exactly the prompt. No newline is added: a trailing byte here becomes a
     # trailing byte in the next session's prompt.
     sys.stdout.write(body["next_prompt"])
+    return 0
+
+
+def cmd_origin(args, cfg) -> int:
+    """Print the id of the handoff this session was launched from.
+
+    **Stdout is exactly the id and nothing else**, for the same reason
+    `bridge next` prints exactly the prompt: it is meant to be substituted --
+    `bridge handoff --closes "$(bridge origin)"` -- and a banner on stdout ends
+    up inside the value. Everything human goes to stderr.
+
+    Exit 1 with empty stdout when the session did not come from a handoff,
+    which is the ordinary case: most sessions are started by hand. That is not
+    an error worth reporting loudly, so the caller is expected to ignore it.
+    """
+    session_id = args.session_id or os.environ.get("CLAUDE_CODE_SESSION_ID")
+    if not session_id:
+        print("bridge origin: no session id; pass --session-id or set "
+              "CLAUDE_CODE_SESSION_ID", file=sys.stderr)
+        return 2
+
+    query = urllib.parse.urlencode({"session_id": session_id})
+    try:
+        status, body = _request("GET", f"{_base(cfg)}/api/origin?{query}")
+    except Exception as exc:  # noqa: BLE001
+        print(f"bridge origin: panel unreachable "
+              f"({type(exc).__name__}: {exc})", file=sys.stderr)
+        return 1
+    if status == 204 or not body:
+        print(f"bridge origin: session {session_id[:8]} did not come from a "
+              f"queued handoff", file=sys.stderr)
+        return 1
+
+    print(f"bridge: this session continues {body.get('summary') or 'a handoff'}",
+          file=sys.stderr)
+    sys.stdout.write(body["id"])
     return 0
 
 
@@ -635,6 +676,15 @@ def build_parser() -> argparse.ArgumentParser:
     h.add_argument("--session-id")
     h.add_argument("--model")
     h.add_argument("--effort")
+    h.add_argument("--closes",
+                   help="the handoff id this session continues; see "
+                        "`bridge origin`")
+    h.add_argument("--outcome", choices=("done", "partial", "dropped"),
+                   help="what became of the handoff named by --closes")
+    h.add_argument("--kind", choices=("next", "blocked", "parked"),
+                   default="next",
+                   help="next: the real continuation (default); blocked: needs "
+                        "a human first; parked: deliberately deferred")
 
     la = sub.add_parser("launch", help="launch the queued prompt as a session")
     la.add_argument("--project")
@@ -670,6 +720,13 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--permission-mode",
                    choices=("acceptEdits", "auto", "bypassPermissions",
                             "manual", "dontAsk", "plan"))
+
+    o = sub.add_parser(
+        "origin",
+        help="print the id of the handoff this session was launched from",
+    )
+    o.add_argument("--session-id",
+                   help="defaults to $CLAUDE_CODE_SESSION_ID")
 
     n = sub.add_parser("next", help="print the queued prompt to stdout")
     n.add_argument("--project")
@@ -723,6 +780,7 @@ HANDLERS = {
     "handoff": cmd_handoff,
     "launch": cmd_launch,
     "resume": cmd_resume,
+    "origin": cmd_origin,
     "next": cmd_next,
     "status": cmd_status,
     "update": cmd_update,

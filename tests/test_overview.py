@@ -1196,3 +1196,103 @@ def test_the_overview_states_the_truncation_and_links_to_the_full_list(tmp_path)
     assert "Showing 3 of 5" in html
     assert 'href="/projects?filter=needs_attention"' in html
     store.close()
+
+
+# --- handoff kinds: the inbox ------------------------------------------------
+
+
+NO_GIT = GitState(status="not_a_repo")
+
+
+def _kind_store(tmp_path):
+    return Store(tmp_path / "overview.db")
+
+
+def _queue(store, path, hid, *, kind=None, created_at=100):
+    pid = store.upsert_project(path, "p")
+    store.create_handoff(
+        Handoff(id=hid, project_path=path, next_prompt="go",
+                summary=f"summary for {hid}", kind=kind, created_at=created_at),
+        pid,
+    )
+    return pid
+
+
+def _first(store, tmp_path):
+    model = build_overview(store, _cfg(tmp_path), probe_fn=lambda p: NO_GIT)
+    return model.attention[0] if model.attention else None
+
+
+def test_a_blocked_handoff_is_a_different_ask_not_a_different_style(tmp_path):
+    """`handoff` means a session can carry this on. `blocked_handoff` means
+    nothing can proceed until a person does something. Rendering them alike is
+    what leaves a decision needing a human sitting in a queue labelled
+    'ready to continue'."""
+    store = _kind_store(tmp_path)
+    _queue(store, str(tmp_path), "h", kind="blocked")
+
+    item = _first(store, tmp_path)
+
+    assert item.kind == "blocked_handoff"
+    assert item.primary_action.label == "See what is needed"
+    assert item.meta["kind"] == "blocked"
+    store.close()
+
+
+def test_an_ordinary_handoff_is_unchanged_by_kinds(tmp_path):
+    """The counterpart that stops the test above from passing on everything."""
+    store = _kind_store(tmp_path)
+    _queue(store, str(tmp_path), "h", kind="next")
+
+    item = _first(store, tmp_path)
+
+    assert item.kind == "handoff"
+    assert item.primary_action.label == "Continue in Terminal"
+    store.close()
+
+
+def test_a_handoff_captured_before_kinds_existed_reads_as_next(tmp_path):
+    """NULL is not a fourth category. Every handoff written before this column
+    was a `next`, because nothing else existed to be."""
+    store = _kind_store(tmp_path)
+    _queue(store, str(tmp_path), "h")
+    store.conn.execute("UPDATE handoffs SET kind=NULL WHERE id='h'")
+
+    assert _first(store, tmp_path).kind == "handoff"
+    store.close()
+
+
+def test_a_project_whose_only_queued_work_is_parked_asks_for_nothing(tmp_path):
+    """Parked was deferred on purpose. A project sitting in the attention list
+    that nobody intends to act on is how the list stops being read at all."""
+    store = _kind_store(tmp_path)
+    _queue(store, str(tmp_path), "h", kind="parked")
+
+    assert _first(store, tmp_path) is None
+    store.close()
+
+
+def test_blocked_outranks_next_even_when_next_is_newer(tmp_path):
+    """`queued_handoffs` is newest-first, so without the ranking the freshest
+    prompt always wins -- and the one item that cannot be resolved by starting
+    a session would be the one hidden behind it."""
+    store = _kind_store(tmp_path)
+    path = str(tmp_path)
+    _queue(store, path, "blocked-one", kind="blocked", created_at=100)
+    _queue(store, path, "next-one", kind="next", created_at=999)
+
+    item = _first(store, tmp_path)
+
+    assert item.meta["handoff_id"] == "blocked-one"
+    assert item.meta["handoff_count"] == 2, "the others are still a magnitude"
+    store.close()
+
+
+def test_a_parked_handoff_never_outranks_real_work(tmp_path):
+    store = _kind_store(tmp_path)
+    path = str(tmp_path)
+    _queue(store, path, "parked-one", kind="parked", created_at=999)
+    _queue(store, path, "next-one", kind="next", created_at=100)
+
+    assert _first(store, tmp_path).meta["handoff_id"] == "next-one"
+    store.close()

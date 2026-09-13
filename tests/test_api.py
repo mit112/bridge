@@ -851,6 +851,148 @@ def test_the_git_fingerprint_survives_a_database_loss(tmp_path):
     store2.close()
 
 
+# --- the thread: which handoff a session came from, and what became of it ----
+
+
+def test_origin_finds_the_handoff_a_session_was_launched_from(handoff_app):
+    """A session launched from a handoff receives that handoff's TEXT and
+    nothing else -- no id, no provenance. Without this it cannot report back on
+    the thing it was asked to do, because it cannot name it."""
+    c, store, _ = handoff_app
+    pid = c.post("/api/handoff", json=body("h1")).json()["project_id"]
+    store.create_launch(Launch(id="l1", project_id=pid, handoff_id="h1",
+                               session_id="sess-abc", mode="terminal",
+                               prompt="p", launched_at=10))
+
+    r = c.get("/api/origin", params={"session_id": "sess-abc"})
+
+    assert r.status_code == 200
+    assert r.json()["id"] == "h1"
+
+
+def test_origin_is_204_for_a_session_nobody_launched(handoff_app):
+    """The ordinary case: most sessions are started by hand. Not an error."""
+    c, _, _ = handoff_app
+    assert c.get("/api/origin", params={"session_id": "nope"}).status_code == 204
+
+
+def test_origin_matches_a_background_launch_by_its_short_id(handoff_app):
+    """`claude --bg` mints its own session id and prints only an 8-hex handle,
+    so the row exists under `short_id` before it exists under `session_id`. A
+    session asking early must still find itself."""
+    c, store, _ = handoff_app
+    pid = c.post("/api/handoff", json=body("h1")).json()["project_id"]
+    store.create_launch(Launch(id="l1", project_id=pid, handoff_id="h1",
+                               session_id=None, mode="background",
+                               prompt="p", launched_at=10))
+    store.set_launch_session("l1", None, "deadbeef")
+
+    r = c.get("/api/origin", params={"session_id": "deadbeef-1111-4222-8333-444455556666"})
+
+    assert r.status_code == 200
+    assert r.json()["id"] == "h1"
+
+
+def test_origin_returns_the_most_recent_launch_of_a_relaunched_session(handoff_app):
+    """One session id can appear on more than one launch row. The newest is the
+    one that produced the session now asking."""
+    c, store, _ = handoff_app
+    pid = c.post("/api/handoff", json=body("old")).json()["project_id"]
+    c.post("/api/handoff", json=body("new", session_id="sess-2"))
+    for lid, hid, at in (("l1", "old", 10), ("l2", "new", 99)):
+        store.create_launch(Launch(id=lid, project_id=pid, handoff_id=hid,
+                                   session_id="sess-abc", mode="terminal",
+                                   prompt="p", launched_at=at))
+
+    assert c.get("/api/origin", params={"session_id": "sess-abc"}
+                 ).json()["id"] == "new"
+
+
+def test_a_handoff_records_the_thread_it_continues(handoff_app):
+    """Both fields land on the CHILD. The parent row is never written to, so a
+    thread costs no cross-row update and no second journal record type."""
+    c, store, _ = handoff_app
+    c.post("/api/handoff", json=body("parent"))
+
+    c.post("/api/handoff", json=body("child", session_id="sess-2",
+                                     parent_handoff_id="parent",
+                                     parent_outcome="partial"))
+
+    child = store.get_handoff("child")
+    assert child["parent_handoff_id"] == "parent"
+    assert child["parent_outcome"] == "partial"
+    assert store.get_handoff("parent")["status"] == "queued", "parent untouched"
+
+
+def test_an_outcome_with_no_handoff_to_judge_is_refused(handoff_app):
+    """A verdict that cannot be attached to what it judged is not storable data,
+    and 422 at the edge beats a row nothing can ever interpret."""
+    c, _, _ = handoff_app
+    r = c.post("/api/handoff", json=body("h1", parent_outcome="done"))
+    assert r.status_code == 422
+
+
+def test_an_unknown_outcome_is_refused(handoff_app):
+    """A closed set, unlike model/effort. A typo'd fourth value would render as
+    itself and silently become a category nothing counts."""
+    c, _, _ = handoff_app
+    r = c.post("/api/handoff", json=body("h1", parent_handoff_id="p",
+                                         parent_outcome="mostly"))
+    assert r.status_code == 422
+
+
+def test_the_thread_survives_a_database_loss(tmp_path):
+    """Same rebuild path the fingerprint takes, for the same reason: the journal
+    is what `rm ~/.bridge/bridge.db` leaves behind, and a thread that vanished
+    there would take every verdict in the project's history with it."""
+    cfg = load({"db_path": tmp_path / "t.db", "spool_dir": tmp_path / "spool"})
+    store = Store(cfg.db_path)
+    c = TestClient(create_app(store, cfg))
+    c.post("/api/handoff", json=body("parent"))
+    c.post("/api/handoff", json=body("child", session_id="s2",
+                                     parent_handoff_id="parent",
+                                     parent_outcome="done"))
+    store.close()
+
+    cfg.db_path.unlink()
+    for suffix in ("-wal", "-shm"):
+        Path(str(cfg.db_path) + suffix).unlink(missing_ok=True)
+
+    store2 = Store(cfg.db_path)
+    spool.rebuild_if_empty(store2, cfg.spool_dir)
+    child = store2.get_handoff("child")
+    assert child["parent_handoff_id"] == "parent"
+    assert child["parent_outcome"] == "done"
+    store2.close()
+
+
+def test_the_history_row_carries_its_parents_summary(handoff_app):
+    """So the history table names the thread without a query per row."""
+    c, store, _ = handoff_app
+    pid = c.post("/api/handoff", json=body("parent", summary="Built the CLI")
+                 ).json()["project_id"]
+    c.post("/api/handoff", json=body("child", session_id="s2",
+                                     parent_handoff_id="parent",
+                                     parent_outcome="done"))
+
+    rows = {r["id"]: r for r in store.handoffs(pid)}
+    assert rows["child"]["parent_summary"] == "Built the CLI"
+    assert rows["parent"]["parent_summary"] is None
+
+
+def test_a_dangling_parent_pointer_still_renders_its_row(handoff_app):
+    """The pointer is deliberately not a foreign key: a pruned parent must leave
+    a thread that renders unnamed, not a row that cannot be read."""
+    c, store, _ = handoff_app
+    pid = c.post("/api/handoff", json=body("child", parent_handoff_id="gone",
+                                           parent_outcome="dropped")
+                 ).json()["project_id"]
+
+    row = store.handoffs(pid)[0]
+    assert row["parent_handoff_id"] == "gone"
+    assert row["parent_summary"] is None
+
+
 def test_a_queued_prompt_is_html_escaped_on_the_card(handoff_app):
     """A prompt is arbitrary text and routinely contains markup.
 

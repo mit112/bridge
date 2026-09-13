@@ -19,6 +19,17 @@ from bridge import launcher, spool
 
 HandoffStatus = Literal["queued", "consumed", "dismissed", "superseded"]
 
+# What a session reports about the handoff it was launched from. A closed set,
+# unlike `model`/`effort`: this one is only ever written by the skill, it is
+# rendered as a verdict, and a typo'd fourth value would render as itself and
+# quietly become a category nothing counts.
+HandoffOutcome = Literal["done", "partial", "dropped"]
+
+# What a handoff IS. `blocked` is the one that earns this field: before it,
+# anything needing a human -- an auth decision, a purchase, a credential -- had
+# nowhere to live and ended up outside Bridge entirely.
+HandoffKind = Literal["next", "blocked", "parked"]
+
 # Three values, not two. `archived` is what `config.toml` seeds for a directory
 # that is gone; `hidden` is what the panel's own control writes; `active`
 # restores either. They filter identically in `Store.projects`, which whitelists
@@ -46,6 +57,21 @@ class HandoffIn(BaseModel):
     created_head: str | None = None
     created_dirty: int | None = None
     created_ahead: int | None = None
+    # The thread link. `parent_outcome` without `parent_handoff_id` is a verdict
+    # on nothing, so the validator below rejects it rather than storing a claim
+    # that can never be attached to what it judged.
+    parent_handoff_id: str | None = None
+    parent_outcome: HandoffOutcome | None = None
+    kind: HandoffKind | None = None
+
+    @model_validator(mode="after")
+    def _an_outcome_needs_something_to_be_about(self):
+        if self.parent_outcome is not None and not self.parent_handoff_id:
+            raise ValueError(
+                "parent_outcome needs parent_handoff_id: an outcome with no "
+                "handoff to attach it to is a verdict on nothing"
+            )
+        return self
 
     @field_validator("id")
     @classmethod
