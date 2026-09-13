@@ -848,6 +848,21 @@ def test_handoff_outside_a_git_repo_records_no_fingerprint_and_still_succeeds(
     assert posted["created_branch"] is None and posted["created_head"] is None
 
 
+def test_the_fingerprint_probe_degrades_rather_than_raising(monkeypatch, tmp_path):
+    """Asserted on `_git_fingerprint` directly, not through `cmd_handoff`.
+
+    `cmd_handoff` wraps the call in a catch-all, so a probe that raised would
+    still produce a successful capture -- and a test routed through it passes
+    with this handler deleted, proving only that the outer net exists. The
+    handler here is what keeps ONE failing git command from discarding the
+    other three."""
+    monkeypatch.setattr(cli, "GIT", "/nonexistent/git")
+    repo = tmp_path / "anywhere"
+    repo.mkdir()
+
+    assert cli._git_fingerprint(str(repo)) == {}
+
+
 def test_a_broken_git_never_fails_a_capture(monkeypatch, tmp_path, fake_server):
     """The whole point of the surrounding try/except. `bridge handoff` holds the
     only copy of something the session is about to throw away, so no probe may

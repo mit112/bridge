@@ -75,7 +75,7 @@
     "old": "        except (OSError, subprocess.SubprocessError):\n            return None",
     "new": "        except ZeroDivisionError:\n            return None",
     "tests": [
-      "tests/test_cli.py::test_a_broken_git_never_fails_a_capture"
+      "tests/test_cli.py::test_the_fingerprint_probe_degrades_rather_than_raising"
     ],
     "expect_count": 1
   },
@@ -85,6 +85,7 @@
     "old": "        g.head = head_out.strip() if code == 0 else None",
     "new": "        g.head = None",
     "tests": [
+      "tests/test_gitprobe.py::test_probe_reports_the_full_head_sha",
       "tests/test_cards.py::test_drift_reaches_the_card_from_the_git_this_build_already_probed"
     ],
     "expect_count": 1

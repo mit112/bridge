@@ -46,8 +46,16 @@ def test_a_row_predating_the_migration_reports_no_drift_rather_than_raising():
 @pytest.mark.parametrize("status", ["not_a_repo", "unavailable"])
 def test_an_unreadable_repo_reports_no_drift(status):
     """`unavailable` means the probe failed. Reporting "nothing moved" from a
-    failed read asserts something nobody observed."""
-    assert drift.compare(row(), GitState(status=status)) is None
+    failed read asserts something nobody observed.
+
+    The state carries a branch and head that DIFFER from the fingerprint, on
+    purpose. With the defaults (`branch=None`, `head=None`) this passes with the
+    status check deleted -- the comparison finds nothing to compare and returns
+    None for the wrong reason. Populated, the status check is the only thing
+    that can produce None.
+    """
+    unreadable = GitState(status=status, branch="main", head=NEW)
+    assert drift.compare(row(), unreadable) is None
 
 
 def test_an_unchanged_repo_reports_no_drift():

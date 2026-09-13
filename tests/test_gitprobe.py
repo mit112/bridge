@@ -36,6 +36,29 @@ def test_clean_repo(repo):
     assert g.oldest_uncommitted_at is None
 
 
+def test_probe_reports_the_full_head_sha(repo):
+    """`drift` compares a handoff's recorded HEAD against this one, so it has to
+    be the real sha and not a summary line. Asserted against `rev-parse` rather
+    than a shape check: a 40-char string that is the WRONG commit would satisfy
+    a regex and silently make every drift comparison lie."""
+    expected = subprocess.run([GIT, "rev-parse", "HEAD"], cwd=repo,
+                              capture_output=True, text=True).stdout.strip()
+
+    assert probe(repo).head == expected
+
+
+def test_a_repo_with_no_commits_has_no_head_but_still_probes(tmp_path):
+    """`rev-parse HEAD` exits non-zero before the first commit. That is an
+    ordinary state, not a probe failure, so it must not cost the whole reading."""
+    d = tmp_path / "empty"
+    d.mkdir()
+    run(d, "init", "-q")
+
+    g = probe(d)
+    assert g.status == "ok"
+    assert g.head is None
+
+
 def test_dirty_repo_counts_and_ages(repo):
     (repo / "a.txt").write_text("changed\n")
     (repo / "b.txt").write_text("new\n")
