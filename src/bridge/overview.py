@@ -62,12 +62,17 @@ LIVE_ATTENTION = {
 }
 
 
-# Which queued handoff a project leads with, most urgent first. `blocked` needs
-# a person and outranks work a session could simply pick up; `parked` was
-# deferred on purpose and is last. A handoff captured before `kind` existed has
-# None, which is read as `next` -- that is what it was, since nothing else
-# existed to be.
-KIND_RANK = {"blocked": 0, "next": 1, None: 1, "parked": 2}
+# Which queued handoff a project leads with, most urgent first. Only `blocked`
+# vs `next` is ever actually compared -- `parked` is filtered out before the
+# sort -- but it is ranked anyway so the table reads as the full vocabulary
+# rather than a two-case special case.
+#
+# There is deliberately no `None` key. A handoff captured before `kind` existed
+# has one, and the `.get` default below is what reads it as `next` -- which is
+# what it was, since nothing else existed to be. An explicit `None: 1` entry
+# said the same thing twice and could not be falsified: removing it changed no
+# behaviour, which is the definition of a line not worth keeping.
+KIND_RANK = {"blocked": 0, "next": 1, "parked": 2}
 
 
 def _featured_handoff(handoffs: list[dict]) -> dict | None:

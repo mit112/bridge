@@ -65,7 +65,8 @@
     "old": "    actionable = [h for h in handoffs if (h.get(\"kind\") or \"next\") != \"parked\"]",
     "new": "    actionable = list(handoffs)",
     "tests": [
-      "tests/test_overview.py::test_a_project_whose_only_queued_work_is_parked_asks_for_nothing"
+      "tests/test_overview.py::test_a_project_whose_only_queued_work_is_parked_asks_for_nothing",
+      "tests/test_overview.py::test_a_legacy_null_kind_outranks_parked_rather_than_sorting_below_it"
     ],
     "expect_count": 1
   },
@@ -76,17 +77,6 @@
     "new": "    return actionable[0]",
     "tests": [
       "tests/test_overview.py::test_blocked_outranks_next_even_when_next_is_newer"
-    ],
-    "expect_count": 1
-  },
-  {
-    "name": "a handoff with no kind becomes its own fourth category",
-    "file": "src/bridge/overview.py",
-    "old": "KIND_RANK = {\"blocked\": 0, \"next\": 1, None: 1, \"parked\": 2}",
-    "new": "KIND_RANK = {\"blocked\": 0, \"next\": 1, None: 3, \"parked\": 2}",
-    "tests": [
-      "tests/test_overview.py::test_a_legacy_null_kind_outranks_parked_rather_than_sorting_below_it",
-      "tests/test_overview.py::test_a_handoff_captured_before_kinds_existed_reads_as_next"
     ],
     "expect_count": 1
   }
