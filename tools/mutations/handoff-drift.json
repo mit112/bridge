@@ -1,0 +1,92 @@
+[
+  {
+    "name": "treat a missing fingerprint as 'nothing changed' rather than 'nothing known'",
+    "file": "src/bridge/drift.py",
+    "old": "    if branch_then and git.branch and branch_then != git.branch:",
+    "new": "    if git.branch and branch_then != git.branch:",
+    "tests": [
+      "tests/test_drift.py::test_a_handoff_with_no_fingerprint_reports_no_drift"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "compare against a repo the probe could not read",
+    "file": "src/bridge/drift.py",
+    "old": "    if git is None or git.status != \"ok\":\n        return None",
+    "new": "    if git is None:\n        return None",
+    "tests": [
+      "tests/test_drift.py::test_an_unreadable_repo_reports_no_drift"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "a row predating the migration raises instead of reporting no drift",
+    "file": "src/bridge/drift.py",
+    "old": "    except (KeyError, IndexError):",
+    "new": "    except ZeroDivisionError:",
+    "tests": [
+      "tests/test_drift.py::test_a_row_predating_the_migration_reports_no_drift_rather_than_raising"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "the preamble replaces the authored prompt instead of preceding it",
+    "file": "src/bridge/routes_handoffs.py",
+    "old": "                prompt = drift.preamble(moved) + prompt",
+    "new": "                prompt = drift.preamble(moved)",
+    "tests": [
+      "tests/test_api.py::test_a_drifted_handoff_launches_with_a_preamble_naming_what_moved"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "prepend the preamble to every launch, drifted or not",
+    "file": "src/bridge/routes_handoffs.py",
+    "old": "            moved = drift.compare(handoff, cached[0] if cached else None)\n            if moved:",
+    "new": "            moved = drift.compare(handoff, cached[0] if cached else None) or {\"branch_then\": \"x\", \"branch_now\": \"y\"}\n            if moved:",
+    "tests": [
+      "tests/test_api.py::test_an_undrifted_handoff_launches_the_authored_bytes_untouched"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "drop the fingerprint from the INSERT, so it dies with the database",
+    "file": "src/bridge/store.py",
+    "old": "                    h.created_branch, h.created_head, h.created_dirty, h.created_ahead,",
+    "new": "                    None, None, None, None,",
+    "tests": [
+      "tests/test_api.py::test_the_git_fingerprint_survives_a_database_loss"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "capture the fingerprint server-side timing by dropping the CLI probe",
+    "file": "src/bridge/cli.py",
+    "old": "        fingerprint = _git_fingerprint(project_path)",
+    "new": "        fingerprint = {}",
+    "tests": [
+      "tests/test_cli.py::test_handoff_captures_the_branch_and_head_it_was_written_against"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "let a broken git abort the capture instead of degrading",
+    "file": "src/bridge/cli.py",
+    "old": "        except (OSError, subprocess.SubprocessError):\n            return None",
+    "new": "        except ZeroDivisionError:\n            return None",
+    "tests": [
+      "tests/test_cli.py::test_a_broken_git_never_fails_a_capture"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "stop collecting HEAD, so nothing can ever be compared against it",
+    "file": "src/bridge/gitprobe.py",
+    "old": "        g.head = head_out.strip() if code == 0 else None",
+    "new": "        g.head = None",
+    "tests": [
+      "tests/test_cards.py::test_drift_reaches_the_card_from_the_git_this_build_already_probed"
+    ],
+    "expect_count": 1
+  }
+]
