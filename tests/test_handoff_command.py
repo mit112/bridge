@@ -55,14 +55,24 @@ def bound_port() -> tuple[socket.socket, int]:
 
 
 def command_template() -> str:
-    """The first bash block in the command file is the handoff invocation."""
+    """The bash block in the command file that invokes `bridge handoff`.
+
+    Located by content, not by position. The file grew a `## 0. Probe` block of
+    read-only `git` commands ahead of the invocation, and "the first bash block"
+    silently became the wrong one -- a locator that keeps finding *a* block is
+    exactly how this suite would go on passing while testing nothing. Requiring
+    exactly one match is what keeps that failure loud if a second invocation is
+    ever documented.
+    """
     md = (REPO / "commands" / "handoff.md").read_text()
     blocks = re.findall(r"```bash\n(.*?)```", md, re.S)
     assert blocks, "commands/handoff.md has no bash block"
-    assert "bridge handoff" in blocks[0], (
-        f"the first bash block is no longer the handoff invocation: {blocks[0][:80]}"
+    invocations = [b for b in blocks if "bridge handoff" in b]
+    assert len(invocations) == 1, (
+        f"expected exactly one `bridge handoff` bash block, found "
+        f"{len(invocations)} among {len(blocks)} blocks"
     )
-    return blocks[0]
+    return invocations[0]
 
 
 @pytest.fixture
