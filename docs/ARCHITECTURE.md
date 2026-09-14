@@ -193,10 +193,43 @@ loss for them means replaying their own journal, not re-scanning transcripts.
    spawning, so a session is correlatable even if the spawn fails. On the next
    scan the indexer links the launch to its transcript, closing the loop:
    queued prompt → running session → completed session → next handoff.
+6. That next session asks `GET /api/origin` which handoff it came from — the
+   `launches` row from step 5 is the only thing that knows — and records the
+   answer on the handoff it writes, as `parent_handoff_id` + `parent_outcome`.
+   Both live on the **child**: a thread then needs no cross-row write and no
+   second journal record type, and the verdict sits on the record of the session
+   actually making the claim.
 
 There is deliberately **no Stop hook** for automatic capture: it would fire on
 every stop regardless of whether the session reached a meaningful boundary, and
 fill the store with junk. Capture is an explicit act.
+
+### Three launch modes, two vocabularies
+
+`terminal` opens a new Terminal window via `osascript`; `background` runs
+`claude --bg`; `exec` spawns **nothing** — it records the launch and returns
+argv, which `bridge resume` then `execv`s in the terminal the caller is already
+sitting in. The panel stays the single authority on how a session is
+constructed even though it is not the process that starts one.
+
+`launcher.MODES` therefore differs from `launcher.SCHEDULABLE_MODES`. A
+*scheduled* `exec` run would consume its handoff and record a `started` launch
+for a session running nowhere, because at the scheduled moment the caller that
+would exec it is long gone.
+
+### Drift
+
+A handoff states a branch and a commit as fact, and both were true when it was
+written. The CLI stamps the branch/HEAD/dirty/ahead it observed at capture —
+client-side, because a handoff routinely spools while the panel is down and
+drains hours later, so a server-side probe would record the repo as it was at
+*ingest*. `drift.compare` reads that fingerprint against the git state the card
+build already probed (no subprocess of its own), and the same sentence is both
+rendered on the card and prepended to the bytes a drifted launch runs.
+
+Absence is never read as stillness: a handoff captured before the fingerprint
+existed, one from a directory that is not a repo, and one whose repo the panel
+cannot currently read all produce no drift rather than an empty one.
 
 ## Durability
 
