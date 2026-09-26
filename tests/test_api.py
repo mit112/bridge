@@ -93,29 +93,6 @@ def test_overview_renders_stable_freshness_and_total_hooks(client):
     assert 'data-server=' in html
 
 
-def test_workspace_current_tab_carries_the_live_and_burn_leaf_hooks(client):
-    """These per-project leaves moved off `/` with the mega-dashboard's own
-    cards; `_workspace_current.html` (via the shared `live_status`/
-    `token_burn` macros) is their only remaining renderer.
-
-    NOTE: `data-git-branch`/`-dirty`/`-ahead`/`-stale`/`-cache` are NOT in
-    this list. `_card.html` was their only renderer, and it retires with this
-    task -- but `_workspace_current.html`'s own git block (Milestone 3's UI
-    extraction) never carried those `data-*` hooks in the first place, hand-
-    rolling plain `<span>{{ git.branch }}</span>` markup instead. That gap
-    predates this task; deleting `_card.html` only makes it total (repo-wide,
-    not one page short). Fixing it means adding hooks to
-    `_workspace_current.html`, which is out of this task's stage list --
-    flagged for Task 2.4 (live.js's own leaf-patch guards) or a follow-up."""
-    c, _, pid = client
-    html = c.get(f"/project/{pid}?tab=current").text
-    for hook in (
-        "data-live-status", "data-burn-today", "data-burn-last-5h",
-        "data-sparkline",
-    ):
-        assert hook in html
-
-
 def test_dashboard_renders_with_zero_projects(tmp_path):
     cfg = load({"db_path": tmp_path / "empty.db", "spool_dir": tmp_path / "spool"})
     store = Store(cfg.db_path)

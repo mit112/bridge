@@ -726,30 +726,6 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
 .card__session { margin-bottom: .9rem; }
 .card__session h3 { font-size: .95rem; font-weight: 600; margin: 0 0 .2rem; }
 .card__session time { color: var(--muted); font-size: .8rem; }
-.live {
-  display: flex;
-  align-items: baseline;
-  gap: .4rem;
-  margin: 0 0 .7rem;
-  color: var(--muted);
-  font-family: var(--font-mono);
-  font-size: .78rem;
-  font-variant-numeric: tabular-nums;
-}
-.live__dot { color: var(--muted); font-size: .7em; }
-.live--busy,
-.live--working { color: var(--fg); font-weight: 600; }
-.live--busy .live__dot,
-.live--working .live__dot { color: var(--run); }
-.live--idle,
-.live--waiting,
-.live--unknown,
-.live--ended { color: var(--muted); }
-.card__git, .card__burn {
-  margin: .35rem 0 0; font-size: .85rem; color: var(--muted);
-  display: flex; gap: .75rem; flex-wrap: wrap;
-  font-variant-numeric: tabular-nums;
-}
 .risk {
   color: var(--risk-fg); background: var(--risk-bg);
   padding: .05rem .4rem; border-radius: 3px; font-weight: 600;
@@ -1013,14 +989,6 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
 .status--failed,
 .status--indeterminate,
 .status--missed { color: var(--risk-fg); font-weight: 700; }
-
-/* --- Detail page: collects what the card build already probed -------------- */
-
-/* Reuses the card's `.card__git` flex strip; only the page-level spacing and
-   the commit line's prominence differ. The commit summary is content, not
-   metadata, so it steps back up to `--fg` out of the muted strip. */
-.detail-git { margin: 0 0 1.2rem; }
-.detail-git__commit { color: var(--fg); }
 
 /* --- Milestone 3: the Project workspace (`/project/{id}`) ------------------ */
 
@@ -1700,7 +1668,6 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
 .unattributed li {
   display: flex; align-items: center; gap: .6rem; padding: .25rem 0;
 }
-.unattributed .live { margin: 0; }
 .unattributed code { font-family: var(--font-mono); font-size: .8rem; }
 
 /* --- Hidden projects -------------------------------------------------------- */

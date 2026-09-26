@@ -1141,31 +1141,9 @@ LIVE_JS = Path(__file__).resolve().parent.parent / "src" / "bridge" / "static" /
 LIVE_HARNESS = """
 globalThis.window = globalThis;
 globalThis.CSS = { escape: (s) => s };
-const bands = {};
-const cards = {};
-function card(id) {
-  if (!cards[id]) {
-    const classes = new Set(["live", "live--unknown"]);
-    bands[id] = {
-      textContent: "",
-      classList: {
-        add: (...names) => names.forEach((name) => classes.add(name)),
-        remove: (...names) => names.forEach((name) => classes.delete(name)),
-        values: () => [...classes],
-      },
-      closest: () => null,
-    };
-    cards[id] = { querySelector: (sel) => (sel === "[data-live-status]" ? bands[id] : null) };
-  }
-  return cards[id];
-}
-card("one");
 globalThis.document = {
   addEventListener() {},
-  querySelector: (sel) => {
-    const m = /\\[data-project-card="(.*)"\\]/.exec(sel);
-    return m && cards[m[1]] ? cards[m[1]] : null;
-  },
+  querySelector: () => null,
 };
 let listeners = {};
 let closed = 0;
@@ -1183,17 +1161,15 @@ window.setTimeout = globalThis.setTimeout;
 const fs = require("fs");
 eval(fs.readFileSync(process.argv[2], "utf8"));
 
-const result = { errors: [] };
+const result = { errors: [], frames: [] };
 const origError = console.error;
 console.error = (...a) => result.errors.push(String(a[0]));
+// The fan-out liverefresh.js subscribes to: what every other surface sees.
+window.bridgeLive.onFrame((payload) => result.frames.push(payload.kind));
 
 SCRIPT
 
 console.error = origError;
-result.bands = Object.fromEntries(
-  Object.entries(bands).map(([k, v]) => [k, v.textContent]));
-result.bandClasses = Object.fromEntries(
-  Object.entries(bands).map(([k, v]) => [k, v.classList.values().sort()]));
 result.closed = closed;
 result.constructed = constructed;
 result.delays = delays;
@@ -1212,45 +1188,14 @@ def _run_live(tmp_path, script: str) -> dict:
 
 
 @pytest.mark.skipif(_node() is None, reason="node is not installed")
-def test_live_js_patches_a_band_from_a_snapshot(tmp_path):
-    got = _run_live(tmp_path, """
-listeners.snapshot({ data: JSON.stringify(
-  { schema: 1, kind: "snapshot",
-    cards: { one: { live: { available: true, status: "busy", started_at: 1 } } } }) });
-""")
-    assert got["bands"]["one"] == "busy"
-    assert got["bandClasses"]["one"] == ["live", "live--busy"]
-
-
-@pytest.mark.skipif(_node() is None, reason="node is not installed")
-def test_live_js_clears_a_band_when_a_session_goes_away(tmp_path):
-    """Without this the card keeps claiming a session that has ended. The
-    server reports the end as `available: false` with no status, which
-    `patchLive` has to read as "ended" rather than leaving the last live
-    word (and its colour class) on screen."""
-    got = _run_live(tmp_path, """
-listeners.snapshot({ data: JSON.stringify(
-  { schema: 1, kind: "snapshot",
-    cards: { one: { live: { available: true, status: "busy", started_at: 1 } } } }) });
-listeners.delta({ data: JSON.stringify(
-  { schema: 1, kind: "patch",
-    cards: { one: { live: { available: false, status: null, started_at: null } } } }) });
-""")
-    assert got["bands"]["one"] == "ended"
-    assert got["bandClasses"]["one"] == ["live", "live--ended"]
-
-
-@pytest.mark.skipif(_node() is None, reason="node is not installed")
 def test_live_js_skips_a_malformed_frame_and_keeps_going(tmp_path):
     """A bad frame must not kill live updates for the rest of the session."""
     got = _run_live(tmp_path, """
 listeners.snapshot({ data: "{ not json" });
-listeners.snapshot({ data: JSON.stringify(
-  { schema: 1, kind: "snapshot",
-    cards: { one: { live: { available: true, status: "idle", started_at: 1 } } } }) });
+listeners.update({ data: JSON.stringify({ schema: 1, kind: "patch" }) });
 """)
     assert any("malformed" in e for e in got["errors"])
-    assert got["bands"]["one"] == "idle", "the stream stopped after one bad frame"
+    assert got["frames"] == ["patch"], "the stream stopped after one bad frame"
 
 
 @pytest.mark.skipif(_node() is None, reason="node is not installed")
@@ -1273,7 +1218,7 @@ listeners.refresh({ data: "{}" });
 // Two good frames is proof, so the reconnect is immediate.
 const frame = JSON.stringify({ schema: 1, kind: "snapshot", cards: {} });
 listeners.snapshot({ data: frame });
-listeners.delta({ data: frame });
+listeners.update({ data: frame });
 listeners.refresh({ data: "{}" });
 """)
     assert healthy["delays"] == [0], healthy["delays"]
@@ -1325,23 +1270,6 @@ for (const name of ["projects", "running", "queued", "scheduled", "today", "last
 const refreshButton = node();
 const refreshStatus = node();
 
-function card(id) {
-  const root = node({ "data-project-card": String(id) });
-  const leaves = {
-    "[data-live-status]": node(), "[data-live-age]": node(),
-    "[data-live-model]": node(), "[data-live-effort]": node(),
-    "[data-burn-today]": node(),
-    "[data-burn-last-5h]": node(), "[data-sparkline]": node(),
-  };
-  const bandParent = node();
-  leaves["[data-live-status]"].closest = () => bandParent;
-  root.querySelector = (sel) => leaves[sel] || null;
-  root.textarea = { value: `typed ${id}` };
-  return root;
-}
-const cards = [card("1"), card("2")];
-const cardMap = Object.fromEntries(cards.map((item) => [item.getAttribute("data-project-card"), item]));
-
 const selectors = {
   "[data-freshness-strip]": strip, "[data-freshness-label]": label,
   "[data-freshness-age]": age,
@@ -1356,11 +1284,7 @@ selectors['[data-dashboard-total="scheduled"]'].querySelector = () => totals.sch
 
 globalThis.document = {
   addEventListener(type, fn) { if (type === "click") clickHandler = fn; },
-  querySelector(sel) {
-    if (selectors[sel]) return selectors[sel];
-    const cardMatch = /^\[data-project-card="(.*)"\]$/.exec(sel);
-    return cardMatch ? cardMap[cardMatch[1]] : null;
-  },
+  querySelector(sel) { return selectors[sel] || null; },
   // live.js reads totals with querySelectorAll (the Overview renders each one
   // twice), so this has to answer for the same selectors querySelector does or
   // the totals assertions below would pass vacuously against an empty list.
@@ -1379,7 +1303,6 @@ globalThis.fetch = async () => ({ ok: true, json: async () => REFRESH_BODY });
 const fs = require("fs");
 eval(fs.readFileSync(process.argv[2], "utf8"));
 
-const textareaIdentity = cards.map((item) => item.textarea);
 function frame(kind, generation, indexAt, order) {
   return { schema: 1, kind, generated_at: 999999, generation,
     freshness: { server: "available", index_at: indexAt, index_age_seconds: 0 },
@@ -1424,8 +1347,6 @@ setImmediate(() => {
   setImmediate(() => console.log(JSON.stringify({
     stale, fresh: label.textContent, unavailableState,
     announcements,
-    textareaSame: textareaIdentity.every((item, index) => item === cards[index].textarea),
-    textareaValues: textareaIdentity.map((item) => item.value),
     refresh: afterSuccessfulRefresh, totals: totals.today.textContent,
     lastIndex: totals.last_index.textContent,
     stripState: strip.getAttribute("data-freshness-state"),
@@ -1512,18 +1433,6 @@ def test_unavailable_snapshot_is_distinct_from_stale_project(tmp_path):
 
 
 @pytest.mark.skipif(_node() is None, reason="node is not installed")
-def test_dashboard_patch_preserves_card_and_textarea_identity(tmp_path):
-    got = _run_freshness(tmp_path, {})
-    assert got["textareaSame"] is True
-
-
-@pytest.mark.skipif(_node() is None, reason="node is not installed")
-def test_dashboard_patch_preserves_user_edited_textarea_value(tmp_path):
-    got = _run_freshness(tmp_path, {})
-    assert got["textareaValues"] == ["typed 1", "typed 2"]
-
-
-@pytest.mark.skipif(_node() is None, reason="node is not installed")
 def test_refresh_button_posts_and_applies_snapshot(tmp_path):
     got = _run_freshness(tmp_path, {})
     assert got["refresh"] == "Updated"
@@ -1541,11 +1450,9 @@ def test_refresh_button_announces_failure_when_indexing_did_not_complete(tmp_pat
 
 # --- Task 2.4: live.js tolerates the leaf-light Overview DOM ----------------
 #
-# Overview (`/`) renders totals, a freshness strip, and (at most) a live-status
-# word -- it has no `[data-cards-list]`, and the one card-shaped element it
-# might address has none of the `[data-burn-*]`/`[data-sparkline]` leaves
-# `patchBurn` looks for (those hooks have no renderer on the Overview; git is
-# static text in the workspace and has no client-side patcher at all).
+# Overview (`/`) renders totals and a freshness strip, and no per-project
+# element at all -- yet every frame still carries the server's per-card
+# payload, which live.js must ignore rather than trip over.
 # Its freshness strip also never carries `data-generation`/
 # `data-generated-at`: `OverviewModel.freshness` has no server generation
 # counter, so `overview.html`'s call to `freshness_status()` omits both
@@ -1590,18 +1497,9 @@ const totals = {};
 for (const name of ["projects", "running", "queued", "scheduled", "today",
                      "last_5h", "burn_rate", "last_index"]) totals[name] = node();
 
-// One leaf-light card: a live-status word and nothing else. querySelector is
-// a real function (as every actual DOM element's is) that simply has no
-// match for a git/burn/sparkline selector -- the realistic "leaf absent"
-// case, not a missing method.
-const liveWord = node();
-const projectCard = node({ "data-project-card": "1" });
-projectCard.querySelector = (sel) => (sel === "[data-live-status]" ? liveWord : null);
-
 const selectors = {
   "[data-freshness-strip]": strip, "[data-freshness-label]": label,
   "[data-freshness-age]": age, "[data-diagnostics-alert]": diagnostics,
-  '[data-project-card="1"]': projectCard,
 };
 for (const [name, value] of Object.entries(totals)) selectors[`[data-dashboard-total="${name}"]`] = value;
 
@@ -1632,16 +1530,12 @@ const frame = {
   topbar: { projects: 1, running: 1, queued: 0, scheduled: 0, today: 1200,
     last_5h: 2400, burn_rate: 480, last_index: 246 },
   diagnostics: { alert: false },
+  // Real git/burn payloads arrive (the server computes them for the shared
+  // envelope liverefresh.js reads) even though nothing here renders them.
   cards: {
-    // Leaf-light card: real git/burn payloads arrive (the server still
-    // computes them for the shared envelope) even though nothing in the DOM
-    // renders them.
     "1": { live: { available: true, status: "busy", started_at: 1 },
            git: { status: "ok", branch: "main", dirty_count: 2 },
            burn: { today: 1200, last_5h: 2400, spark_points: "0,20 72,0" } },
-    // No `[data-project-card="2"]` exists at all -- iterating cards must
-    // tolerate one that is simply not on the page.
-    "2": { live: { available: true, status: "idle", started_at: 1 } },
   },
 };
 
@@ -1656,7 +1550,6 @@ console.log(JSON.stringify({
   threw, errors,
   totalsToday: totals.today.textContent,
   freshnessLabel: label.textContent,
-  liveWordText: liveWord.textContent,
 }));
 '''
 
@@ -1676,16 +1569,14 @@ def _run_overview_dom(tmp_path, frame_kind: str, frame_generation) -> dict:
 
 @pytest.mark.skipif(_node() is None, reason="node is not installed")
 def test_apply_dashboard_update_tolerates_the_leaf_light_overview_dom(tmp_path):
-    """No `[data-cards-list]`, no git/burn/sparkline leaves on the one card
-    that exists, and a second card in the payload with no DOM element at all.
-    A crash here would have taken down the SSE listener for the entire page,
-    not just the missing leaf."""
+    """A frame carrying per-card payloads for a page with no per-project
+    element at all. A crash here would have taken down the SSE listener for
+    the entire page."""
     got = _run_overview_dom(tmp_path, "snapshot", 0)
     assert got["threw"] is None, got["threw"]
     assert got["errors"] == []
     assert got["totalsToday"] == "1k"
     assert got["freshnessLabel"] == "Connected"
-    assert got["liveWordText"] == "busy"
 
 
 @pytest.mark.skipif(_node() is None, reason="node is not installed")
