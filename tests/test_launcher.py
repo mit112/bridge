@@ -922,6 +922,20 @@ def test_a_resolvable_handle_becomes_a_full_session_id(store, cfg, project,
     assert result.note is None
 
 
+def test_the_short_id_lookup_is_bounded_so_a_hung_cli_cannot_hang_the_launch():
+    """`POST /api/launch` waits on this call, so an unbounded `claude agents`
+    that never returns holds the request -- and its worker -- forever. Timing
+    out is just another way of not answering, which the backfill covers."""
+    seen = {}
+
+    def run(argv, **kwargs):
+        seen.update(kwargs)
+        raise subprocess.TimeoutExpired(argv, kwargs.get("timeout"))
+
+    assert launcher.resolve_short_id("deadbeef", CLAUDE, run) is None
+    assert 0 < seen["timeout"] <= 10
+
+
 def test_an_unparseable_background_handle_is_still_started(store, cfg, project,
                                                            fake_claude, monkeypatch):
     """It DID start. Marking it failed would requeue a handoff for a live session."""
