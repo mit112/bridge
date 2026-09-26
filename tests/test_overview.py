@@ -1288,6 +1288,21 @@ def test_a_project_whose_only_queued_work_is_parked_asks_for_nothing(tmp_path):
     store.close()
 
 
+def test_a_parked_only_project_is_not_counted_as_needing_attention(tmp_path):
+    """The tile, the Projects chip and the ladder are the same number by
+    construction -- so the project the ladder leaves out cannot be counted by
+    the tile it headlines. Counting it put "1" above an empty list."""
+    store = _kind_store(tmp_path)
+    _queue(store, str(tmp_path), "h", kind="parked")
+
+    model = build_overview(store, _cfg(tmp_path), probe_fn=lambda p: NO_GIT)
+
+    assert model.attention == []
+    assert model.totals["attention"] == 0
+    assert [r.needs_attention for r in model.recent] == [False]
+    store.close()
+
+
 def test_blocked_outranks_next_even_when_next_is_newer(tmp_path):
     """`queued_handoffs` is newest-first, so without the ranking the freshest
     prompt always wins -- and the one item that cannot be resolved by starting
