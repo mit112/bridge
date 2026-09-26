@@ -12,8 +12,8 @@
   {
     "name": "insert the launches row after the spawn instead of before it",
     "file": "src/bridge/launcher.py",
-    "old": "    prompt_path = write_prompt_file(cfg.launches_dir, session_id, prompt)\n    launch_id = _new_row(store, spec, prompt, project_id, handoff_id, session_id)",
-    "new": "    prompt_path = write_prompt_file(cfg.launches_dir, session_id, prompt)\n    launch_id = str(uuid.uuid4())",
+    "old": "        script = _terminal_script(spec, prompt, session_id, prompt_path, claude)\n    launch_id = _new_row(store, spec, prompt, project_id, handoff_id, session_id)",
+    "new": "        script = _terminal_script(spec, prompt, session_id, prompt_path, claude)\n    launch_id = str(uuid.uuid4())",
     "tests": [
       "tests/test_launcher.py::test_a_launches_row_exists_even_when_the_spawn_fails"
     ],
