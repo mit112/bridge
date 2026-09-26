@@ -166,6 +166,39 @@ def test_serve_journals_the_runs_it_prunes(serve_cfg, tmp_path):
     assert json.loads(records[0].read_text())["status"] == "pruned"
 
 
+def test_serve_rebuilds_the_journal_into_an_empty_database(serve_cfg, tmp_path):
+    """`rm bridge.db` is only safe if something replays the journal, and while a
+    panel is up that cannot be `bridge index`: it defers to `/api/refresh`,
+    which reindexes transcripts and nothing else. Under the LaunchAgent a panel
+    is always up, so the boot is the one place recovery can happen.
+
+    A handoff still sitting in the outbox must not get in the way. The boot
+    drain ingests it, and replay only ever runs into an EMPTY table -- so a
+    drain that ran first would shut recovery out for good.
+    """
+    from bridge import spool
+    from bridge.models import Handoff
+
+    spool_dir = tmp_path / "spool"
+    spool.journal(Handoff(id="journaled", project_path=DEMO, next_prompt="old",
+                          created_at=100), spool_dir)
+    spool.write(Handoff(id="spooled", project_path=DEMO, next_prompt="new",
+                        created_at=200), spool_dir)
+    schedspool.journal(
+        ScheduledRun(id="owed", project_path=DEMO, prompt="p", mode="background",
+                     scheduled_for=2_000_000_000, created_at=100),
+        spool_dir,
+    )
+
+    assert main(["serve"]) == 0
+
+    s = Store(tmp_path / "s.db")
+    assert s.get_handoff("journaled")["next_prompt"] == "old"
+    assert s.get_handoff("spooled")["next_prompt"] == "new"
+    assert s.get_scheduled_run("owed")["status"] == "pending"
+    s.close()
+
+
 def test_index_replays_the_schedule_journal(serve_cfg, tmp_path, capsys):
     schedspool.journal(
         ScheduledRun(
