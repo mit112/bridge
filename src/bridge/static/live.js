@@ -1,8 +1,8 @@
-// Live dashboard updates. Only existing leaves are patched: cards and handoff
-// textareas are server-rendered identity boundaries and are never replaced.
+// Live Overview updates: the totals, the freshness strip and the diagnostics
+// alert, patched in place. Every other surface is kept live by liverefresh.js,
+// which subscribes to this module's frames rather than opening a second
+// EventSource.
 
-const LIVE_STATES = ["busy", "working", "idle", "waiting", "unknown", "ended"];
-const CONNECTION_STATES = ["connected", "reconnecting", "stale", "unavailable"];
 const INDEX_STALE_SECONDS = 45;
 
 function cssValue(value) {
@@ -61,57 +61,6 @@ function setTotal(name, value) {
   }
 }
 
-function setBandState(band, status) {
-  if (!band) return;
-  const state = LIVE_STATES.includes(status) ? status : "unknown";
-  const parent = band.closest ? band.closest("[data-live-parent]") : band.parentNode;
-  const target = parent && parent.classList ? parent : band;
-  if (target.classList && target.classList.remove) {
-    target.classList.remove(...LIVE_STATES.map((name) => `live--${name}`));
-    target.classList.add(`live--${state}`);
-  }
-}
-
-function cardFor(projectId) {
-  return query(`[data-project-card="${cssValue(projectId)}"]`);
-}
-
-// Overview's leaf-light DOM has no per-project git/burn/sparkline leaves (and
-// the workspace renders git as static text, never as these hooks), so every
-// lookup below the card must tolerate a null result -- not just a card that
-// itself does not exist.
-function leaf(card, selector) {
-  return card && card.querySelector ? card.querySelector(selector) : null;
-}
-
-function patchLive(card, live) {
-  if (!card || !live) return;
-  const status = live.status || (live.available ? "unknown" : "ended");
-  const band = leaf(card, "[data-live-status]");
-  setBandState(band, status);
-  setText(band, status);
-  setText(leaf(card, "[data-live-age]"), live.started_at == null ? "" : `· ${live.started_at}`);
-  setText(leaf(card, "[data-live-model]"), live.model ? `· ${live.model}` : "");
-  setText(leaf(card, "[data-live-effort]"), live.effort ? `/${live.effort}` : "");
-}
-
-function patchBurn(card, burn) {
-  if (!card || !burn) return;
-  setText(leaf(card, "[data-burn-today]"), `${formatKilo(burn.today)} today`);
-  setText(leaf(card, "[data-burn-last-5h]"), `${formatKilo(burn.last_5h)} last 5h`);
-  const line = leaf(card, "[data-sparkline]");
-  if (line) line.setAttribute("points", burn.spark_points || "");
-}
-
-function applyCardUpdates(cards) {
-  for (const [projectId, update] of Object.entries(cards || {})) {
-    const card = cardFor(projectId);
-    if (!card) continue;
-    patchLive(card, update.live);
-    patchBurn(card, update.burn);
-  }
-}
-
 let lastGeneration = null;
 let lastIndexAt = null;
 let lastConnectionState = null;
@@ -147,7 +96,7 @@ function connectionState(server, nowSeconds) {
 
 // Sentence case, matching `_shell.html`'s `{{ state | capitalize }}`. The state
 // itself stays lowercase everywhere it is machine-read (the attribute below,
-// CONNECTION_STATES, CSS); this is the visible word only.
+// CSS); this is the visible word only.
 function stateLabel(state) {
   const text = String(state || "");
   return text ? text.charAt(0).toUpperCase() + text.slice(1) : "";
@@ -226,7 +175,6 @@ function applyDashboardUpdate(update) {
   // a raw epoch, so writing it would replace "3m ago" with "1785754250" on the
   // first tick. Index time changes rarely, so it stays server-rendered until a
   // reload rather than being reformatted client-side.
-  if (update.cards) applyCardUpdates(update.cards);
   if (update.diagnostics && update.diagnostics.alert != null) {
     setHidden(query("[data-diagnostics-alert]"), !update.diagnostics.alert);
   }
@@ -330,7 +278,6 @@ function connect() {
 
   source.addEventListener("snapshot", handle);
   source.addEventListener("update", handle);
-  source.addEventListener("delta", handle);
   source.addEventListener("refresh", () => {
     source.close();
     const delay = healthy(frames, openedAt) ? 0 : backoffMs;

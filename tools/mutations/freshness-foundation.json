@@ -33,14 +33,6 @@
       "expect_count": 1
     },
     {
-      "name": "write a live update into a handoff textarea instead of preserving its user value",
-      "file": "src/bridge/static/live.js",
-      "old": "  setText(band, status);",
-      "new": "  card.textarea.value = status;",
-      "tests": ["tests/test_static_js.py::test_dashboard_patch_preserves_user_edited_textarea_value"],
-      "expect_count": 1
-    },
-    {
       "name": "remove the POST refresh fetch path so the labeled action cannot update the page",
       "file": "src/bridge/static/live.js",
       "old": "  return fetch(\"/api/refresh\", { method: \"POST\" })",

@@ -121,10 +121,10 @@
     "expect_count": 1
   },
   {
-    "name": "patch the card by innerHTML, silently discarding whatever the user was typing",
+    "name": "patch the page by innerHTML, silently discarding whatever the user was typing",
     "file": "src/bridge/static/live.js",
-    "old": "  setText(band, status);",
-    "new": "  band.parentNode.innerHTML = status;",
+    "old": "  setText(label, stateLabel(state));",
+    "new": "  label.parentNode.innerHTML = stateLabel(state);",
     "tests": [
       "tests/test_api.py::test_live_js_never_touches_the_prompt_textarea"
     ],
@@ -147,26 +147,6 @@
     "new": "  return true;",
     "tests": [
       "tests/test_static_js.py::test_live_js_only_resets_its_backoff_once_a_connection_has_proved_healthy"
-    ],
-    "expect_count": 1
-  },
-  {
-    "name": "ignore the end of a session, so the band never clears",
-    "file": "src/bridge/static/live.js",
-    "old": "  const status = live.status || (live.available ? \"unknown\" : \"ended\");",
-    "new": "  const status = live.status;",
-    "tests": [
-      "tests/test_static_js.py::test_live_js_clears_a_band_when_a_session_goes_away"
-    ],
-    "expect_count": 1
-  },
-  {
-    "name": "leave the live band's visual state stale when its status word changes",
-    "file": "src/bridge/static/live.js",
-    "old": "  setBandState(band, status);",
-    "new": "  if (false) setBandState(band, status);",
-    "tests": [
-      "tests/test_static_js.py::test_live_js_patches_a_band_from_a_snapshot"
     ],
     "expect_count": 1
   },
