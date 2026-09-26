@@ -279,10 +279,7 @@ def load(overrides: dict | None = None) -> Config:
         models=list(DEFAULT_MODELS),
         efforts=list(DEFAULT_EFFORTS),
         permission_modes=list(DEFAULT_PERMISSION_MODES),
-        # Env-overridable so the CLI's exit-zero-when-the-panel-is-down property
-        # can be tested in a real subprocess against a genuinely closed port,
-        # rather than against a mocked transport. BRIDGE_PORT wins over config.toml.
-        port=_env_port() or 8787,
+        port=8787,
         aliases={},
         archived_paths=(),
         update_check_enabled=True,
@@ -290,11 +287,11 @@ def load(overrides: dict | None = None) -> Config:
     # defaults < config.toml < BRIDGE_PORT < overrides. The file can only reach
     # the fields it actually names, and a test's explicit override always wins.
     cfg = replace(cfg, **_read_config_file(config_path()))
-    # BRIDGE_PORT wins over config.toml's `port` (see the `port` field's note):
-    # the file value is only the fallback the installer records so
-    # `--launchd-only` can recover it, whereas the env var is the deliberate
-    # per-run override. Re-applied here because the file merge above would
-    # otherwise clobber the env value set at construction.
+    # BRIDGE_PORT wins over config.toml's `port`: the file value is only the
+    # fallback the installer records so `--launchd-only` can recover it, whereas
+    # the env var is the deliberate per-run override -- and what lets the CLI's
+    # exit-zero-when-the-panel-is-down property be tested in a real subprocess
+    # against a genuinely closed port rather than a mocked transport.
     env_port = _env_port()
     if env_port is not None:
         cfg = replace(cfg, port=env_port)
