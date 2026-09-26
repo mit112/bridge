@@ -11,6 +11,7 @@ launcher that `create_app` owns, and `notify` stays a callable so the
 `app.state.notifier` lookup is as lazy as it was inline.
 """
 
+import dataclasses
 import logging
 from collections.abc import Callable
 
@@ -25,6 +26,8 @@ from bridge.schemas import HandoffIn, HandoffPatch, LaunchIn
 from bridge.store import Store, now_epoch
 
 log = logging.getLogger(__name__)
+
+_HANDOFF_FIELDS = frozenset(f.name for f in dataclasses.fields(Handoff))
 
 
 def build_router(
@@ -160,18 +163,14 @@ def build_router(
 
         if body.next_prompt is not None:
             project = store.get_project(row["project_id"])
+            # This record REPLACES the creation record -- same `<id>.json` -- so
+            # it is built from every column the row shares with `Handoff`, not a
+            # hand-picked list. A list is what forgot the fingerprint, thread and
+            # kind once they were added, and the rebuild then lost all three.
+            carried = {k: row[k] for k in row.keys() if k in _HANDOFF_FIELDS}
             spool.journal(
-                Handoff(
-                    id=handoff_id,
-                    project_path=project["path"],
-                    next_prompt=body.next_prompt,
-                    source_session_id=row["source_session_id"],
-                    summary=row["summary"],
-                    suggested_model=row["suggested_model"],
-                    suggested_effort=row["suggested_effort"],
-                    created_at=row["created_at"],
-                    status=row["status"],
-                ),
+                Handoff(**carried | {"project_path": project["path"],
+                                     "next_prompt": body.next_prompt}),
                 cfg.spool_dir,
             )
             # Status untouched: editing a queued prompt leaves it queued. The

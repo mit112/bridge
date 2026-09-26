@@ -851,6 +851,38 @@ def test_the_git_fingerprint_survives_a_database_loss(tmp_path):
     store2.close()
 
 
+def test_an_edited_prompt_keeps_the_rest_of_its_record_through_a_database_loss(tmp_path):
+    """An edit re-journals the handoff over its own creation record -- the same
+    `drained/<id>.json` -- so whatever the edit leaves out of that record, the
+    rebuild never sees. It once left out every field added after the edit path
+    was written: the fingerprint, the thread link, and the kind, so a `blocked`
+    handoff came back from `rm bridge.db` as an ordinary `next`."""
+    cfg = load({"db_path": tmp_path / "ed.db", "spool_dir": tmp_path / "spool"})
+    store = Store(cfg.db_path)
+    c = TestClient(create_app(store, cfg))
+    c.post("/api/handoff", json=body(
+        "ed", prompt="first draft", kind="blocked",
+        parent_handoff_id="p1", parent_outcome="partial", **FP,
+    ))
+    assert c.patch("/api/handoff/ed", json={"next_prompt": "second draft"}).status_code == 200
+    store.close()
+
+    cfg.db_path.unlink()
+    for suffix in ("-wal", "-shm"):
+        Path(str(cfg.db_path) + suffix).unlink(missing_ok=True)
+
+    store2 = Store(cfg.db_path)
+    assert spool.rebuild_if_empty(store2, cfg.spool_dir).drained == 1
+    row = store2.get_handoff("ed")
+    assert row["next_prompt"] == "second draft"
+    assert row["kind"] == "blocked"
+    assert (row["parent_handoff_id"], row["parent_outcome"]) == ("p1", "partial")
+    assert row["created_branch"] == FP["created_branch"]
+    assert row["created_head"] == FP["created_head"]
+    assert (row["created_dirty"], row["created_ahead"]) == (3, 20)
+    store2.close()
+
+
 # --- the thread: which handoff a session came from, and what became of it ----
 
 
