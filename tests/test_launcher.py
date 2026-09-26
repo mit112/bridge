@@ -1461,6 +1461,49 @@ def test_an_exec_refusal_leaves_no_launch_row_and_no_claimed_handoff(
     assert store.get_handoff(hid)["status"] == "queued"
 
 
+@pytest.mark.parametrize("mode", ["terminal", "background"])
+def test_a_spawning_refusal_leaves_no_launch_row_and_no_claimed_handoff(
+    store, cfg, project, fake_claude, mode
+):
+    """The exec contract holds for the modes that spawn too. `launch()` claims
+    the handoff before dispatching, so a command that cannot be built must hand
+    it back -- and must do so before a `pending` row exists for a spawn that
+    was never attempted."""
+    hid = queue_handoff(store, str(project))
+    run = recorder(proc(0, stdout="backgrounded · deadbeef"))
+
+    with pytest.raises(LaunchError):
+        launcher.launch(
+            store, cfg,
+            spec(project_path=str(project), mode=mode, session_id=None,
+                 permission_mode="rm -rf /"),
+            hid, run=run,
+        )
+
+    assert run.calls == []
+    assert store.launches(resolve_project(store, str(project))) == []
+    assert store.get_handoff(hid)["status"] == "queued"
+
+
+def test_a_prompt_file_that_cannot_be_written_hands_the_handoff_back(
+    store, cfg, project, fake_claude
+):
+    """No row exists yet when the prompt file is written, so nothing at boot
+    would ever reconcile a claim left behind here: the handoff would sit at
+    `launching` -- off every card, refused by every edit -- for good."""
+    hid = queue_handoff(store, str(project))
+    Path(cfg.launches_dir).write_text("a file where the directory should be")
+
+    with pytest.raises(OSError):
+        launcher.launch(
+            store, cfg, spec(project_path=str(project), session_id=None), hid,
+            run=recorder(),
+        )
+
+    assert store.launches(resolve_project(store, str(project))) == []
+    assert store.get_handoff(hid)["status"] == "queued"
+
+
 def test_build_exec_argv_omits_what_is_unset_and_never_emits_it_empty():
     bare = spec(mode="exec", model=None, effort=None, title=None,
                 session_id=None)

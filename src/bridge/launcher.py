@@ -28,6 +28,7 @@ Measured against the real environment before any of this was written:
     `--system-prompt-file` sets the system prompt. Hence `$(cat …)`.
 """
 
+import contextlib
 import json
 import os
 import re
@@ -586,6 +587,32 @@ def _new_row(store, spec, prompt, project_id, handoff_id, session_id) -> str:
     return launch_id
 
 
+@contextlib.contextmanager
+def _handed_back_on_refusal(store, handoff_id):
+    """Undo `launch()`'s claim if what runs inside refuses the launch.
+
+    `launch()` claims the handoff BEFORE dispatching, so every mode builds what
+    it will spawn inside this, ahead of its `launches` row. Without the hand-back
+    the handoff sits at `launching` forever: with no row, boot reconciliation
+    never finds it, and a card hides a `launching` handoff on the assumption a
+    spawn is in flight -- so the user loses a queued handoff to a validation
+    error or a full disk.
+    """
+    try:
+        yield
+    except (OSError, LaunchError):
+        if handoff_id:
+            store.revert_claimed_handoff(handoff_id)
+        raise
+
+
+def _terminal_script(spec, prompt, session_id, prompt_path, claude) -> str:
+    return build_applescript(build_shell_command(
+        replace(spec, session_id=session_id, prompt=prompt), prompt_path,
+        claude=claude,
+    ))
+
+
 def _launch_exec(store, cfg, spec, prompt, project_id, handoff_id, claude):
     """Record the launch and hand back argv. The one mode that spawns nothing.
 
@@ -607,19 +634,10 @@ def _launch_exec(store, cfg, spec, prompt, project_id, handoff_id, claude):
     window that opens and closes before it can be read.
     """
     session_id = spec.session_id or new_session_id()
-    try:
+    with _handed_back_on_refusal(store, handoff_id):
         argv = build_exec_argv(
             replace(spec, session_id=session_id, prompt=prompt), claude=claude
         )
-    except LaunchError:
-        # `launch()` claims the handoff BEFORE dispatching here, so a refusal at
-        # construction time has to hand it back explicitly. Without this the row
-        # sits at `launching` forever: nothing else clears that state, and a card
-        # hides a `launching` handoff on the assumption a spawn is in flight --
-        # so the user loses a queued handoff to a validation error.
-        if handoff_id:
-            store.revert_claimed_handoff(handoff_id)
-        raise
     launch_id = _new_row(store, spec, prompt, project_id, handoff_id, session_id)
     return _started(store, cfg, launch_id, handoff_id,
                     session_id=session_id, argv=tuple(argv))
@@ -631,16 +649,13 @@ def _launch_terminal(store, cfg, spec, prompt, project_id, handoff_id, claude, r
     # inversion allowed here: its name is derived from the session id, so a
     # failure to write it must not leave a row claiming a session that has no
     # prompt to run.
-    prompt_path = write_prompt_file(cfg.launches_dir, session_id, prompt)
+    with _handed_back_on_refusal(store, handoff_id):
+        prompt_path = write_prompt_file(cfg.launches_dir, session_id, prompt)
+        script = _terminal_script(spec, prompt, session_id, prompt_path, claude)
     launch_id = _new_row(store, spec, prompt, project_id, handoff_id, session_id)
 
     error = None
     for attempt in range(1, MAX_SESSION_ID_ATTEMPTS + 1):
-        command = build_shell_command(
-            replace(spec, session_id=session_id, prompt=prompt), prompt_path,
-            claude=claude,
-        )
-        script = build_applescript(command)
         try:
             proc = run([OSASCRIPT, "-e", script], capture_output=True, text=True)
         except OSError as exc:
@@ -663,6 +678,7 @@ def _launch_terminal(store, cfg, spec, prompt, project_id, handoff_id, claude, r
         session_id = new_session_id()
         prompt_path = write_prompt_file(cfg.launches_dir, session_id, prompt)
         store.set_launch_session(launch_id, session_id, session_id[:8])
+        script = _terminal_script(spec, prompt, session_id, prompt_path, claude)
 
     return _failed(store, launch_id, handoff_id, error)
 
@@ -676,8 +692,10 @@ def _launch_background(store, cfg, spec, prompt, project_id, handoff_id, claude,
     pre-assigned one would hold a correlation key matching no transcript that
     will ever exist.
     """
+    with _handed_back_on_refusal(store, handoff_id):
+        argv = build_bg_argv(replace(spec, prompt=prompt, session_id=None),
+                             claude=claude)
     launch_id = _new_row(store, spec, prompt, project_id, handoff_id, None)
-    argv = build_bg_argv(replace(spec, prompt=prompt, session_id=None), claude=claude)
     try:
         proc = run(argv, capture_output=True, text=True, cwd=spec.project_path)
     except OSError as exc:
