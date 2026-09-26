@@ -651,21 +651,36 @@ def cmd_diagnose(args, cfg) -> int:
     return 0
 
 
+class _VersionAction(argparse.Action):
+    """`--version`, resolved only when it is asked for.
+
+    It carries the build SHA and install method so a bug report names the exact
+    commit, and working out the method spawns `uv tool dir`. Every command
+    builds this parser -- `handoff` and `next` included -- so computing the
+    string up front, as argparse's own `version` action requires, made the
+    end-of-session path pay for a subprocess and `bridge.update`'s imports.
+    """
+
+    def __init__(self, option_strings, dest=argparse.SUPPRESS,
+                 default=argparse.SUPPRESS, help="show the version and exit"):
+        super().__init__(option_strings, dest=dest, default=default, nargs=0,
+                         help=help)
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        from bridge import update
+
+        sha = update.installed_sha()
+        print(f"bridge {__version__} "
+              f"({sha[:12] if sha else 'dev'} {update.install_method()})")
+        parser.exit()
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="bridge",
         description="Bridge: a local control panel and CLI for Claude Code projects.",
     )
-    # `--version` carries the build SHA and install method so a bug report
-    # names the exact commit. Imported lazily here (not at module top) so the
-    # handoff/next fast path never pays for `bridge.update`'s imports;
-    # argparse needs the finished version string at parse-build time, so it
-    # cannot wait until an action callback.
-    from bridge import update as _u
-    _sha = _u.installed_sha()
-    _short = _sha[:12] if _sha else "dev"
-    parser.add_argument("--version", action="version",
-                        version=f"bridge {__version__} ({_short} {_u.install_method()})")
+    parser.add_argument("--version", action=_VersionAction)
     sub = parser.add_subparsers(dest="cmd")
 
     h = sub.add_parser("handoff", help="record a next-session prompt")
@@ -735,7 +750,6 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--project")
 
     up = sub.add_parser("update", help="update Bridge to the latest main HEAD")
-    up.add_argument("--project")
     up.add_argument("--sha", help="install this exact commit (used by the "
                                   "one-shot LaunchAgent updater)")
     # Hidden: the one-shot updater LaunchAgent passes this to select the
