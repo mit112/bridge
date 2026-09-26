@@ -16,6 +16,7 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from bridge import spool
 from bridge.models import Handoff
 from bridge.registry import resolve_project
 from bridge.store import now_epoch
@@ -152,8 +153,15 @@ def run(store, cfg, write: bool = False) -> BackfillStats:
             summary=candidate.summary,
             created_at=int(candidate.path.stat().st_mtime) or now_epoch(),
         )
-        before = store.get_handoff(handoff.id)
-        store.create_handoff(handoff, resolve_project(store, candidate.project_path))
-        if before is None:
-            stats.written += 1
+        # Skipped outright once imported, journal included: that record may
+        # since carry an edit made in the panel, and rewriting it from the file
+        # would put the old prompt back on the next rebuild.
+        if store.get_handoff(handoff.id) is not None:
+            continue
+        # Journalled and then ingested, like every other way a handoff gets in:
+        # the journal is what survives `rm bridge.db`, and `ingest_handoff` is
+        # what brings an archived project back.
+        spool.journal(handoff, cfg.spool_dir)
+        store.ingest_handoff(handoff, resolve_project(store, candidate.project_path))
+        stats.written += 1
     return stats

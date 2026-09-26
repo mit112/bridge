@@ -164,3 +164,53 @@ def test_against_the_real_files_on_this_machine(tmp_path):
     for c in found:
         kind = "structured" if c.structured else "UNSTRUCTURED"
         print(f"  {kind:12} {len(c.prompt):6d} chars  {c.path}")
+
+
+def test_a_backfilled_handoff_survives_a_database_loss(env, tmp_path):
+    """Every other accepted handoff is journalled, which is what makes
+    `rm bridge.db` safe. A backfill that only inserted was the one way in that
+    the rebuild could not see."""
+    from bridge import spool
+
+    store, cfg, projects = env
+    make_project(projects, "widget", "HANDOFF.md", STRUCTURED)
+    assert backfill.run(store, cfg, write=True).written == 1
+
+    fresh = Store(tmp_path / "rebuilt.db")
+    try:
+        assert spool.rebuild_if_empty(fresh, cfg.spool_dir).drained == 1
+        assert fresh.handoff_count() == 1
+    finally:
+        fresh.close()
+
+
+def test_a_backfill_into_an_archived_project_brings_it_back(env):
+    """The same rule `ingest_handoff` applies to a live POST, the spool drain and
+    the rebuild: a handoff is proof the project is alive."""
+    store, cfg, projects = env
+    root = make_project(projects, "widget", "HANDOFF.md", STRUCTURED)
+    pid = store.upsert_project(str(root), "widget")
+    store.set_project_status(pid, "archived")
+
+    backfill.run(store, cfg, write=True)
+
+    assert store.get_project(pid)["status"] == "active"
+
+
+def test_re_running_a_backfill_leaves_an_edited_prompt_alone(env, tmp_path):
+    """An already-imported handoff is skipped outright -- journal included. Its
+    journal record may since carry an edit made in the panel, and rewriting it
+    from the file would put the old prompt back on the next rebuild."""
+    from bridge import spool
+
+    store, cfg, projects = env
+    make_project(projects, "widget", "HANDOFF.md", STRUCTURED)
+    backfill.run(store, cfg, write=True)
+    (hid,) = [r["id"] for r in store.conn.execute("SELECT id FROM handoffs")]
+    record = cfg.spool_dir / "drained" / f"{hid}.json"
+    edited = record.read_text().replace("Continue the widget refactor", "EDITED")
+    record.write_text(edited)
+
+    backfill.run(store, cfg, write=True)
+
+    assert record.read_text() == edited
