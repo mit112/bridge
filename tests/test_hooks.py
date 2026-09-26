@@ -4,6 +4,9 @@ No JSONL entry type records a permission prompt, so nothing else in Bridge can
 learn that a session is sitting at a prompt waiting for a human.
 """
 
+import sys
+import threading
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -214,3 +217,47 @@ def test_a_bug_inside_record_cannot_escape_into_the_posting_session(tmp_path,
 
     assert r.status_code == 200
     assert r.json() == {"ok": True}
+
+
+def test_hook_state_survives_a_hook_landing_while_a_card_build_reads_it():
+    """The hook route writes from the event loop while card builds read from
+    threadpool workers. Unguarded, a `forget` iterating the dict as a hook lands
+    raised `dictionary changed size during iteration`, and two builds expiring
+    the same entry both `del`-ed it -- either one outside every try on the SSE
+    and page paths. Reproduced every run against the unlocked version."""
+    state = hooks.HookState(ttl_s=0)   # every entry expires, so reads delete
+    errors: list[str] = []
+    stop = threading.Event()
+
+    def hooks_arriving():
+        i = 0
+        while not stop.is_set():
+            state.record({"session_id": f"s{i % 500}",
+                          "hook_event_name": "Notification",
+                          "notification_type": "permission_prompt"})
+            i += 1
+
+    def card_builds():
+        try:
+            for _ in range(1000):
+                state.forget(f"s{j}" for j in range(0, 500, 2))
+                state.waiting_ids()
+        except Exception as exc:  # noqa: BLE001 - the assertion is that none escape
+            errors.append(repr(exc))
+
+    interval = sys.getswitchinterval()
+    sys.setswitchinterval(1e-6)
+    try:
+        threads = [threading.Thread(target=card_builds) for _ in range(2)]
+        writer = threading.Thread(target=hooks_arriving)
+        writer.start()
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        stop.set()
+        writer.join()
+    finally:
+        sys.setswitchinterval(interval)
+
+    assert errors == []

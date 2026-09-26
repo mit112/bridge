@@ -17,6 +17,7 @@ session registry stay the reconciliation source of truth; this is an overlay on
 top of them, and it expires.
 """
 
+import threading
 import time
 from dataclasses import dataclass, field
 
@@ -42,6 +43,11 @@ class HookState:
 
     ttl_s: float = DEFAULT_TTL_S
     _waiting: dict[str, float] = field(default_factory=dict)
+    # The hook route writes from the event loop while card builds read from
+    # threadpool workers. Unguarded, a `forget` iterating the dict as a hook
+    # lands raises, and two builds expiring one entry both `del` it.
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False,
+                                  compare=False)
 
     def record(self, event: dict, now: float | None = None) -> str | None:
         """Fold one hook event in. Returns the session id it applied to.
@@ -58,22 +64,34 @@ class HookState:
             return None
 
         name = event.get("hook_event_name") or event.get("hookEventName") or ""
-        if name == "Notification":
-            kind = event.get("notification_type") or event.get("notificationType")
-            if kind in NEEDS_INPUT_TYPES:
-                self._waiting[session_id] = now
-            else:
-                # `agent_completed` and anything unrecognised mean the prompt,
-                # if there was one, is no longer outstanding.
+        with self._lock:
+            if name == "Notification":
+                kind = event.get("notification_type") or event.get("notificationType")
+                if kind in NEEDS_INPUT_TYPES:
+                    self._waiting[session_id] = now
+                else:
+                    # `agent_completed` and anything unrecognised mean the
+                    # prompt, if there was one, is no longer outstanding.
+                    self._waiting.pop(session_id, None)
+            elif name in ("SessionStart", "SessionEnd"):
+                # A session that just started is not waiting, and one that
+                # ended cannot be. Both clear rather than set.
                 self._waiting.pop(session_id, None)
-        elif name in ("SessionStart", "SessionEnd"):
-            # A session that just started is not waiting, and one that ended
-            # cannot be. Both clear rather than set.
-            self._waiting.pop(session_id, None)
         return session_id
 
     def is_waiting(self, session_id: str, now: float | None = None) -> bool:
         now = time.monotonic() if now is None else now
+        with self._lock:
+            return self._still_waiting(session_id, now)
+
+    def waiting_ids(self, now: float | None = None) -> set[str]:
+        now = time.monotonic() if now is None else now
+        with self._lock:
+            return {sid for sid in list(self._waiting)
+                    if self._still_waiting(sid, now)}
+
+    def _still_waiting(self, session_id: str, now: float) -> bool:
+        """`is_waiting` for a caller already holding the lock."""
         seen = self._waiting.get(session_id)
         if seen is None:
             return False
@@ -82,10 +100,6 @@ class HookState:
             return False
         return True
 
-    def waiting_ids(self, now: float | None = None) -> set[str]:
-        now = time.monotonic() if now is None else now
-        return {sid for sid in list(self._waiting) if self.is_waiting(sid, now)}
-
     def forget(self, session_ids) -> None:
         """Drop sessions the liveness sensor can no longer see.
 
@@ -93,5 +107,6 @@ class HookState:
         gone cannot be waiting, whatever the last hook said.
         """
         keep = set(session_ids)
-        for sid in [s for s in self._waiting if s not in keep]:
-            del self._waiting[sid]
+        with self._lock:
+            for sid in [s for s in self._waiting if s not in keep]:
+                del self._waiting[sid]

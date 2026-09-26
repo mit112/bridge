@@ -2,8 +2,8 @@
   {
     "name": "treat every notification as a wait, so cards claim attention nobody asked for",
     "file": "src/bridge/hooks.py",
-    "old": "            if kind in NEEDS_INPUT_TYPES:\n                self._waiting[session_id] = now\n            else:",
-    "new": "            if True:\n                self._waiting[session_id] = now\n            else:",
+    "old": "                if kind in NEEDS_INPUT_TYPES:\n                    self._waiting[session_id] = now\n                else:",
+    "new": "                if True:\n                    self._waiting[session_id] = now\n                else:",
     "tests": [
       "tests/test_hooks.py::test_agent_completed_clears_the_wait",
       "tests/test_hooks.py::test_an_unrecognised_notification_type_clears_rather_than_sets"
@@ -24,8 +24,8 @@
   {
     "name": "let SessionStart and SessionEnd set a wait instead of clearing it",
     "file": "src/bridge/hooks.py",
-    "old": "        elif name in (\"SessionStart\", \"SessionEnd\"):\n            # A session that just started is not waiting, and one that ended\n            # cannot be. Both clear rather than set.\n            self._waiting.pop(session_id, None)",
-    "new": "        elif name in (\"SessionStart\", \"SessionEnd\"):\n            self._waiting[session_id] = now",
+    "old": "            elif name in (\"SessionStart\", \"SessionEnd\"):\n                # A session that just started is not waiting, and one that\n                # ended cannot be. Both clear rather than set.\n                self._waiting.pop(session_id, None)",
+    "new": "            elif name in (\"SessionStart\", \"SessionEnd\"):\n                self._waiting[session_id] = now",
     "tests": [
       "tests/test_hooks.py::test_session_start_and_end_both_clear_the_wait"
     ],
@@ -64,8 +64,8 @@
   {
     "name": "stop reconciling against the sensor, so a finished session waits forever",
     "file": "src/bridge/hooks.py",
-    "old": "        keep = set(session_ids)\n        for sid in [s for s in self._waiting if s not in keep]:\n            del self._waiting[sid]",
-    "new": "        pass",
+    "old": "            for sid in [s for s in self._waiting if s not in keep]:\n                del self._waiting[sid]",
+    "new": "            pass",
     "tests": [
       "tests/test_hooks.py::test_forget_reconciles_against_the_liveness_sensor"
     ],
