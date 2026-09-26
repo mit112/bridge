@@ -80,9 +80,9 @@ def attention_items(diag: dict) -> list[dict]:
             "label": "Handoffs stuck in the spool",
             "cause": f"{diag['spool_depth']} handoff file(s) are queued "
                      "in the spool directory and have not been drained.",
-            "next_action": "Confirm the spool drain process is running; "
-                     "files remain in spool_dir until Bridge successfully "
-                     "drains them.",
+            "next_action": "Restart the panel: the spool is drained when "
+                     "`bridge serve` starts. A file still here afterwards "
+                     "failed to insert, and the server log says why.",
         })
     if diag["live"] == "unavailable":
         items.append({
@@ -90,7 +90,7 @@ def attention_items(diag: dict) -> list[dict]:
             "cause": f"The {diag['live_source']} sensor could not "
                      "determine which Claude sessions are running.",
             "next_action": "Check that Claude Code's session registry "
-                     "(or subprocess probe) is reachable on this machine, "
+                     "(~/.claude/sessions) is readable on this machine, "
                      "then reload Diagnostics.",
         })
     return items
