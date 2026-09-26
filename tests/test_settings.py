@@ -33,12 +33,11 @@ def _cfg(tmp_path, **overrides):
 
 
 def _write_settings(tmp_path, port=9999, events=("Notification", "SessionStart", "SessionEnd")):
-    """A `~/.claude/settings.json` shaped exactly like the real one Task 9 of
-    the phase-4 amendments installed (recon §3b): one `{"hooks": [...]}` list
-    per event, each entry `{"type": "http", "url": ..., "timeout": 2}`."""
+    """A `~/.claude/settings.json` shaped like a real one: each event maps to a
+    LIST of matcher entries, each carrying its own `hooks` list of handlers."""
     url = f"http://127.0.0.1:{port}/api/hooks"
     hooks = {
-        name: {"hooks": [{"type": "http", "url": url, "timeout": 2}]}
+        name: [{"hooks": [{"type": "http", "url": url, "timeout": 2}]}]
         for name in events
     }
     path = tmp_path / "claude-settings.json"
@@ -89,7 +88,7 @@ def test_hook_status_not_present_when_endpoint_missing_from_allowlist(tmp_path):
     cfg = _cfg(tmp_path, port=9999)
     url = "http://127.0.0.1:9999/api/hooks"
     hooks = {
-        name: {"hooks": [{"type": "http", "url": url, "timeout": 2}]}
+        name: [{"hooks": [{"type": "http", "url": url, "timeout": 2}]}]
         for name in ("Notification", "SessionStart", "SessionEnd")
     }
     settings_path = tmp_path / "no-allowlist.json"
@@ -102,6 +101,50 @@ def test_hook_status_not_present_when_endpoint_missing_from_allowlist(tmp_path):
     assert all(e.installed for e in model.hook_status.events)
     assert model.hook_status.issues
     assert "allowedHttpHookUrls" in model.hook_status.issues[0]["next_action"]
+    # Nothing is missing, so the cause names the allow-list rather than an
+    # empty list of hooks.
+    cause = model.hook_status.issues[0]["cause"]
+    assert "allowedHttpHookUrls" in cause
+    assert not cause.startswith(" ")
+
+
+def test_hook_status_reads_the_real_settings_shape_matchers_and_all(tmp_path):
+    """A real settings.json: other events' command hooks alongside, a `matcher`
+    on an entry, and Bridge's handler in the second entry of its event."""
+    cfg = _cfg(tmp_path, port=9999)
+    url = "http://127.0.0.1:9999/api/hooks"
+    ours = {"hooks": [{"type": "http", "url": url, "timeout": 2}]}
+    other = {"hooks": [{"type": "command", "command": "/bin/true", "timeout": 10}]}
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text(json.dumps({
+        "hooks": {
+            "PreToolUse": [{"matcher": "Bash", **other}],
+            "Notification": [other, ours],
+            "SessionStart": [{"matcher": "startup", **ours}],
+            "SessionEnd": [ours],
+        },
+        "allowedHttpHookUrls": [url],
+    }))
+
+    assert build_settings(cfg, settings_path=settings_path).hook_status.state == "present"
+
+
+def test_a_handler_not_wrapped_in_a_matcher_list_is_not_installed(tmp_path):
+    """Claude Code reads each event as a list of matcher entries. A bare
+    `{"hooks": [...]}` object in its place is config Claude Code never calls,
+    and reporting it installed would send the user away from a broken setup."""
+    cfg = _cfg(tmp_path, port=9999)
+    url = "http://127.0.0.1:9999/api/hooks"
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text(json.dumps({
+        "hooks": {
+            name: {"hooks": [{"type": "http", "url": url, "timeout": 2}]}
+            for name in ("Notification", "SessionStart", "SessionEnd")
+        },
+        "allowedHttpHookUrls": [url],
+    }))
+
+    assert build_settings(cfg, settings_path=settings_path).hook_status.state == "absent"
 
 
 def test_hook_status_absent_when_settings_file_missing(tmp_path):
@@ -314,7 +357,7 @@ def test_settings_route_reflects_hook_status_from_the_guarded_default_path(
     client, cfg = _route_client(tmp_path, port=9321)
     url = f"http://127.0.0.1:{cfg.port}/api/hooks"
     hooks = {
-        name: {"hooks": [{"type": "http", "url": url, "timeout": 2}]}
+        name: [{"hooks": [{"type": "http", "url": url, "timeout": 2}]}]
         for name in ("Notification", "SessionStart", "SessionEnd")
     }
     guarded_claude_settings_path.write_text(json.dumps({"hooks": hooks}))
