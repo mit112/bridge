@@ -3183,8 +3183,8 @@ def test_a_chained_retry_restates_the_row_without_growing_a_second_button(tmp_pa
 
 @pytest.mark.skipif(_node() is None, reason="node is not installed")
 def test_a_refused_retry_removes_a_button_that_could_only_ever_409(tmp_path):
-    got = _run_retry(tmp_path, {"detail": "only a failed or indeterminate run "
-                                          "can be retried, once"},
+    got = _run_retry(tmp_path, {"detail": "only a failed, indeterminate or missed "
+                                          "run can be retried, once"},
                      ok=False, code=409)
     assert got["buttonRemoved"] is True
     assert "⚠" in got["rowStatus"]
@@ -3196,8 +3196,8 @@ def test_a_refused_retry_hands_focus_on_before_removing_the_clicked_button(tmp_p
     the focused element -- so focus must land on the section that outlives it
     first, or it falls to <body> and the keyboard position is lost (WCAG
     2.4.3). Same fallback `settleRow` and the cancel path already use."""
-    got = _run_retry(tmp_path, {"detail": "only a failed or indeterminate run "
-                                          "can be retried, once"},
+    got = _run_retry(tmp_path, {"detail": "only a failed, indeterminate or missed "
+                                          "run can be retried, once"},
                      ok=False, code=409)
     assert got["events"] == ["focus", "remove"]
 

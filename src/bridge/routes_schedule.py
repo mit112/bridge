@@ -158,7 +158,7 @@ def build_router(
 
     @router.post("/api/schedule/{id}/retry")
     def retry_schedule(id: str):
-        """Re-fire a failed or indeterminate run, keeping its provenance.
+        """Re-fire a failed, indeterminate or missed run, keeping its provenance.
 
         The panel used to retry by POSTing `/api/launch` with the prompt copied
         out of the page and no `handoff_id` at all -- so retrying a schedule
@@ -177,7 +177,7 @@ def build_router(
                 raise HTTPException(status_code=404, detail="unknown schedule")
             raise HTTPException(
                 status_code=409,
-                detail="only a failed or indeterminate run can be retried, once",
+                detail="only a failed, indeterminate or missed run can be retried, once",
             )
         # The retry is a new row, so it needs its own creation record, and a
         # failure ABORTS rather than warns. Replay restores creation records and
