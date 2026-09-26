@@ -341,6 +341,7 @@ const fireClick = () => Promise.all(clickHandlers.map((fn) =>
     disabledWhenEmpty, fetchAfterEmpty, enabledWhenTyped,
     fetchCount, prompt: sentBody ? sentBody.prompt : null,
     handoffId: sentBody ? sentBody.handoff_id : null,
+    fieldAfterLaunch: composeField.value, disabledAfterLaunch: button.disabled,
   }));
 })();
 """
@@ -373,6 +374,17 @@ def test_empty_state_primary_button_enables_and_launches_the_composed_prompt(tmp
     assert got["prompt"] == "run this now"
     # No queued handoff to attach: an ad hoc launch carries no handoff id.
     assert got["handoffId"] is None
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_a_launched_compose_prompt_is_spent_like_schedule_run_now_spends_it(tmp_path):
+    """The collapsed compose box's Run now (schedule.js) clears the field once
+    the session starts. This band launches the same textarea, and left it full
+    with the button armed -- and its draft then resurrected it on the next
+    visit, one click from starting the same session twice."""
+    got = _run_empty_state(tmp_path)
+    assert got["fieldAfterLaunch"] == ""
+    assert got["disabledAfterLaunch"] is True
 
 
 # --- Final-review fix round: the "Dismiss handoff" click handler -----------
