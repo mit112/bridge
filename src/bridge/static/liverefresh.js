@@ -16,7 +16,6 @@
   let projectId = null;
   let baselineGeneration = null;   // last generation acknowledged for this view
   let lastSeenGeneration = null;   // most recent generation observed on the wire
-  let pendingGeneration = null;    // a bump waiting to be applied
   let lastLiveSignal = LIVE_UNSET; // last ~3s fast signal (per-card status or topbar.running) observed
   let refreshRequested = false;    // a trigger (generation bump or live-signal change) fired
   let refreshVersion = 0;         // bumped alongside refreshRequested so a fetch in flight
@@ -87,7 +86,6 @@
         // schedule clocks): the enter() pass does NOT re-run on an in-place morph.
         if (window.bridgePage && window.bridgePage.morphed) window.bridgePage.morphed();
         baselineGeneration = generationAtFetch;
-        if (pendingGeneration != null && pendingGeneration <= generationAtFetch) pendingGeneration = null;
         // A newer trigger (generation bump or live-signal change) may have
         // fired while this fetch was in flight -- refreshVersion moved on,
         // so leave refreshRequested set rather than dropping that trigger.
@@ -133,7 +131,6 @@
     if (baselineGeneration == null) {
       if (Number.isFinite(generation)) baselineGeneration = generation;
     } else if (Number.isFinite(generation) && generation > baselineGeneration) {
-      pendingGeneration = generation;
       refreshRequested = true;
       refreshVersion += 1;
       schedule();
@@ -157,7 +154,6 @@
     owned = isOwned(path);
     projectId = projectIdOf(path);
     baselineGeneration = lastSeenGeneration;       // only future bumps refresh
-    pendingGeneration = null;
     lastLiveSignal = LIVE_UNSET;
     refreshRequested = false;
   }
@@ -165,7 +161,6 @@
   function leave() {
     if (timer) { clearTimeout(timer); timer = null; }
     owned = false;
-    pendingGeneration = null;
     refreshRequested = false;
   }
 

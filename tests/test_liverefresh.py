@@ -241,8 +241,8 @@ def test_focus_on_a_non_preserve_node_does_not_abort_the_whole_refresh(tmp_path)
 
 def test_a_newer_bump_during_an_in_flight_fetch_is_not_dropped(tmp_path):
     # If a fresher generation arrives from onFrame while a refresh fetch is
-    # still in flight, the success handler must not blindly null out
-    # pendingGeneration -- doing so would silently drop that newer bump and
+    # still in flight, the success handler must not blindly clear
+    # refreshRequested -- doing so would silently drop that newer bump and
     # the view would never catch up to it. Observe this by checking that a
     # later _refreshNow() still issues a fetch for the retained bump.
     got = _run("""
@@ -254,11 +254,11 @@ def test_a_newer_bump_during_an_in_flight_fetch_is_not_dropped(tmp_path):
 
         window.bridgePage.enter();
         window.bridgeLiveRefresh._onFrame({ generation: 1 });   // baseline = 1
-        window.bridgeLiveRefresh._onFrame({ generation: 2 });   // bump -> pending = 2
+        window.bridgeLiveRefresh._onFrame({ generation: 2 });   // bump -> refresh requested
         window.bridgeLiveRefresh._refreshNow();                 // fetch #1 in flight
 
         // A fresher frame lands before fetch #1's .then settles.
-        window.bridgeLiveRefresh._onFrame({ generation: 3 });   // pending -> 3
+        window.bridgeLiveRefresh._onFrame({ generation: 3 });   // a second request
 
         await new Promise((resolve) => setImmediate(resolve));  // let fetch #1 settle
         const fetchesAfterFirst = globalThis.__calls.fetch.length;
