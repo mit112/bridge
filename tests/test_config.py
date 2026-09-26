@@ -162,12 +162,12 @@ def test_the_model_catalog_offers_pinned_versions_and_latest_aliases():
     """
     cfg = load()
     values = [m.value for m in cfg.models]
-    assert "opus" in values           # latest-tracking alias
-    assert "claude-opus-5" in values  # pinned
+    assert "opus" in values             # latest-tracking alias
+    assert "claude-opus-5-5" in values  # pinned
     assert "claude-opus-4-8" in values
     labels = {m.value: m.label for m in cfg.models}
     assert labels["claude-opus-4-8"] == "Opus 4.8"
-    assert "Opus 5" in labels["opus"]  # the alias says what it currently means
+    assert "Opus 5.5" in labels["opus"]  # the alias says what it currently means
 
 
 def test_every_catalog_value_is_unique():

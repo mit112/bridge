@@ -64,8 +64,8 @@
   {
     "name": "default the catalog to a pinned version, freezing every ad-hoc launch on a model that ages out",
     "file": "src/bridge/config.py",
-    "old": "    ModelChoice(\"opus\", \"opus \u2014 latest (Opus 5)\"),\n    ModelChoice(\"claude-opus-5\", \"Opus 5\"),",
-    "new": "    ModelChoice(\"claude-opus-5\", \"Opus 5\"),\n    ModelChoice(\"opus\", \"opus \u2014 latest (Opus 5)\"),",
+    "old": "    ModelChoice(\"opus\", \"opus \u2014 latest (Opus 5.5)\"),\n    ModelChoice(\"claude-opus-5-5\", \"Opus 5.5\"),",
+    "new": "    ModelChoice(\"claude-opus-5-5\", \"Opus 5.5\"),\n    ModelChoice(\"opus\", \"opus \u2014 latest (Opus 5.5)\"),",
     "tests": [
       "tests/test_config.py::test_the_catalog_default_is_an_alias_not_a_pin"
     ],
@@ -84,7 +84,7 @@
   {
     "name": "drop the alias's version gloss, so \"opus\" no longer says what it currently means",
     "file": "src/bridge/config.py",
-    "old": "    ModelChoice(\"opus\", \"opus \u2014 latest (Opus 5)\"),",
+    "old": "    ModelChoice(\"opus\", \"opus \u2014 latest (Opus 5.5)\"),",
     "new": "    ModelChoice(\"opus\", \"opus\"),",
     "tests": [
       "tests/test_config.py::test_the_model_catalog_offers_pinned_versions_and_latest_aliases"
