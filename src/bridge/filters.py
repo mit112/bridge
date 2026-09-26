@@ -29,22 +29,15 @@ def _schedule_time_fields(epoch: int) -> tuple[str | None, str]:
 
 
 def _ago(iso: str | None) -> str:
-    """Compact relative time: 4m, 3h, 2d. Empty when unknown."""
-    from bridge.store import now_epoch, to_epoch
+    """Compact relative time for an ISO timestamp: 4m, 3h, 2d. Empty when
+    unknown or unparseable."""
+    from bridge.store import to_epoch
 
-    epoch = to_epoch(iso)
-    if epoch is None:
-        return ""
-    secs = max(0, now_epoch() - epoch)
-    if secs < 3600:
-        return f"{secs // 60}m"
-    if secs < 86400:
-        return f"{secs // 3600}h"
-    return f"{secs // 86400}d"
+    return _ago_epoch(to_epoch(iso))
 
 
 def _ago_epoch(epoch: int | None) -> str:
-    """Same shape as `ago`, for the epoch ints GitState carries."""
+    """`ago`'s arithmetic, for the epoch ints GitState and launches carry."""
     from bridge.store import now_epoch
 
     if not epoch:
