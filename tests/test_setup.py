@@ -456,7 +456,7 @@ def test_uninstall_launchd_boots_out_the_bridge_label(home, launchctl):
     assert setup._uninstall_launchd() is True
     boots = [c for c in launchctl.calls if c[:2] == ["launchctl", "bootout"]]
     assert len(boots) == 1
-    assert f"gui/" in boots[0][2] and setup.LAUNCHD_LABEL in boots[0][2]
+    assert "gui/" in boots[0][2] and setup.LAUNCHD_LABEL in boots[0][2]
 
 
 # ── one-shot updater LaunchAgent ─────────────────────────────────────────────

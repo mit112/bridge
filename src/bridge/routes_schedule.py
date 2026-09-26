@@ -37,14 +37,6 @@ def build_router(
 ) -> APIRouter:
     router = APIRouter()
 
-
-    # --- scheduled runs -------------------------------------------------------
-    #
-    # A schedule is created, listed, edited, cancelled, or fired early -- but
-    # only ever fired FOR REAL by the background scheduler. `run-now`
-    # exists so the panel can test a schedule (or just stop waiting for it)
-    # without a second code path to keep in sync with the scheduler's own.
-
     @router.post("/api/schedule", status_code=201)
     def post_schedule(body: ScheduleIn):
         project_path = store.alias_map().get(body.project_path, body.project_path)

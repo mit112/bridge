@@ -169,7 +169,6 @@ def reindex(
         )
     except Exception as exc:  # noqa: BLE001
         log.warning("failed to record index run for Diagnostics: %s", exc)
-        pass
 
     return stats
 
