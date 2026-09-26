@@ -655,10 +655,12 @@ def test_transaction_rolls_back_on_error(store):
     try:
         with store.transaction():
             store.set_scan_state("/t/x.jsonl", 100, 1.0, 50, "sx")
+            store.upsert_session(rec("sx"), pid)
             raise RuntimeError("boom")
     except RuntimeError:
         pass
     assert store.get_scan_state("/t/x.jsonl") is None
+    assert store.sessions(pid) == []
 
 
 def test_transaction_commits_both_writes(store):

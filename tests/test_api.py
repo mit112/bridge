@@ -1501,11 +1501,11 @@ def test_an_unknown_mode_is_422_and_never_reaches_the_launcher(launch_app):
 
 
 def test_fire_resolves_alias_and_passes_the_snapshot_to_launch_fn(client, tmp_path):
-    """A future scheduler calls `api.fire` directly, with no route in front of it
+    """The scheduler calls `firing.fire` directly, with no route in front of it
     to resolve the alias table first -- so `fire` has to do that resolution
     itself before building the `LaunchSpec` the launcher receives.
     """
-    from bridge import api
+    from bridge import firing
 
     _, store, _ = client
     cfg = load({"db_path": tmp_path / "fire.db", "spool_dir": tmp_path / "spool"})
@@ -1516,7 +1516,7 @@ def test_fire_resolves_alias_and_passes_the_snapshot_to_launch_fn(client, tmp_pa
         calls.append(spec)
         return launcher.LaunchResult("L1", "started")
 
-    result = api.fire(
+    result = firing.fire(
         store, cfg,
         project_path="/old/path",
         prompt="scheduled prompt",
@@ -1806,7 +1806,7 @@ def test_no_handoff_field_can_arm_a_permission_mode(launch_app):
     assert 'value="bypassPermissions" class="launch__option--danger">' in html
     assert '"bypassPermissions" selected' not in html
     # And the field is not among the things a handoff can carry at all.
-    from bridge.api import HandoffIn
+    from bridge.schemas import HandoffIn
 
     assert not any("permission" in f for f in HandoffIn.model_fields)
 
@@ -3176,7 +3176,7 @@ def test_a_pinned_project_sorts_above_a_queued_handoff(tmp_path):
     cfg = load({"db_path": tmp_path / "pin.db", "spool_dir": tmp_path / "spool"})
     store = Store(cfg.db_path)
     quiet = store.upsert_project("/p/quiet", "quiet")
-    other = store.upsert_project("/p/other", "other")
+    store.upsert_project("/p/other", "other")
     busy = store.upsert_project("/p/busy", "busy")
     store.create_handoff(Handoff(
         id="h-pin", project_path="/p/busy", next_prompt="go", status="queued",

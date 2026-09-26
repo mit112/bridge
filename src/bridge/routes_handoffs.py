@@ -15,7 +15,7 @@ import dataclasses
 import logging
 from collections.abc import Callable
 
-from fastapi import APIRouter, HTTPException, Query, Response
+from fastapi import APIRouter, HTTPException, Response
 
 from bridge import drift, launcher, spool
 from bridge.config import Config

@@ -10,8 +10,6 @@ import logging
 import subprocess
 import types
 
-import pytest
-
 from bridge import __version__, cli, configure_logging, diagnose
 from bridge.config import load
 

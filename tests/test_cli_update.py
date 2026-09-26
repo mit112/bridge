@@ -1,6 +1,5 @@
 import bridge.cli as cli
 import bridge.update as U
-from bridge.config import load
 
 
 def test_version_shows_sha_and_method(monkeypatch, capsys):
