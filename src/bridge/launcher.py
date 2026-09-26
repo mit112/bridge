@@ -126,8 +126,8 @@ def new_session_id() -> str:
 def validate_prompt(prompt: str) -> None:
     """Raise `LaunchError` if `prompt` cannot survive the trip to argv.
 
-    Called before anything is constructed, and before the prompt file is written
-    file, so a rejected launch has no side effects at all.
+    Called before anything is constructed, and before the prompt file is
+    written, so a rejected launch has no side effects at all.
     """
     nul = prompt.find("\x00")
     if nul != -1:
@@ -478,8 +478,10 @@ def resolve_short_id(short_id: str, claude: str, run) -> str | None:
     a launch to the wrong session, which is worse than waiting.
     """
     try:
+        # Bounded: `POST /api/launch` waits on this, and the call measures at
+        # 250-760 ms, so a CLI that never answers must not hold the request.
         proc = run([claude, "agents", "--json", "--all"],
-                   capture_output=True, text=True)
+                   capture_output=True, text=True, timeout=5.0)
         if proc.returncode != 0:
             return None
         data = json.loads(strip_ansi(proc.stdout or ""))
