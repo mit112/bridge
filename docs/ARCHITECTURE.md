@@ -239,6 +239,12 @@ session must never fail because the panel is down — and the server drains the
 spool on next boot. Scheduled sessions have the same guarantee via a second spool,
 with claims journaled so a run-now can't double-fire.
 
+Both journals are replayed into an empty table on every `serve` boot, before
+that drain — a replay only ever runs into an empty table, so a drain first would
+shut it out — and by a standalone `bridge index`. A `bridge index` that defers
+to a running panel only reindexes, so after `rm ~/.bridge/bridge.db` it is the
+panel's restart that brings handoffs and schedules back.
+
 ## Liveness
 
 Every surface stays live without a manual refresh:

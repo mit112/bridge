@@ -149,6 +149,21 @@ def run_db_command(argv: list[str] | None = None) -> int:
     from bridge import launcher, scheduler
     from bridge.api import create_app
 
+    # Recovery before anything else touches the authored tables. After
+    # `rm bridge.db` the journal is the only copy of every handoff and schedule,
+    # and while a panel is up `bridge index` cannot replay it: it defers to
+    # `/api/refresh`, which reindexes transcripts and nothing else. Under the
+    # LaunchAgent a panel is always up, so this boot is where recovery happens.
+    # First, too, because replay only ever runs into an EMPTY table: the boot
+    # drain in `create_app` would ingest a spooled handoff and shut it out.
+    # `OSError` only, matching that drain: an unreadable spool must not stop
+    # the panel, and a programming error must still be loud.
+    try:
+        spool.rebuild_if_empty(store, cfg.spool_dir)
+        schedspool.rebuild_if_empty(store, cfg.spool_dir, now_epoch())
+    except OSError:
+        log.exception("journal rebuild failed; serving without it")
+
     # Collect stale prompt files here rather than in `create_app`. A manual
     # `bridge serve` is the only recurring event this process has -- there is no
     # background loop to hang it off -- and the suite builds apps directly with
