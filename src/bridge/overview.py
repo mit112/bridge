@@ -404,10 +404,12 @@ def needs_attention(card: Card) -> bool:
     tile, the Projects chip and the number of project entries the ladder
     renders are the same number by construction. A live session whose status is
     not in `LIVE_ATTENTION` (idle, unknown, ...) is deliberately not attention
-    -- see that map's own note.
+    -- see that map's own note -- and neither is a project whose queued work is
+    all `parked`, which is why this asks `_featured_handoff` rather than
+    `card.handoffs`.
     """
     return bool(
-        card.handoffs
+        _featured_handoff(card.handoffs) is not None
         or (card.live is not None and card.live.status in LIVE_ATTENTION)
         or card.is_stale
     )
