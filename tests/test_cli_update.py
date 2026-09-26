@@ -42,3 +42,16 @@ def test_update_current_is_noop(monkeypatch, capsys):
     rc = cli.main(["update"])
     assert rc == 0
     assert "up to date" in capsys.readouterr().err.lower()
+
+
+def test_building_the_parser_probes_nothing(monkeypatch):
+    """Every command builds the parser -- `handoff` and `next` included, the
+    end-of-session path this module keeps free of cost -- so the install probes
+    behind `--version` (one of which spawns `uv tool dir`) run only when the
+    flag is actually asked for."""
+    def boom():
+        raise AssertionError("an install probe ran without --version")
+
+    monkeypatch.setattr(U, "installed_sha", boom)
+    monkeypatch.setattr(U, "install_method", boom)
+    cli.build_parser().parse_args(["next"])
