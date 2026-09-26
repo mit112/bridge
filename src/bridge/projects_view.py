@@ -4,8 +4,8 @@ Assembled from the same source Overview reads -- `bridge.cards.build_cards`,
 kept in its own `sort_key` order rather than re-sorted here -- and the same
 `ProjectSummary` projection Overview uses (`bridge.overview.project_summary`),
 so the two pages can never disagree about what a project's status word or
-last-session age is. No new SQL: `hidden` mirrors the exact list `api.py`'s
-dashboard route already builds from `store.projects(include_hidden=True)`.
+last-session age is. No new SQL: `hidden` is `store.projects(include_hidden=
+True)` less its active rows.
 """
 
 from __future__ import annotations
@@ -153,8 +153,7 @@ def build_projects(
 
     # `store.projects()` (which `build_cards` reads from) whitelists `active`,
     # so a hidden or archived project never reaches `cards` at all -- this is
-    # the one place either status is still reachable. Mirrors the exact list
-    # `api.py`'s dashboard route already builds.
+    # the one place either status is still reachable.
     hidden = [
         dict(row) for row in store.projects(include_hidden=True)
         if row["status"] != "active"
