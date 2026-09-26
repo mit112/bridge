@@ -461,7 +461,7 @@ document.addEventListener("click", async (event) => {
     return;
   }
 
-  // --- Retry a failed or indeterminate schedule ---
+  // --- Retry a failed, indeterminate or missed schedule ---
   //
   // Through `/api/schedule/{id}/retry`, NOT `/api/launch`. The old retry
   // scraped the prompt out of the page and POSTed a plain launch with no

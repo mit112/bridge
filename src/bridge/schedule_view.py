@@ -1,18 +1,16 @@
 """Schedule read model: the full Upcoming/History surface for `/schedule`.
 
 Assembled from a single `store.scheduled_runs()` fetch (no new SQL) plus the
-same alias-map + `display_name` project-name resolution `api.py`'s dashboard
-route already uses for its scheduled panel. Mirrors that route's `retried`/
-`retryable`/active/terminal vocabulary exactly (see `api.py`'s `dashboard`
-route, ~lines 754-792) so a run's status here never disagrees with what the
-same row shows elsewhere in the panel.
+alias-map + `display_name` project-name resolution. Its `retried`/`retryable`/
+active/terminal vocabulary matches `overview`'s (`failed_schedule_rows`,
+`SCHEDULE_FAILURE_STATUSES`) so a run's status here never disagrees with what
+the same row shows on the Overview.
 
 History pagination is the one place in the codebase allowed to page: rather
 than lean on `store.scheduled_runs(limit=..., offset=...)` -- whose SQL only
 orders active-first-then-`scheduled_for` and cannot express "terminal rows,
-newest-completed-first" -- this fetches the full row set once (exactly as
-`api.py`'s dashboard route already does for its own terminal preview) and
-paginates the sorted, filtered Python list. That keeps the ordering correct
+newest-completed-first" -- this fetches the full row set once and paginates
+the sorted, filtered Python list. That keeps the ordering correct
 without adding any SQL beyond `store.scheduled_runs()`'s existing no-arg call.
 """
 
@@ -28,13 +26,12 @@ from bridge.store import Store
 
 VALID_VIEWS = ("upcoming", "history")
 
-# A scheduled run still owed to the user -- mirrors api.py's dashboard route
-# own `active = [r for r in scheduled_rows if r["status"] in (...)]`.
+# A scheduled run still owed to the user.
 ACTIVE_STATUSES = ("pending", "launching")
 
 # Terminal, non-cancelled statuses that still need a human: the same set
 # overview.py's SCHEDULE_FAILURE_STATUSES names for the Overview ladder, and
-# the same set api.py's dashboard route grants a Retry action to.
+# the statuses `store.retry_terminal` accepts.
 ATTENTION_STATUSES = ("failed", "indeterminate", "missed")
 
 
@@ -81,13 +78,12 @@ def build_schedule(
     normalized_view = view if view in VALID_VIEWS else "upcoming"
 
     rows = store.scheduled_runs()
-    # Read once, outside any per-row loop -- `alias_map()`'s own contract
-    # (honoured already by `api.py`'s dashboard route and `overview.py`'s
-    # `build_overview`) is "read once per index run", not once per row.
+    # Read once, outside any per-row loop -- `alias_map()`'s own contract is
+    # "read once per index run", not once per row.
     alias = store.alias_map()
     # A row already superseded by a retry must not re-offer attention or a
-    # second Retry -- the same set api.py's dashboard route computes before
-    # deciding what may still show a Retry control.
+    # second Retry -- the same set `overview.failed_schedule_rows` computes
+    # before counting a failure.
     retried = {r["retry_of"] for r in rows if r["retry_of"]}
 
     if normalized_view == "history":

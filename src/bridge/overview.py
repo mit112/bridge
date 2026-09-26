@@ -510,11 +510,8 @@ def _schedule_failures(store: Store, by_path: dict[str, Card]) -> list[Attention
     schedule failure is not a property of any one card's rank, so it has no
     natural position in `sort_key`'s ordering.
 
-    Excludes any run already superseded by a retry: `retry_of` on the newer
-    row is the store's own record of that, the same set `api.py`'s dashboard
-    route already builds (`retried = {r["retry_of"] for r in rows if
-    r["retry_of"]}`) before deciding what may still offer a Retry action.
-    Without this, a failure that was already retried would re-surface here
+    Excludes any run already superseded by a retry (`failed_schedule_rows`):
+    `retry_of` on the newer row is the store's own record of that. Without this, a failure that was already retried would re-surface here
     forever, since the original row's status never changes once retried.
     Kept complete for `attention_total`, newest-completed first. Only the final
     composed Overview list is sliced to `ATTENTION_LIMIT`, so the visible count

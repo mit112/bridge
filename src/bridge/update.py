@@ -470,7 +470,7 @@ def _rebootstrap_panel() -> bool:
     """Re-bootstrap the panel plist from the (possibly moved) sys.executable.
 
     A uv/brew upgrade can move the interpreter the plist pins by absolute path
-    (setup.py:292/:330), so the plist must be regenerated from the NEW path
+    (see `setup._generate_plist`), so the plist must be regenerated from the NEW path
     before the panel restarts, or launchd relaunches a binary that no longer
     exists.
 
