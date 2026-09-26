@@ -223,16 +223,33 @@ def test_a_spool_file_the_api_would_refuse_is_quarantined_not_inserted(
         "id": "../../escaped", "project_path": DEMO,
         "next_prompt": "fine", "created_at": 1000,
     }))
+    # The fields added after the drain's check was written are checked too: a
+    # kind outside the vocabulary, and a verdict with no handoff to be about.
+    (spool_dir / "unknown-kind.json").write_text(json.dumps({
+        "id": "unknown-kind", "project_path": DEMO,
+        "next_prompt": "fine", "created_at": 1000, "kind": "urgent",
+    }))
+    (spool_dir / "orphan-outcome.json").write_text(json.dumps({
+        "id": "orphan-outcome", "project_path": DEMO,
+        "next_prompt": "fine", "created_at": 1000, "parent_outcome": "done",
+    }))
     spool.write(h("good"), spool_dir)
+    spool.write(h("good-thread", kind="blocked", parent_handoff_id="good",
+                  parent_outcome="partial", source_session_id="sess-2",
+                  created_at=1001), spool_dir)
 
     stats = spool.drain(store, spool_dir)
 
-    assert (stats.drained, stats.bad) == (1, 2)
+    assert (stats.drained, stats.bad) == (2, 4)
     assert store.get_handoff("wrong-type") is None
     assert store.get_handoff("../../escaped") is None
+    assert store.get_handoff("unknown-kind") is None
+    assert store.get_handoff("orphan-outcome") is None
     assert store.get_handoff("good")["status"] == "queued"
+    assert store.get_handoff("good-thread")["kind"] == "blocked"
     assert {p.name for p in (spool_dir / "bad").iterdir()} == {
-        "wrong-type.json", "escaping-id.json"
+        "wrong-type.json", "escaping-id.json",
+        "unknown-kind.json", "orphan-outcome.json",
     }
 
 

@@ -222,16 +222,10 @@ def _load(path: Path) -> Handoff:
     h = Handoff(**{k: v for k, v in data.items() if k in _FIELDS})
     if not h.id or not h.project_path or not h.next_prompt:
         raise ValueError(f"{path.name}: missing id, project_path or next_prompt")
-    HandoffIn(
-        id=h.id,
-        project_path=h.project_path,
-        next_prompt=h.next_prompt,
-        session_id=h.source_session_id,
-        summary=h.summary,
-        suggested_model=h.suggested_model,
-        suggested_effort=h.suggested_effort,
-        created_at=h.created_at,
-    )
+    # Every field, not a list of them: a list is what let the fingerprint,
+    # thread and kind through unchecked once they were added. `HandoffIn`
+    # ignores the two keys it does not declare (`source_session_id`, `status`).
+    HandoffIn(session_id=h.source_session_id, **dataclasses.asdict(h))
     return h
 
 
