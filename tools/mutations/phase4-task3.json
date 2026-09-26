@@ -103,6 +103,16 @@
     "expect_count": 1
   },
   {
+    "name": "drop the start-time check from the guard read_registry actually runs, so a recycled pid keeps a dead session on the card",
+    "file": "src/bridge/agents.py",
+    "old": "            return pid_exists(pid) and _start_matches(proc_start, _starts.get(pid))",
+    "new": "            return pid_exists(pid)",
+    "tests": [
+      "tests/test_agents.py::test_a_reused_pid_whose_start_time_disagrees_is_not_alive"
+    ],
+    "expect_count": 1
+  },
+  {
     "name": "treat an unverifiable start time as dead, dropping real running sessions off the dashboard",
     "file": "src/bridge/agents.py",
     "old": "    if expected is None or actual_local is None:",
