@@ -182,6 +182,7 @@ document.addEventListener("click", async (event) => {
   button.setAttribute("aria-busy", "true");
   announce(key, LAUNCHING);
 
+  let launched = false;
   try {
     const response = await fetch("/api/launch", {
       method: "POST",
@@ -214,6 +215,7 @@ document.addEventListener("click", async (event) => {
     }
 
     announce(key, "✓ Launched — the session is opening in Terminal");
+    launched = true;
   } catch (error) {
     const text = field ? field.value : "";
     const copied = await window.bridgeCopy(text, field);
@@ -227,6 +229,11 @@ document.addEventListener("click", async (event) => {
   } finally {
     button.disabled = false;
     button.removeAttribute("aria-busy");
+  }
+  // An ad hoc prompt that has run is spent, exactly as schedule.js's Run now
+  // treats it. After `finally`, which re-arms the button this disarms again.
+  if (launched && field && field.closest && field.closest("[data-compose-prompt]")) {
+    window.bridgeClearComposeField(field);
   }
 });
 
