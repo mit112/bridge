@@ -285,10 +285,11 @@ Session liveness — the "working now" / "needs input" states — comes from Cla
 Code hooks, and **`bridge setup` does not install these**; add them by hand.
 `/settings` in the panel shows whether they are installed and prints the exact
 JSON for your port. In `~/.claude/settings.json`, give `Notification`,
-`SessionStart`, and `SessionEnd` a handler shaped like:
+`SessionStart`, and `SessionEnd` each an entry like this under `"hooks"` (or add
+the inner handler to an event's existing list):
 
 ```json
-{"hooks": [{"type": "http", "url": "http://127.0.0.1:8787/api/hooks", "timeout": 2}]}
+"Notification": [{"hooks": [{"type": "http", "url": "http://127.0.0.1:8787/api/hooks", "timeout": 2}]}]
 ```
 
 and add that same URL to `allowedHttpHookUrls`. The `timeout: 2` is why a

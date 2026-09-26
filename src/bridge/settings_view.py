@@ -42,8 +42,8 @@ class HookStatus:
     """Overall verdict plus per-event detail and recovery guidance.
 
     `issues` is empty exactly when `state == "present"` -- the same "quiet
-    when healthy" posture `_attention_items()` (api.py:686-712) uses for
-    Diagnostics, so Settings does not editorialize about a healthy install.
+    when healthy" posture `diagnostics.attention_items` uses, so Settings does
+    not editorialize about a healthy install.
     """
 
     state: str  # "present" | "partial" | "absent"
@@ -159,27 +159,33 @@ def _hook_status(cfg: Config, settings_path: Path) -> HookStatus:
     return HookStatus(state=state, events=events, issues=issues)
 
 
-def _event_installed(entry: object, expected_url: str) -> bool:
-    """One event is installed when it has an `http` handler pointed at this
-    port's `/api/hooks` -- the exact shape `bridge setup` writes:
-    `{"hooks": [{"type": "http", "url": ..., "timeout": 2}]}`.
+def _event_installed(entries: object, expected_url: str) -> bool:
+    """One event is installed when any of its matcher entries has an `http`
+    handler pointed at this port's `/api/hooks`.
+
+    Claude Code reads each event as a LIST of matcher entries, each with its
+    own handler list: `"Notification": [{"hooks": [{"type": "http", ...}]}]`.
+    This once expected a bare `{"hooks": [...]}` object in the list's place,
+    so a correctly installed set read as absent -- and a bare object, which
+    Claude Code never calls, as installed.
     """
-    if not isinstance(entry, dict):
-        return False
-    handlers = entry.get("hooks")
-    if not isinstance(handlers, list):
+    if not isinstance(entries, list):
         return False
     return any(
-        isinstance(h, dict) and h.get("type") == "http" and h.get("url") == expected_url
-        for h in handlers
+        isinstance(entry, dict) and isinstance(entry.get("hooks"), list)
+        and any(
+            isinstance(h, dict) and h.get("type") == "http"
+            and h.get("url") == expected_url
+            for h in entry["hooks"]
+        )
+        for entry in entries
     )
 
 
 def _hook_issue(state: str, events: tuple[HookEventStatus, ...], expected_url: str) -> dict:
-    """One cause/next_action dict, in the shape `_attention_items()`
-    (api.py:686-712) already uses for Diagnostics -- the one existing
-    precedent in this codebase for "explain what's wrong and what to do
-    about it".
+    """One cause/next_action dict, in the shape `diagnostics.attention_items`
+    already uses -- the one existing precedent in this codebase for "explain
+    what's wrong and what to do about it".
     """
     missing = [e.name for e in events if not e.installed]
     if state == "absent":
@@ -187,21 +193,27 @@ def _hook_issue(state: str, events: tuple[HookEventStatus, ...], expected_url: s
             "Bridge's Claude Code hooks are not installed in "
             "~/.claude/settings.json (or point at a different port)."
         )
-    else:
+    elif missing:
         cause = (
             f"{', '.join(missing)} hook(s) are missing from "
             "~/.claude/settings.json, or point at a different port."
         )
+    else:
+        # Every handler is wired; `partial` then means only the allow-list.
+        cause = (
+            f"All three hooks are wired, but {expected_url} is not in "
+            '"allowedHttpHookUrls", so Claude Code will not call it.'
+        )
     handler_shape = (
-        '{"hooks": [{"type": "http", "url": "' + expected_url + '", "timeout": 2}]}'
+        '[{"hooks": [{"type": "http", "url": "' + expected_url + '", "timeout": 2}]}]'
     )
     return {
         "label": "Claude Code hooks not fully installed",
         "cause": cause,
         "next_action": (
-            "Add Notification, SessionStart, and SessionEnd entries under "
-            '"hooks" in ~/.claude/settings.json, each shaped '
-            f"{handler_shape}, and add that same URL to "
-            '"allowedHttpHookUrls".'
+            "Give Notification, SessionStart, and SessionEnd each an entry "
+            'under "hooks" in ~/.claude/settings.json shaped '
+            f"{handler_shape} (or add that inner object to an existing list), "
+            'and add that same URL to "allowedHttpHookUrls".'
         ),
     }
