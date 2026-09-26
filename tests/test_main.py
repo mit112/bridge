@@ -199,6 +199,68 @@ def test_serve_rebuilds_the_journal_into_an_empty_database(serve_cfg, tmp_path):
     s.close()
 
 
+def _crashed_mid_launch(tmp_path):
+    """A handoff claimed by a launch whose process died before recording an
+    outcome: the handoff `launching`, the launch `pending`, the creation
+    journaled exactly as a live POST would have left it."""
+    from bridge import spool
+    from bridge.models import Handoff, Launch
+
+    h = Handoff(id="h1", project_path=DEMO, next_prompt="run me", created_at=100)
+    spool.journal(h, tmp_path / "spool")
+    store = Store(tmp_path / "s.db")
+    pid = store.upsert_project(DEMO, "demo")
+    store.create_handoff(h, pid)
+    assert store.claim_queued_handoff("h1", pid) is not None
+    store.create_launch(Launch(id="l1", project_id=pid, mode="terminal",
+                               prompt="run me", handoff_id="h1"))
+    store.close()
+
+
+def _drop_database(tmp_path):
+    for suffix in ("", "-wal", "-shm"):
+        (tmp_path / f"s.db{suffix}").unlink(missing_ok=True)
+
+
+def test_a_handoff_reconciled_at_boot_stays_reconciled_through_a_database_loss(
+    serve_cfg, tmp_path
+):
+    """Boot marks a crashed launch's handoff `indeterminate` -- a session may
+    or may not have started. Without a journal record of that, the rebuild
+    after `rm bridge.db` finds only the creation record and puts a prompt that
+    may already have run back in the queue."""
+    _crashed_mid_launch(tmp_path)
+
+    assert main(["serve"]) == 0
+    _drop_database(tmp_path)
+    assert main(["serve"]) == 0      # the boot replay rebuilds the table
+
+    s = Store(tmp_path / "s.db")
+    assert s.get_handoff("h1")["status"] == "indeterminate"
+    s.close()
+
+
+def test_a_crashed_launch_whose_reconcile_cannot_be_journalled_is_left_alone(
+    serve_cfg, tmp_path, monkeypatch
+):
+    """Same policy as the scheduled runs: flip only what was journalled. Left
+    `pending`, the next boot tries again."""
+    from bridge import spool
+
+    _crashed_mid_launch(tmp_path)
+
+    def boom(*a, **kw):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(spool, "journal_status", boom)
+    assert main(["serve"]) == 0
+
+    s = Store(tmp_path / "s.db")
+    assert s.get_handoff("h1")["status"] == "launching"
+    assert s.pending_launch_ids() == ["l1"]
+    s.close()
+
+
 def test_index_replays_the_schedule_journal(serve_cfg, tmp_path, capsys):
     schedspool.journal(
         ScheduledRun(

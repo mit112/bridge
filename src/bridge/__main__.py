@@ -203,14 +203,31 @@ def run_db_command(argv: list[str] | None = None) -> int:
     if stray:
         log.info("reconciled %d stray 'launching' scheduled run(s)", stray)
 
-    # A manual launch has no journal of its own -- `launches` rows and a
-    # claimed handoff's `launching` status live only in the database -- so
-    # there is nothing to journal-then-flip here, unlike the scheduled-run
-    # reconciliation above. A row still `pending` at boot was claimed by a
-    # process that died before recording a terminal outcome; the spawn may
-    # or may not have actually happened, so this can only ever be marked
-    # `indeterminate`, never silently retried.
-    stray_launches = store.reconcile_pending_launches(store.pending_launch_ids())
+    # A launch row still `pending` at boot belongs to a process that died
+    # before recording an outcome; the spawn may or may not have happened, so
+    # it can only ever be marked `indeterminate`, never silently retried. The
+    # launch row itself is derived data, but a handoff it claimed is not: it is
+    # journalled, so the same journal-then-flip rule as the scheduled runs
+    # above applies. Flipped without its record, the next rebuild would put a
+    # prompt that may already have run back in the queue.
+    stray_ids = store.pending_launch_ids()
+    claimed = store.claimed_handoffs(stray_ids)
+    reconcilable_launches = []
+    for launch_id in stray_ids:
+        handoff_id = claimed.get(launch_id)
+        if handoff_id is not None:
+            try:
+                spool.journal_status(
+                    handoff_id, "indeterminate", now_epoch(), cfg.spool_dir
+                )
+            except OSError:
+                log.exception(
+                    "failed to journal reconcile of handoff %r; leaving it",
+                    handoff_id,
+                )
+                continue
+        reconcilable_launches.append(launch_id)
+    stray_launches = store.reconcile_pending_launches(reconcilable_launches)
     if stray_launches:
         log.info("reconciled %d stray 'pending' launch(es)", stray_launches)
 

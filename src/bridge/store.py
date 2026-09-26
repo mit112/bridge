@@ -1025,6 +1025,26 @@ class Store:
                 self.conn.execute("SELECT id FROM launches WHERE outcome='pending'")
             ]
 
+    def claimed_handoffs(self, launch_ids: list[str]) -> dict[str, str]:
+        """Launch id -> the handoff it left `launching`, for the given launches.
+
+        What boot reconciliation has to journal before it may flip them: the
+        handoff is authored data, so its move to `indeterminate` has to reach
+        the journal or a rebuild would queue it again.
+        """
+        if not launch_ids:
+            return {}
+        marks = ",".join("?" for _ in launch_ids)
+        with self._lock:
+            return {
+                r["id"]: r["handoff_id"] for r in self.conn.execute(
+                    f"SELECT l.id, l.handoff_id FROM launches l "
+                    f"JOIN handoffs h ON h.id = l.handoff_id "
+                    f"WHERE l.id IN ({marks}) AND h.status='launching'",
+                    launch_ids,
+                )
+            }
+
     def reconcile_pending_launches(self, ids: list[str]) -> int:
         """Flip a stray `pending` launch to `indeterminate` -- a real spawn
         may or may not have happened, so this is terminal and never retried
