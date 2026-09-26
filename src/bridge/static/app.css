@@ -721,11 +721,8 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
 .card--risk { border-left-color: var(--risk-fg); }
 .card__head { display: flex; justify-content: space-between; gap: var(--space-3); align-items: baseline; flex-wrap: wrap; }
 .card__head h2 { font: 600 var(--text-title)/1.25 var(--font-display); margin: 0; }
-.card__meta, .card__path, .card__note, .muted { color: var(--muted); font-size: var(--text-sm); }
+.card__path, .card__note, .muted { color: var(--muted); font-size: var(--text-sm); }
 .card__path { font-family: var(--font-mono); margin: .15rem 0 .9rem; overflow-wrap: anywhere; }
-.card__session { margin-bottom: .9rem; }
-.card__session h3 { font-size: .95rem; font-weight: 600; margin: 0 0 .2rem; }
-.card__session time { color: var(--muted); font-size: .8rem; }
 .risk {
   color: var(--risk-fg); background: var(--risk-bg);
   padding: .05rem .4rem; border-radius: 3px; font-weight: 600;
@@ -756,10 +753,6 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
   text-transform: uppercase;
 }
 .sessions td { font-variant-numeric: tabular-nums; }
-
-/* --- Queued handoff on a card --------------------------------------------- */
-
-.card--queued { border-left-color: var(--handoff-border); }
 
 .handoff {
   margin: 0 0 .9rem;
@@ -1672,9 +1665,6 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
 
 /* --- Hidden projects -------------------------------------------------------- */
 
-/* Sits in the card header beside the title, so `align-items: baseline` on
-   `.card__head` keeps the button on the title's baseline rather than stretched. */
-.card__hide { display: flex; align-items: baseline; gap: .5rem; }
 /* `--fg`, matching `.launch__status`: the ⚠ and the words carry the meaning, so
    the colour does not have to, and this pair is already held to AA. */
 .card__hide-status { font-size: .8rem; color: var(--fg); }
@@ -1777,23 +1767,6 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
   border-bottom: 1px solid var(--row-border);
   flex-wrap: wrap;
   font-variant-numeric: tabular-nums;
-}
-.scheduled__when { color: var(--fg); }
-.scheduled__project { font-weight: 650; }
-.scheduled__status {
-  font-size: .74rem;
-  letter-spacing: .05em;
-  text-transform: uppercase;
-  color: var(--muted);
-}
-/* Colour plus the word, never colour alone: the status text itself already
-   says "failed", so `--risk-fg` only reinforces what the row already reads.
-   `indeterminate` is marked the same way and for the same reason -- a run that
-   may or may not have spawned is a thing to look at, not a quiet success. */
-.scheduled__job--failed .scheduled__status,
-.scheduled__job--indeterminate .scheduled__status {
-  color: var(--risk-fg);
-  font-weight: 600;
 }
 .scheduled__announce { font-size: .8rem; color: var(--fg); }
 .scheduled__edit {
@@ -2412,7 +2385,6 @@ main { width: min(100%, 74rem); margin-inline: auto; padding: 0 var(--space-6) v
   main { padding: var(--space-4); }
   .card { padding: var(--space-3); }
   .card__head { align-items: flex-start; }
-  .card__hide { width: 100%; flex-wrap: wrap; }
   .launch, .schedule-form { align-items: stretch; }
   .launch__field, .schedule-form__field { flex: 1 1 9rem; }
   .launch__select, .schedule-form input, .schedule-form select { width: 100%; }
