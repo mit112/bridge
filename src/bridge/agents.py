@@ -47,9 +47,8 @@ UNAVAILABLE = AgentsState(status="unavailable", sessions=[], source="none")
 SESSIONS_DIR = Path.home() / ".claude" / "sessions"
 
 # Background agents are NOT in the registry directory; they live under the
-# daemon's own roster. Named here so the omission is deliberate rather than an
-# oversight the next reader has to rediscover.
-DAEMON_ROSTER = Path.home() / ".claude" / "daemon" / "roster.json"
+# daemon's own roster (`~/.claude/daemon/roster.json`), which is deliberately
+# not read -- noted so the omission is not an oversight to rediscover.
 
 # Confirmed against `claude` 2.1.220. A background agent in one of these has
 # stopped and is not occupying anything, so the live band must not show it as
@@ -165,20 +164,6 @@ def pid_exists(pid) -> bool:
     return True
 
 
-def pid_is_alive(pid: int | None, proc_start: str | None, ps_run=subprocess.run) -> bool:
-    """Whether `pid` is running AND is the process the registry file describes.
-
-    `os.kill(pid, 0)` checks existence and sends no signal, so this does not
-    breach "Bridge never supervises". The `procStart` cross-check defeats PID
-    reuse: without it a recycled pid makes a dead session look live forever.
-    An unverifiable start time is treated as alive-if-the-pid-exists rather
-    than as dead, because dropping a real running session is the worse error.
-    """
-    if not pid_exists(pid):
-        return False
-    return _start_matches(proc_start, ps_start_times([pid], ps_run).get(pid))
-
-
 def _session_from(entry: dict, kind_default: str = "interactive") -> LiveSession | None:
     """Project one record of either shape, or None if it cannot be correlated."""
     session_id = str(entry.get("sessionId") or entry.get("id") or "").lower()
@@ -231,7 +216,9 @@ def read_registry(sessions_dir=None, alive_fn=None) -> AgentsState:
     # A registry file outlives its process: `claude` does not always clean up,
     # so an unguarded read reports long-dead sessions as running. Existence is
     # checked per pid (free, no subprocess) and the start times come from ONE
-    # batched `ps` -- see `ps_start_times` for why that matters.
+    # batched `ps` -- see `ps_start_times` for why that matters. The `procStart`
+    # cross-check defeats PID reuse: without it a recycled pid makes a dead
+    # session look live forever.
     if alive_fn is None:
         starts = ps_start_times([live.pid for live, _ in candidates])
 

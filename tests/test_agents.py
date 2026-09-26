@@ -176,7 +176,26 @@ def test_proc_start_is_parsed_as_utc_and_ps_as_local_time():
     assert (local - utc).total_seconds() == pytest.approx(-offset - 5 * 3600, abs=1)
 
 
-def test_a_reused_pid_whose_start_time_disagrees_is_not_alive():
+def alive_in_registry(tmp_path, monkeypatch, pid, proc_start, ps):
+    """Whether `read_registry`'s own guard keeps the session.
+
+    Through the registry read rather than a helper beside it: the guard that
+    runs in production is the closure `read_registry` builds over ONE batched
+    `ps`, and a test of anything else leaves that closure free to drop the
+    start-time check unnoticed.
+    """
+    d = write_registry(tmp_path, dict(REAL_REGISTRY, pid=pid, procStart=proc_start))
+    real = agents.ps_start_times
+    monkeypatch.setattr(agents, "ps_start_times",
+                        lambda pids, ps_run=None: real(pids, ps))
+    return [s.session_id for s in agents.read_registry(d).sessions] == [SID_A]
+
+
+def no_ps_output(*a, **k):
+    return subprocess.CompletedProcess(a[0], 0, "", "")
+
+
+def test_a_reused_pid_whose_start_time_disagrees_is_not_alive(tmp_path, monkeypatch):
     pid = os.getpid()
 
     def ps(*a, **k):
@@ -185,10 +204,11 @@ def test_a_reused_pid_whose_start_time_disagrees_is_not_alive():
             a[0], 0, f"{pid} Sat Aug  1 03:00:00 2026\n", ""
         )
 
-    assert agents.pid_is_alive(pid, "Sat Jan  3 07:44:58 2026", ps_run=ps) is False
+    assert not alive_in_registry(tmp_path, monkeypatch, pid,
+                                 "Sat Jan  3 07:44:58 2026", ps)
 
 
-def test_a_matching_start_time_is_alive():
+def test_a_matching_start_time_is_alive(tmp_path, monkeypatch):
     now = datetime.now(timezone.utc).replace(microsecond=0)
     fmt = "%a %b %e %H:%M:%S %Y"
     local = now.astimezone()
@@ -200,29 +220,33 @@ def test_a_matching_start_time_is_alive():
             a[0], 0, f"{pid} {local.strftime(fmt)}", ""
         )
 
-    assert agents.pid_is_alive(pid, now.strftime(fmt), ps_run=ps) is True
+    assert alive_in_registry(tmp_path, monkeypatch, pid, now.strftime(fmt), ps)
 
 
-def test_a_pid_that_does_not_exist_is_not_alive():
-    assert agents.pid_is_alive(9999999, "Sat Aug  1 07:44:58 2026") is False
+def test_a_pid_that_does_not_exist_is_not_alive(tmp_path, monkeypatch):
+    assert not alive_in_registry(tmp_path, monkeypatch, 9999999,
+                                 "Sat Aug  1 07:44:58 2026", no_ps_output)
 
 
-def test_a_failed_ps_leaves_the_session_alive_rather_than_dropping_it():
+def test_a_failed_ps_leaves_the_session_alive_rather_than_dropping_it(
+    tmp_path, monkeypatch
+):
     """Dropping a real running session is the worse error of the two."""
     def boom(*a, **k):
         raise OSError("ps exploded")
 
-    assert agents.pid_is_alive(os.getpid(), "Sat Aug  1 07:44:58 2026",
-                               ps_run=boom) is True
+    assert alive_in_registry(tmp_path, monkeypatch, os.getpid(),
+                             "Sat Aug  1 07:44:58 2026", boom)
 
 
-def test_a_missing_proc_start_leaves_the_session_alive():
-    assert agents.pid_is_alive(os.getpid(), None) is True
+def test_a_missing_proc_start_leaves_the_session_alive(tmp_path, monkeypatch):
+    assert alive_in_registry(tmp_path, monkeypatch, os.getpid(), None, no_ps_output)
 
 
 @pytest.mark.parametrize("pid", [None, 0, -1, "53458"])
-def test_a_nonsense_pid_is_not_alive(pid):
-    assert agents.pid_is_alive(pid, "Sat Aug  1 07:44:58 2026") is False
+def test_a_nonsense_pid_is_not_alive(tmp_path, monkeypatch, pid):
+    assert not alive_in_registry(tmp_path, monkeypatch, pid,
+                                 "Sat Aug  1 07:44:58 2026", no_ps_output)
 
 
 # --- attribution -------------------------------------------------------------
