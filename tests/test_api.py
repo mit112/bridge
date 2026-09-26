@@ -2101,7 +2101,7 @@ def test_diagnostics_spool_backlog_surfaces_under_needs_attention(tmp_path):
     (cfg.spool_dir / "x.json").write_text("{}")
     html = c.get("/diagnostics").text
     assert "1 handoff file(s) are queued in the spool" in html
-    assert "Confirm the spool drain process is running" in html
+    assert "the spool is drained when `bridge serve` starts" in html
     store.close()
 
 
