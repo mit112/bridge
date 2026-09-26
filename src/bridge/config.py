@@ -35,10 +35,13 @@ class ModelChoice:
     label: str
 
 
-# Ids verified against `claude` 2.1.220 on this machine. Aliases first (the
-# common case, and the default selection), then pinned versions newest-first.
+# Ids as `claude` 2.1.283 reports them in its own transcripts. Aliases first
+# (the common case, and the default selection), then pinned versions
+# newest-first. An alias's label names what it resolves to today, so it goes
+# stale with every release -- check it against recent transcripts' `model`.
 DEFAULT_MODELS = [
-    ModelChoice("opus", "opus — latest (Opus 5)"),
+    ModelChoice("opus", "opus — latest (Opus 5.5)"),
+    ModelChoice("claude-opus-5-5", "Opus 5.5"),
     ModelChoice("claude-opus-5", "Opus 5"),
     ModelChoice("claude-opus-4-8", "Opus 4.8"),
     ModelChoice("claude-opus-4-7", "Opus 4.7"),
@@ -47,7 +50,8 @@ DEFAULT_MODELS = [
     ModelChoice("claude-sonnet-4-6", "Sonnet 4.6"),
     ModelChoice("haiku", "haiku — latest (Haiku 4.5)"),
     ModelChoice("claude-haiku-4-5", "Haiku 4.5"),
-    ModelChoice("fable", "fable — latest (Fable 5)"),
+    ModelChoice("fable", "fable — latest (Fable 5.1)"),
+    ModelChoice("claude-fable-5-1", "Fable 5.1"),
     ModelChoice("claude-fable-5", "Fable 5"),
 ]
 # The full set `claude --effort` accepts. Listed in full rather than left
