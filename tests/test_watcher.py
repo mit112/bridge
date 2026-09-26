@@ -63,20 +63,29 @@ def test_stop_joins_cleanly(tmp_path):
     assert not w.is_alive()
 
 def test_a_raising_callback_does_not_kill_the_thread(tmp_path):
-    state = {"n": 0}
+    """Waits on the callbacks themselves, never on fixed sleeps.
+
+    The old version wrote, slept 0.3s, wrote, slept 0.3s, and counted. A watcher
+    thread scheduled late on a loaded runner either folds both writes into one
+    debounced call -- correct behaviour -- or fires the second after `stop()`,
+    and both read as "the thread died". Writing `b` only once the first call has
+    been seen means one call per write, and the timeout is only a backstop.
+    """
+    calls = []
+    fired = [threading.Event(), threading.Event()]
     def cb():
-        state["n"] += 1
+        calls.append(1)
+        fired[min(len(calls), 2) - 1].set()
         raise RuntimeError("boom")
     w = FileWatcher(tmp_path, on_change=cb, poll_s=0.02, quiet_s=0.02)
     w.start()
     try:
         (tmp_path / "a.jsonl").write_text("{}")
-        time.sleep(0.3)
+        assert fired[0].wait(5.0), "the first change never fired"
         (tmp_path / "b.jsonl").write_text("{}")
-        time.sleep(0.3)
+        assert fired[1].wait(5.0), "thread died after the first raising callback"
     finally:
         w.stop()
-    assert state["n"] >= 2, "thread died after the first raising callback"
 
 def test_a_write_racing_start_is_still_seen(tmp_path, monkeypatch):
     """`start()` returning must mean "everything from now on is a change".
