@@ -796,10 +796,10 @@ def run_setup() -> int:
     if installed_launchd:
         print(f"  Agent:       running ({LAUNCHD_PLIST_PATH})")
     else:
-        print(f"  Agent:       not installed (run `bridge serve` manually)")
+        print("  Agent:       not installed (run `bridge serve` manually)")
     print()
     print("  Next steps:")
-    print(f"    1. Run `bridge index` to scan your Claude Code transcripts")
+    print("    1. Run `bridge index` to scan your Claude Code transcripts")
     print(f"    2. Open http://127.0.0.1:{port}")
     print()
     print("  To uninstall later: bridge setup --uninstall")

@@ -606,7 +606,6 @@ def create_app(
         )
     )
 
-
     # --- scheduled runs -------------------------------------------------------
     #
     # Mounted from `routes_schedule` rather than declared here. `notify` is a
