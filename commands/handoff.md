@@ -146,6 +146,10 @@ Rules that matter:
 - **Exit 0, stderr says `spooled to <path>`** — also success. The panel is not running,
   which is the normal case; the handoff is on disk and the server ingests it the next time
   it starts. Report it as captured, not as a failure.
+- **Exit 0, stderr says `the panel REFUSED this handoff`** — NOT recorded, despite the exit
+  status. The panel rejected the payload itself, gave its reason on the same line, and the
+  CLI saved the payload where nothing will ever retry it (the path follows). Tell the user,
+  quote the reason, and fix and rerun rather than reporting it as captured.
 - **Exit 0, stderr prints the prompt back** — spooling itself failed. The prompt survives in
   this transcript only. Tell the user plainly and paste the path you tried.
 - **Non-zero** — a real failure. The usual cause is an empty prompt, which exits 2. Fix and
@@ -162,10 +166,10 @@ in that window, rather than opening a new one.
 
 ## Installation note
 
-This file lives in the Bridge repo at `commands/handoff.md` and must be copied to
-`~/.claude/commands/handoff.md` to be usable. Bridge never writes outside `~/.bridge`, so
-that copy is a deliberate manual step:
+This file lives in the Bridge repo at `commands/handoff.md` and is usable once it is at
+`~/.claude/commands/handoff.md`. `bridge setup` offers to copy it there, and asks before
+replacing one that already exists. From a clone, the same copy by hand is:
 
 ```bash
-cp ~/dev/bridge/commands/handoff.md ~/.claude/commands/handoff.md
+cp commands/handoff.md ~/.claude/commands/handoff.md
 ```
