@@ -7,7 +7,7 @@ from dataclasses import replace
 from typing import Callable
 
 from bridge import agents, diagnostics, hooks, spool
-from bridge.cards import FIVE_HOURS, ONE_DAY, build_cards, spark_points
+from bridge.cards import FIVE_HOURS, build_cards, spark_points
 from bridge.config import Config
 from bridge.models import AgentsState, Card, GitState
 from bridge.refresh import RefreshCoordinator, RefreshResult, RefreshStatus

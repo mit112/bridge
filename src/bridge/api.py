@@ -16,21 +16,17 @@ import secrets
 import threading
 import time
 from dataclasses import asdict
-from dataclasses import replace as dataclasses_replace
 from pathlib import Path
-from typing import Literal
 from urllib.parse import urlsplit
-from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException, Query, Request, Response
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel, field_validator, model_validator
 from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from bridge import __version__, agents, hooks, launcher, schedspool, setup, spool, update
+from bridge import agents, hooks, launcher, setup, spool, update
 from bridge.cards import (
     FIVE_HOURS,
     GitProbeCache,
@@ -41,7 +37,7 @@ from bridge.config import Config
 from bridge.dashboard import DashboardBuilder
 from bridge import diagnostics
 from bridge.filters import register_template_filters
-from bridge.firing import LaunchFn, _fire_claimed_job, _row_to_scheduled_run, fire
+from bridge.firing import LaunchFn
 from bridge.http_policy import (
     FRAGMENT_HEADER,
     LOOPBACK_HOSTNAMES,
@@ -50,24 +46,15 @@ from bridge.http_policy import (
     _hostname,
     _layout_for,
 )
-from bridge.models import AgentsState, Handoff, ScheduledRun
+from bridge.models import AgentsState
 from bridge.notify import ChangeNotifier
 from bridge.overview import build_overview
 from bridge.projects_view import build_projects
 from bridge.refresh import RefreshCoordinator
-from bridge.registry import display_name, resolve_project
 from bridge.routes_handoffs import build_router as build_handoffs_router
 from bridge.routes_schedule import build_router as build_schedule_router
 from bridge.schedule_view import build_schedule
-from bridge.schemas import (
-    HandoffIn,
-    HandoffPatch,
-    HandoffStatus,
-    LaunchIn,
-    ProjectPatch,
-    ProjectStatus,
-    UpdateIn,
-)
+from bridge.schemas import ProjectPatch, UpdateIn
 from bridge.settings_view import build_settings
 from bridge.store import Store, now_epoch
 from bridge.workspace import build_workspace

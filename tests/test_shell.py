@@ -129,7 +129,6 @@ def test_settings_nav_item_is_marked_active_on_its_own_page(tmp_path):
 
 
 def test_every_shell_page_has_exactly_one_h1_and_the_shared_landmarks(tmp_path):
-    c = _client(tmp_path)
     cfg = load({"db_path": tmp_path / "b.db", "spool_dir": tmp_path / "spool2"})
     store = Store(cfg.db_path)
     pid = store.upsert_project("/Users/you/dev/demo", "demo")

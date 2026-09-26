@@ -101,7 +101,7 @@ def _fire_claimed_job(store: Store, cfg: Config, row, launch_fn: LaunchFn):
     # scenario this exists to prevent.
     try:
         schedspool.journal_status(id, "launching", now_epoch(), cfg.spool_dir)
-    except OSError as exc:
+    except OSError:
         # Marking this `failed` would be a WORSE outcome than the filesystem
         # hiccup that caused it: `failed` is terminal, so a job still owed
         # tomorrow would never fire again over a transient write error today.

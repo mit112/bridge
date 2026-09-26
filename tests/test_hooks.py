@@ -7,7 +7,7 @@ learn that a session is sitting at a prompt waiting for a human.
 import pytest
 from fastapi.testclient import TestClient
 
-from bridge import agents, hooks
+from bridge import hooks
 from bridge.api import create_app
 from bridge.cards import build_cards, live_priority
 from bridge.config import load
