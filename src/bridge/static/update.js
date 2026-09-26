@@ -138,7 +138,10 @@
             announce("✓ Update installed — restart the panel to apply.");
             return;
           }
-          var message = (result.data && result.data.error) || "unknown error";
+          // `error` from a failed install; `detail` from a refusal, which is an
+          // HTTPException (bad token, or a SHA no longer on offer).
+          var message = (result.data && (result.data.error || result.data.detail))
+            || "unknown error";
           console.error("bridge: update failed", message);
           announce("⚠ Update failed — " + message + ". Run `bridge update` to retry.");
         })

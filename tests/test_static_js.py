@@ -4655,6 +4655,25 @@ def test_a_failed_update_stays_on_screen_and_retryable_with_its_error_visible(tm
 
 
 @pytest.mark.skipif(_node() is None, reason="node is not installed")
+def test_a_refused_update_shows_the_servers_own_reason(tmp_path):
+    """A refusal -- a bad token, or a SHA the checker has stopped offering -- is
+    an HTTPException, which FastAPI answers as `{"detail": ...}`, not the
+    `{"error": ...}` the install path returns. Reading only `error` rendered
+    every refusal as "unknown error"."""
+    got = _run_update_banner(
+        tmp_path,
+        diag_update={"state": "behind", "installed_sha": INSTALLED,
+                     "latest_sha": SHA_A, "checked_at": "now", "error": None},
+        apply=True,
+        post_http_ok=False,
+        post_status=409,
+        post_body={"detail": "target SHA is not the currently offered update"},
+    )
+    assert "target SHA is not the currently offered update" in got["status"]
+    assert "unknown error" not in got["status"]
+
+
+@pytest.mark.skipif(_node() is None, reason="node is not installed")
 def test_a_successful_update_announces_success_without_hiding_the_banner(tmp_path):
     """This synchronous-success branch is the UNMANAGED (`bridge serve`) path:
     the install landed but this in-process panel does NOT auto-restart, so the
