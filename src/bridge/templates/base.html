@@ -145,6 +145,11 @@
     <button type="button" class="btn btn--icon" id="update-banner__dismiss"
             aria-label="Dismiss update notice">×</button>
   </div>
+  {# The announcer for a change whose own status node does not survive it. On
+     /projects a pin, hide or restore re-renders the list, and a message written
+     into the row's status span dies with the row before a screen reader reads
+     it. Outside `.shell` like the banner above, so no content swap detaches it. #}
+  <div class="visually-hidden" role="status" aria-live="polite" data-shell-announce></div>
   <div class="shell">
     <aside class="sidebar">
       <div class="sidebar__head">

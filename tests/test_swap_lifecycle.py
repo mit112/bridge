@@ -771,3 +771,301 @@ def test_a_pop_with_no_recorded_position_still_lands_at_the_top(tmp_path):
         tmp_path,
     )
     assert got["afterBack"] == 0
+
+
+# --- Pin / hide / restore on /projects: what is said, and where focus lands ---
+#
+# Every success on /projects re-renders the list through the router, which
+# replaces the clicked control and every status node beside it. Hide used to
+# write "✓ Hidden" into a status span INSIDE the row it had just removed, so
+# nothing was ever announced and focus dropped to <body>. The stub harness in
+# test_static_js.py could not see that: its status node is a free global, not
+# a child of the row. So this models the real nesting of projects.html and a
+# swap that genuinely replaces `.shell__body` with a fresh server render.
+#
+# minidom models no focus; `El.prototype.focus` is replaced with a recorder, so
+# what these prove is WHICH node is handed focus -- and that it is a node of the
+# new render, not a detached one -- not how a browser paints the ring.
+PROJECTS_PAGE = """
+const { El } = require(MINIDOM);
+globalThis.window.scrollTo = () => {};
+El.prototype.focus = function () { globalThis.__focused = this; };
+function tick() { return new Promise((resolve) => setImmediate(resolve)); }
+async function settle() { for (let i = 0; i < 20; i += 1) await tick(); }
+
+function el(tag, attrs = {}, kids = []) {
+  const node = new El(tag, attrs);
+  if (attrs.class) node.setAttribute("class", attrs.class);
+  for (const kid of kids) node.append(kid);
+  return node;
+}
+
+// What the server holds. PATCH mutates it; the fragment render reads it, the way
+// the real `/projects` render reads the store after the write lands.
+const server = {
+  groups: [
+    { key: "pinned", open: true, ids: [] },
+    { key: "queued", open: true, ids: ["a", "b", "c"] },
+    { key: "idle", open: false, ids: ["d"] },
+  ],
+  hidden: ["h1", "h2"],
+};
+function take(id) {
+  for (const g of server.groups) g.ids = g.ids.filter((x) => x !== id);
+  server.hidden = server.hidden.filter((x) => x !== id);
+}
+function group(key) { return server.groups.find((g) => g.key === key); }
+
+// projects.html's nesting: group <details> > ul > li[data-project-card] >
+// Actions <details> > summary + Pin + Hide + the row's own status span.
+function renderBody() {
+  const filters = ["all", "queued", "hidden"].map((f) => el("button", {
+    "data-projects-filter": f, "aria-pressed": f === "all" ? "true" : "false" }));
+  const index = el("div", { class: "projects-index", "data-projects-list": "" });
+  for (const g of server.groups) {
+    if (!g.ids.length) continue;
+    const list = el("ul", { class: "projects-list" });
+    for (const id of g.ids) {
+      list.append(el("li", {
+        class: "projects-list__item", "data-project-card": id, "data-project-row-item": "",
+        "data-project-state": g.key === "pinned" ? "queued" : g.key,
+        "data-project-name": `demo-${id}`, "data-project-path": `/p/${id}`,
+      }, [el("details", { class: "projects-list__actions" }, [
+        el("summary", {}),
+        el("button", { class: "btn btn--pin", "data-project-pin": id,
+                       "aria-pressed": g.key === "pinned" ? "true" : "false" }),
+        el("button", { class: "btn", "data-project-hide": id }),
+        el("span", { "data-project-status": id }),
+      ])]));
+    }
+    const details = el("details", { class: "projects-group", "data-project-group": g.key },
+                       [el("summary", { class: "projects-group__head" }), list]);
+    details.open = g.open;
+    index.append(details);
+  }
+  const hiddenList = el("ul", { "data-hidden-list": "" }, server.hidden.map((id) =>
+    el("li", { "data-hidden-project": id }, [
+      el("span", { class: "hidden-project__name" }, []),
+      el("button", { class: "btn", "data-project-restore": id }),
+    ])));
+  hiddenList.children.forEach((li) => {
+    li.children[0].textContent = `demo-${li.getAttribute("data-hidden-project")}`;
+  });
+  const main = el("main", { id: "main" }, [
+    el("section", {}, [el("input", { "data-projects-search": "" }), ...filters,
+                       el("p", { "data-projects-count": "" })]),
+    index,
+    el("p", { "data-projects-empty": "", hidden: "" }),
+    el("section", { "data-hidden-projects": "", hidden: "" }, [
+      hiddenList, el("span", { "data-hidden-status": "" })]),
+  ]);
+  return el("div", { class: "shell__body" }, [main]);
+}
+
+const announcer = el("div", { class: "visually-hidden", role: "status",
+                              "data-shell-announce": "" });
+const shell = el("div", { class: "shell" }, [renderBody()]);
+document.body.append(announcer);
+document.body.append(shell);
+globalThis.location.href = "http://localhost/projects";
+
+// The swap: the old `.shell__body` goes, a fresh render of the server's current
+// state takes its place -- every node the click handler could have held is gone.
+globalThis.parseFragment = () => ({ marker: true });
+globalThis.applyFragment = () => {
+  document.querySelector(".shell__body").remove();
+  shell.append(renderBody());
+  return true;
+};
+
+const seen = { announcedAtPatch: null };
+globalThis.fetch = (url, opts) => {
+  if (opts && opts.method === "PATCH") {
+    seen.announcedAtPatch = announcer.textContent;
+    const id = decodeURIComponent(url.split("/").pop());
+    const body = JSON.parse(opts.body);
+    if (body.status === "hidden") { take(id); server.hidden.push(id); }
+    if (body.status === "active") { take(id); group("queued").ids.push(id); }
+    if (body.pinned === true) { take(id); group("pinned").ids.push(id); }
+    if (body.pinned === false) { take(id); group("idle").ids.push(id); }
+    return Promise.resolve({ ok: true, status: 200 });
+  }
+  return Promise.resolve({ ok: true, status: 200, text: async () => "FRAGMENT" });
+};
+
+function focusedIs() {
+  const f = globalThis.__focused;
+  if (!f) return null;
+  const inLiveBody = f.closest(".shell__body") === document.querySelector(".shell__body");
+  const row = f.closest("[data-project-card]") || f.closest("[data-hidden-project]");
+  return {
+    live: inLiveBody,
+    tag: f.tag,
+    row: row ? (row.getAttribute("data-project-card") || row.getAttribute("data-hidden-project")) : null,
+    group: f.closest("[data-project-group]") ? f.closest("[data-project-group]").getAttribute("data-project-group") : null,
+    main: f.getAttribute("id") === "main",
+    restore: f.getAttribute("data-project-restore"),
+  };
+}
+function click(selector) { document.querySelector(selector).dispatchEvent({ type: "click" }); }
+function pressed() {
+  const p = document.querySelector('[data-projects-filter][aria-pressed="true"]');
+  return p ? p.getAttribute("data-projects-filter") : null;
+}
+"""
+
+
+def _run_projects_page(body: str, tmp_path) -> dict:
+    return run_js(
+        PROJECTS_PAGE.replace("MINIDOM", json.dumps(str(MINIDOM))) + body,
+        ["shell.js", "router.js", "projects.js"],
+        tmp_path,
+    )
+
+
+def test_hiding_a_row_announces_outside_the_swap_and_focuses_the_next_row(tmp_path):
+    got = _run_projects_page(
+        """
+        (async () => {
+          document.querySelector("[data-projects-search]").value = "demo";
+          document.querySelector(".shell__body").scrollTop = 240;
+          click('[data-project-hide="b"]');
+          await settle();
+          report({
+            announced: announcer.textContent,
+            focused: focusedIs(),
+            gone: document.querySelector('[data-project-card="b"]') === null,
+            search: document.querySelector("[data-projects-search]").value,
+            scroll: document.querySelector(".shell__body").scrollTop,
+          });
+        })();
+        """,
+        tmp_path,
+    )
+    assert got["gone"], "the row was not re-rendered away"
+    assert got["announced"] == "demo-b hidden from the dashboard", (
+        "the success was written somewhere the swap destroyed"
+    )
+    assert got["focused"] == {"live": True, "tag": "summary", "row": "c", "group": "queued",
+                              "main": False, "restore": None}, (
+        "focus did not move on to the next row's Actions in the new render"
+    )
+    assert got["search"] == "demo", "the re-render threw the user's search away"
+    assert got["scroll"] == 240, "an in-place re-render jumped to the top"
+
+
+def test_hiding_the_last_row_hands_focus_back_to_the_one_before_it(tmp_path):
+    got = _run_projects_page(
+        """
+        (async () => {
+          take("d");                       // c is now the last row on the page
+          document.querySelector(".shell__body").remove();
+          shell.append(renderBody());
+          click('[data-project-hide="c"]');
+          await settle();
+          report({ focused: focusedIs() });
+        })();
+        """,
+        tmp_path,
+    )
+    assert got["focused"]["row"] == "b"
+    assert got["focused"]["live"] is True
+
+
+def test_pinning_follows_the_project_into_its_new_group(tmp_path):
+    got = _run_projects_page(
+        """
+        (async () => {
+          click('[data-project-pin="c"]');
+          await settle();
+          report({ announced: announcer.textContent, focused: focusedIs() });
+        })();
+        """,
+        tmp_path,
+    )
+    assert got["announced"] == "demo-c pinned"
+    assert got["focused"]["row"] == "c"
+    assert got["focused"]["group"] == "pinned"
+    assert got["focused"]["live"] is True
+
+
+def test_unpinning_into_a_collapsed_group_focuses_that_groups_summary(tmp_path):
+    """A summary inside a closed <details> cannot take focus, so the group's own
+    summary -- which names where the project went -- takes it instead."""
+    got = _run_projects_page(
+        """
+        (async () => {
+          take("a"); group("pinned").ids.push("a");
+          document.querySelector(".shell__body").remove();
+          shell.append(renderBody());
+          click('[data-project-pin="a"]');
+          await settle();
+          report({ announced: announcer.textContent, focused: focusedIs() });
+        })();
+        """,
+        tmp_path,
+    )
+    assert got["announced"] == "demo-a unpinned"
+    assert got["focused"]["group"] == "idle"
+    assert got["focused"]["row"] is None, "focused a summary inside a collapsed group"
+    assert got["focused"]["tag"] == "summary"
+
+
+def test_restoring_keeps_the_hidden_view_and_moves_on_to_the_next_restore(tmp_path):
+    got = _run_projects_page(
+        """
+        (async () => {
+          click('[data-projects-filter="hidden"]');
+          click('[data-project-restore="h1"]');
+          await settle();
+          report({
+            announced: announcer.textContent,
+            focused: focusedIs(),
+            filter: pressed(),
+            hiddenShown: !document.querySelector("[data-hidden-projects]").hidden,
+          });
+        })();
+        """,
+        tmp_path,
+    )
+    assert got["announced"] == "demo-h1 restored to the dashboard"
+    assert got["filter"] == "hidden", "the re-render dropped the user out of the Hidden view"
+    assert got["hiddenShown"] is True
+    assert got["focused"]["restore"] == "h2"
+    assert got["focused"]["live"] is True
+
+
+def test_the_announcer_is_emptied_before_the_same_sentence_is_set_again(tmp_path):
+    """A live region reads a change. Pinning the same project on a later visit
+    sets the sentence already sitting there, which is no change at all -- unless
+    the region was emptied first."""
+    got = _run_projects_page(
+        """
+        (async () => {
+          announcer.textContent = "demo-c pinned";
+          click('[data-project-pin="c"]');
+          await settle();
+          report({ atPatch: seen.announcedAtPatch, after: announcer.textContent });
+        })();
+        """,
+        tmp_path,
+    )
+    assert got["atPatch"] == ""
+    assert got["after"] == "demo-c pinned"
+
+
+def test_a_navigation_that_names_no_focus_target_still_lands_on_main_at_the_top(tmp_path):
+    """The `focus` option is only for re-renders in place; an ordinary swap keeps
+    landing on #main at the top, like a real navigation."""
+    got = _run_projects_page(
+        """
+        (async () => {
+          document.querySelector(".shell__body").scrollTop = 240;
+          await window.bridgeNavigate("/projects");
+          report({ focused: focusedIs(), scroll: document.querySelector(".shell__body").scrollTop });
+        })();
+        """,
+        tmp_path,
+    )
+    assert got["focused"]["main"] is True
+    assert got["scroll"] == 0

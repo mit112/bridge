@@ -205,7 +205,7 @@
     "old": "      await patchProject(id, \"hidden\");",
     "new": "      await patchProject(id, \"archived\");",
     "tests": [
-      "tests/test_static_js.py::test_hide_patches_the_status_and_moves_the_card_into_the_hidden_list"
+      "tests/test_static_js.py::test_hide_patches_the_status_and_re_renders_the_index"
     ],
     "expect_count": 1
   },
@@ -220,22 +220,102 @@
     "expect_count": 1
   },
   {
-    "name": "drop the row into nothing, so the hidden project is never named on screen",
-    "file": "src/bridge/static/projects.js",
-    "old": "      if (list) list.append(hiddenRow(id, name));",
-    "new": "      ;",
-    "tests": [
-      "tests/test_static_js.py::test_hide_patches_the_status_and_moves_the_card_into_the_hidden_list"
-    ],
-    "expect_count": 1
-  },
-  {
     "name": "treat any response as success, so a refused restore reports as done",
     "file": "src/bridge/static/projects.js",
     "old": "  if (!response.ok) throw new Error(`HTTP ${response.status}`);",
     "new": "  ;",
     "tests": [
       "tests/test_static_js.py::test_a_refused_restore_leaves_the_row_in_the_list"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "announce a hide into the row's own status node, which the swap destroys unread",
+    "file": "src/bridge/static/projects.js",
+    "old": "      say(ANNOUNCE, `${name} hidden from the dashboard`);",
+    "new": "      say(`[data-project-status=\"${id}\"]`, \"✓ Hidden\");",
+    "tests": [
+      "tests/test_swap_lifecycle.py::test_hiding_a_row_announces_outside_the_swap_and_focuses_the_next_row"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "hand focus to the row BEFORE a hidden one, not the one that moved up into its place",
+    "file": "src/bridge/static/projects.js",
+    "old": "  const next = rows[at + 1] || rows[at - 1];",
+    "new": "  const next = rows[at - 1] || rows[at + 1];",
+    "tests": [
+      "tests/test_swap_lifecycle.py::test_hiding_a_row_announces_outside_the_swap_and_focuses_the_next_row"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "focus a summary inside a collapsed group, which cannot take focus",
+    "file": "src/bridge/static/projects.js",
+    "old": "  if (group && !group.open) return group.querySelector(\"summary\");\n",
+    "new": "",
+    "tests": [
+      "tests/test_swap_lifecycle.py::test_unpinning_into_a_collapsed_group_focuses_that_groups_summary"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "lose the pinned project's place, so focus lands on #main after a pin",
+    "file": "src/bridge/static/projects.js",
+    "old": "      await reindexProjects(() => projectFocusTarget(id));",
+    "new": "      await reindexProjects(() => null);",
+    "tests": [
+      "tests/test_swap_lifecycle.py::test_pinning_follows_the_project_into_its_new_group"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "drop the Hidden filter across a restore's re-render, stranding focus in a hidden section",
+    "file": "src/bridge/static/projects.js",
+    "old": "      document.querySelectorAll(\"[data-projects-filter]\").forEach((btn) => {\n        btn.setAttribute(\"aria-pressed\",\n                         String(btn.getAttribute(\"data-projects-filter\") === filter));\n      });\n",
+    "new": "",
+    "tests": [
+      "tests/test_swap_lifecycle.py::test_restoring_keeps_the_hidden_view_and_moves_on_to_the_next_restore"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "throw the search away on every re-render",
+    "file": "src/bridge/static/projects.js",
+    "old": "      if (box) box.value = query;",
+    "new": "      ;",
+    "tests": [
+      "tests/test_swap_lifecycle.py::test_hiding_a_row_announces_outside_the_swap_and_focuses_the_next_row"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "never move on to the next Restore, so a restore drops focus to #main",
+    "file": "src/bridge/static/projects.js",
+    "old": "    await reindexProjects(() => (neighbour\n      ? document.querySelector(`[data-project-restore=\"${neighbour}\"]`) : null));",
+    "new": "    await reindexProjects(() => null);",
+    "tests": [
+      "tests/test_swap_lifecycle.py::test_restoring_keeps_the_hidden_view_and_moves_on_to_the_next_restore"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "leave the last sentence in the announcer, so repeating it announces nothing",
+    "file": "src/bridge/static/projects.js",
+    "old": "    const onIndex = pin.closest(\"[data-project-card]\");\n    say(ANNOUNCE, \"\");",
+    "new": "    const onIndex = pin.closest(\"[data-project-card]\");",
+    "tests": [
+      "tests/test_swap_lifecycle.py::test_the_announcer_is_emptied_before_the_same_sentence_is_set_again"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "drop the shell announcer, so every success on /projects is announced into nothing",
+    "file": "src/bridge/templates/base.html",
+    "old": "  <div class=\"visually-hidden\" role=\"status\" aria-live=\"polite\" data-shell-announce></div>\n",
+    "new": "",
+    "tests": [
+      "tests/test_shell.py::test_the_shell_announcer_sits_outside_everything_a_swap_replaces"
     ],
     "expect_count": 1
   }

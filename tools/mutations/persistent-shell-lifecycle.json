@@ -235,8 +235,8 @@
   {
     "name": "let focus() scroll on arrival, so a swap into a tall page pins #main's top and hides the page header",
     "file": "src/bridge/static/router.js",
-    "old": "  if (main && main.focus) main.focus({ preventScroll: true });",
-    "new": "  if (main && main.focus) main.focus();",
+    "old": "  if (!target && main && main.focus) main.focus({ preventScroll: true });",
+    "new": "  if (!target && main && main.focus) main.focus();",
     "tests": [
       "tests/test_shell_contract.py::test_router_lands_a_swap_at_the_top_without_a_focus_scroll"
     ],
@@ -245,10 +245,30 @@
   {
     "name": "stop resetting the .shell__body scroll container on arrival, leaving a swap wherever the last page was scrolled",
     "file": "src/bridge/static/router.js",
-    "old": "  window.scrollTo(0, 0);\n  if (body) body.scrollTop = 0;\n}",
-    "new": "}",
+    "old": "    window.scrollTo(0, 0);\n    if (body) body.scrollTop = 0;\n",
+    "new": "",
     "tests": [
       "tests/test_shell_contract.py::test_router_lands_a_swap_at_the_top_without_a_focus_scroll"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "ignore the caller's focus target, so every in-place re-render throws focus back to #main",
+    "file": "src/bridge/static/router.js",
+    "old": "  const target = focus ? focus() : null;",
+    "new": "  const target = null;",
+    "tests": [
+      "tests/test_swap_lifecycle.py::test_hiding_a_row_announces_outside_the_swap_and_focuses_the_next_row"
+    ],
+    "expect_count": 1
+  },
+  {
+    "name": "land an in-place re-render at the top, so hiding a row deep in the list jumps the page",
+    "file": "src/bridge/static/router.js",
+    "old": "      announceArrival(restore || stay, focus);",
+    "new": "      announceArrival(restore, focus);",
+    "tests": [
+      "tests/test_swap_lifecycle.py::test_hiding_a_row_announces_outside_the_swap_and_focuses_the_next_row"
     ],
     "expect_count": 1
   }
