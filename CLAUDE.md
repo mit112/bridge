@@ -102,6 +102,10 @@ uv run bridge index                         # reindex; defers to a running panel
   panel **and** its toggle. `/` and `/projects` are not morphed — adding them
   to the owned set breaks their client state.
 - At ≥1024px `.shell__body`, not the window, is the scroll container.
+- A status node inside `.shell__body` dies with every swap, including an
+  in-place re-render (`bridgeNavigate(url, { push: false })`). Announce a change
+  that re-renders into the shell's `[data-shell-announce]`, and pass `focus` so
+  the router hands focus on instead of dropping it on `#main`.
 - WCAG 2.2 AA. Status is never conveyed by colour alone; a control that
   removes itself moves focus first.
 
