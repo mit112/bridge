@@ -1625,13 +1625,14 @@ globalThis.window = globalThis;
 let clickHandler = null;
 
 const card = { removed: false, remove() { this.removed = true; },
-               querySelector: () => ({ textContent: "  demo  " }) };
+               getAttribute: (n) => (n === "data-project-name" ? "demo" : null) };
 const hideButton = {
   getAttribute: (n) => (n === "data-project-hide" ? "7" : null),
   closest: (sel) => (sel === "[data-project-card]" && HIDE_HAS_CARD ? card : null),
 };
 const restoreButton = {
   getAttribute: (n) => (n === "data-project-restore" ? "7" : null),
+  closest: (sel) => (sel === "[data-hidden-project]" ? row : null),
 };
 const pinButton = {
   attrs: { "data-project-pin": "7", "aria-pressed": PRESSED },
@@ -1643,22 +1644,22 @@ const pinButton = {
   // ancestor is the whole difference, since only the grouped index re-sorts.
   closest: (sel) => (sel === "[data-project-card]" && PIN_HAS_CARD ? card : null),
 };
-const list = { appended: 0, append() { this.appended += 1; } };
 const cardStatus = { textContent: "" };
 const hiddenStatus = { textContent: "" };
-const row = { removed: false, remove() { this.removed = true; } };
+// The shell's announcer: where every success is said, because on /projects the
+// swap that follows it replaces the row's own status node.
+const announcer = { textContent: "" };
+const row = { removed: false, remove() { this.removed = true; },
+              querySelector: () => ({ textContent: "  demo  " }) };
 
 const nodes = {
-  "[data-hidden-list]": list,
   '[data-project-status="7"]': cardStatus,
   "[data-hidden-status]": hiddenStatus,
   '[data-hidden-project="7"]': row,
+  "[data-shell-announce]": announcer,
+  // The workspace names its project in the page title; the hide there reads it.
+  ".page-title": { textContent: "  demo  " },
 };
-
-// Every element the client builds for a hidden row, so the test can assert
-// the name is a plain span and no `/project/{id}` link is ever emitted (that
-// route 404s for hidden projects).
-const created = [];
 
 // A hide on the workspace has no `[data-project-card]` ancestor; the handler
 // navigates to /projects instead. `assign` records where it sent the user.
@@ -1674,7 +1675,10 @@ globalThis.location = { assign(target) { assigned = target; } };
 let navigated = null;
 if (HAS_ROUTER) {
   globalThis.bridgeNavigate = (href, opts) => {
-    navigated = { href, opts: opts === undefined ? null : opts };
+    // `focus` is a callback, which JSON would silently drop; its type is kept
+    // so an assertion can tell "asked the router to place focus" from "didn't".
+    navigated = { href, opts: opts === undefined ? null
+      : { ...opts, focus: typeof opts.focus } };
     return Promise.resolve();
   };
 }
@@ -1688,12 +1692,6 @@ globalThis.document = {
   // source tolerate a missing documentElement would only hide a real break.
   documentElement: { getAttribute: () => null, setAttribute() {}, removeAttribute() {} },
   querySelectorAll: () => [],
-  createElement: (tag) => {
-    const el = { tag, setAttribute() {}, append() {},
-                 textContent: "", className: "", href: "", type: "" };
-    created.push(el);
-    return el;
-  },
 };
 
 let sent = null;
@@ -1717,12 +1715,11 @@ clickHandler({ target: { closest: (sel) => {
   console.log(JSON.stringify({
     sent, errors,
     cardRemoved: card.removed,
-    appended: list.appended,
     cardStatus: cardStatus.textContent,
     hiddenStatus: hiddenStatus.textContent,
+    announced: announcer.textContent,
     rowRemoved: row.removed,
     pressed: pinButton.attrs["aria-pressed"],
-    created: created.map((e) => ({ tag: e.tag, href: e.href, className: e.className })),
     assigned,
     navigated,
   }));
@@ -1751,30 +1748,21 @@ def _run_projects(
 
 
 @pytest.mark.skipif(_node() is None, reason="node is not installed")
-def test_hide_patches_the_status_and_moves_the_card_into_the_hidden_list(tmp_path):
+def test_hide_patches_the_status_and_re_renders_the_index(tmp_path):
+    """Hiding changes the counts and group sizes around the row, which only the
+    server renders, so the index re-renders through the router -- the client
+    never folds the row away by hand (that left every count on the page stale)."""
     got = _run_projects(tmp_path, "hide", ok=True)
     assert got["sent"]["method"] == "PATCH"
     assert got["sent"]["url"] == "/api/projects/7"
     assert got["sent"]["body"] == {"status": "hidden"}
-    assert got["cardRemoved"] is True
-    assert got["appended"] == 1
-    # Never fail silently: a success announces itself, matching pin/restore.
-    assert "✓" in got["cardStatus"]
-
-
-@pytest.mark.skipif(_node() is None, reason="node is not installed")
-def test_hidden_row_names_the_project_in_plain_text_never_a_dead_link(tmp_path):
-    """A hidden project has no workspace (`/project/{id}` 404s), so the row the
-    client builds must name it in a `<span>`, not an `<a href>` -- matching the
-    server-rendered hidden row in projects.html."""
-    got = _run_projects(tmp_path, "hide", ok=True)
-    hrefs = [e["href"] for e in got["created"]]
-    assert not any("/project/" in (h or "") for h in hrefs), (
-        "the client built a /project/{id} link into a hidden row -- a nav dead-end"
-    )
-    names = [e for e in got["created"] if e["className"] == "hidden-project__name"]
-    assert names, "the hidden row has no plain-text name span"
-    assert all(e["tag"] == "span" for e in names)
+    assert got["navigated"] == {"href": "/projects",
+                                "opts": {"push": False, "focus": "function"}}
+    assert got["cardRemoved"] is False
+    # Never fail silently: a success announces itself, matching pin/restore --
+    # into the shell's announcer, not the row's status node the swap replaces.
+    assert got["announced"] == "demo hidden from the dashboard"
+    assert got["cardStatus"] == ""
 
 
 @pytest.mark.skipif(_node() is None, reason="node is not installed")
@@ -1786,9 +1774,9 @@ def test_hide_on_the_workspace_navigates_to_projects_rather_than_stranding(tmp_p
     got = _run_projects(tmp_path, "hide", ok=True, hide_has_card=False)
     assert got["navigated"]["href"] == "/projects"
     assert got["assigned"] is None, "took a hard load past the router that was present"
-    # Nothing on the workspace to fold into a hidden list, so it does not try.
     assert got["cardRemoved"] is False
-    assert got["appended"] == 0
+    # The workspace has no row to name the project; its page title does.
+    assert got["announced"] == "demo hidden from the dashboard"
 
 
 @pytest.mark.skipif(_node() is None, reason="node is not installed")
@@ -1807,8 +1795,9 @@ def test_a_refused_hide_leaves_the_card_on_screen_and_says_so(tmp_path):
     not hidden it."""
     got = _run_projects(tmp_path, "hide", ok=False)
     assert got["cardRemoved"] is False
-    assert got["appended"] == 0
+    assert got["navigated"] is None
     assert "⚠" in got["cardStatus"]
+    assert got["announced"] == ""
     assert any("hiding" in e for e in got["errors"])
 
 
@@ -1820,9 +1809,9 @@ def test_restore_re_renders_the_index_rather_than_asking_for_a_reload(tmp_path):
     # belongs to -- markup only the server renders (rebuilding
     # `project_summary_row` in JS is the duplication the audit called out). So
     # the index re-renders through the router instead of asking for a reload.
-    assert got["navigated"] == {"href": "/projects", "opts": {"push": False}}
-    assert "reload" not in got["hiddenStatus"]
-    assert "✓" in got["hiddenStatus"]
+    assert got["navigated"] == {"href": "/projects",
+                                "opts": {"push": False, "focus": "function"}}
+    assert got["announced"] == "demo restored to the dashboard"
 
 
 @pytest.mark.skipif(_node() is None, reason="node is not installed")
@@ -1864,9 +1853,10 @@ def test_pin_on_the_index_re_renders_through_the_router_never_asking_to_reload(t
     re-renders the grouped index through the router (a swap, not a reload) so
     the row lands in its new sort group from the server's own render."""
     got = _run_projects(tmp_path, "pin", ok=True, pressed="false")
-    assert got["navigated"] == {"href": "/projects", "opts": {"push": False}}
-    assert "reload" not in got["cardStatus"]
-    assert "\u2713 Pinned" in got["cardStatus"]
+    assert got["navigated"] == {"href": "/projects",
+                                "opts": {"push": False, "focus": "function"}}
+    assert got["announced"] == "demo pinned"
+    assert got["cardStatus"] == "", "written into a status node the swap replaces"
 
 
 @pytest.mark.skipif(_node() is None, reason="node is not installed")
@@ -1878,6 +1868,7 @@ def test_pin_on_the_detail_page_announces_without_re_rendering(tmp_path):
     assert got["navigated"] is None, "the detail page has no list; it must not navigate away"
     assert "reload" not in got["cardStatus"]
     assert "\u2713 Pinned" in got["cardStatus"]
+    assert got["announced"] == ""
 
 
 # --- Task 2.5: projects.js -- client-side search + filter -------------------

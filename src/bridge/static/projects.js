@@ -2,15 +2,22 @@
 //
 // One delegated click listener, matching copy.js and launch.js.
 //
-// No action triggers a hard reload. Hiding moves the card's own row into the
-// hidden list in place. Pin and Restore change which sort GROUP a project
-// belongs to — ordering only the server computes (`cards.sort_key` ->
-// `group_projects`) — so rather than reshuffle groups client-side (a different
-// tiebreak than the next load) or rebuild a card from a duplicated template (the
-// innerHTML pattern live.js exists to avoid), they re-render the index through
-// the router. That swaps the list region from the server's own render and keeps
-// the SSE stream up; `/projects` carries no handoff textarea, so a whole-region
-// swap strands no half-typed prompt the way the dashboard would.
+// No action triggers a hard reload. Pin, Hide and Restore all change which
+// sort GROUP a project belongs to, and the counts around it — ordering only the
+// server computes (`cards.sort_key` -> `group_projects`) — so rather than
+// reshuffle groups client-side (a different tiebreak than the next load) or
+// rebuild a row from a duplicated template (the innerHTML pattern live.js exists
+// to avoid), they re-render the index through the router. Hide used to move its
+// row into the hidden list by hand, and left the "shown" count, the group count
+// and the "No hidden projects." line all stale. The swap keeps the SSE stream
+// up; `/projects` carries no handoff textarea, so a whole-region swap strands no
+// half-typed prompt the way the dashboard would.
+//
+// That swap replaces the clicked control and every status node beside it, so
+// a success is announced into the shell's `[data-shell-announce]` (base.html),
+// which no swap touches, and focus is handed to whatever now stands where the
+// clicked control did. A failure changes nothing, so its row is still there and
+// says why in its own status node.
 
 // Only the fields actually being changed reach the server: JSON.stringify drops
 // keys whose value is `undefined`, so an omitted argument omits the key. Guarding
@@ -30,42 +37,66 @@ function say(selector, message) {
   if (node) node.textContent = message;
 }
 
-// Re-render the grouped index from the server after a change that moves a
-// project between sort groups (pin/unpin/restore). The router swaps the list
-// region without a reload, so the SSE stream and the rest of the app survive;
-// `push:false` because we are already on /projects and do not want a duplicate
-// history entry. A real navigation is the no-router fallback -- always correct,
-// only slower.
-function reindexProjects() {
-  if (window.bridgeNavigate) window.bridgeNavigate("/projects", { push: false });
-  else window.location.assign("/projects");
+// Emptied as each action starts, not just written when it ends: a live region
+// reads out a CHANGE, so pinning the same project on a later visit would set
+// the very sentence already sitting there and be announced as nothing.
+const ANNOUNCE = "[data-shell-announce]";
+
+// Re-render the grouped index from the server after a pin, hide or restore.
+// The router swaps the list region without a reload, so the SSE stream and the
+// rest of the app survive; `push:false` because we are already on /projects and
+// do not want a duplicate history entry. A real navigation is the no-router
+// fallback -- always correct, only slower.
+//
+// The swap re-renders the filter and the search box at their defaults, so both
+// are read now and put back before focus is placed: the control focus goes to
+// may only be on screen under the filter the user had (a hidden project's
+// Restore), and hiding projects one by one out of a search should not throw
+// the search away each time.
+function reindexProjects(focusTarget) {
+  if (!window.bridgeNavigate) {
+    window.location.assign("/projects");
+    return Promise.resolve();
+  }
+  const pressed = document.querySelector('[data-projects-filter][aria-pressed="true"]');
+  const filter = pressed ? pressed.getAttribute("data-projects-filter") : "all";
+  const search = document.querySelector("[data-projects-search]");
+  const query = search ? search.value : "";
+  return window.bridgeNavigate("/projects", {
+    push: false,
+    focus: () => {
+      document.querySelectorAll("[data-projects-filter]").forEach((btn) => {
+        btn.setAttribute("aria-pressed",
+                         String(btn.getAttribute("data-projects-filter") === filter));
+      });
+      const box = document.querySelector("[data-projects-search]");
+      if (box) box.value = query;
+      applyProjectsFilter();
+      return focusTarget();
+    },
+  });
 }
 
-function hiddenRow(projectId, name) {
-  const li = document.createElement("li");
-  li.setAttribute("data-hidden-project", projectId);
+// The row after `row` among those still on screen, else the one before it: what
+// stands where a removed row was. Read BEFORE the re-render, from the list the
+// user could actually see, and returned as an id because the node itself is
+// about to be replaced.
+function neighbourId(row, selector, attr) {
+  const rows = Array.from(document.querySelectorAll(selector)).filter((r) => !r.hidden);
+  const at = rows.indexOf(row);
+  const next = rows[at + 1] || rows[at - 1];
+  return next ? next.getAttribute(attr) : null;
+}
 
-  // Plain text, not a link: the workspace route 404s for a hidden project (no
-  // card -> None), so a `/project/{id}` link here would be a nav dead-end. This
-  // mirrors the server-rendered hidden row in projects.html exactly; Restore is
-  // the only action a hidden project offers.
-  const label = document.createElement("span");
-  label.className = "hidden-project__name";
-  label.textContent = name;
-
-  const status = document.createElement("span");
-  status.className = "card__note";
-  status.textContent = "hidden";
-
-  const restore = document.createElement("button");
-  restore.type = "button";
-  restore.className = "btn";
-  restore.setAttribute("data-project-restore", projectId);
-  restore.setAttribute("aria-label", `Restore ${name} to the dashboard`);
-  restore.textContent = "Restore";
-
-  li.append(label, " ", status, " ", restore);
-  return li;
+// The control that stands for project `id` in the index: its Actions summary --
+// or, when its group is collapsed and that summary cannot take focus, the
+// group's own summary, which names where the project went.
+function projectFocusTarget(id) {
+  const row = id ? document.querySelector(`[data-project-card="${id}"]`) : null;
+  if (!row) return null;
+  const group = row.closest("[data-project-group]");
+  if (group && !group.open) return group.querySelector("summary");
+  return row.querySelector(".projects-list__actions summary");
 }
 
 document.addEventListener("click", async (event) => {
@@ -81,14 +112,22 @@ document.addEventListener("click", async (event) => {
     // project's sort GROUP, which only the grouped index renders, so only that
     // page has to re-render to show the move.
     const onIndex = pin.closest("[data-project-card]");
+    say(ANNOUNCE, "");
     try {
       await patchProject(id, undefined, next);
       pin.setAttribute("aria-pressed", String(next));
-      say(`[data-project-status="${id}"]`, next ? "✓ Pinned" : "✓ Unpinned");
+      // Nothing to re-sort on the detail page, and its status node sits in the
+      // page header, which stays -- so it announces there, on screen.
+      if (!onIndex) {
+        say(`[data-project-status="${id}"]`, next ? "✓ Pinned" : "✓ Unpinned");
+        return;
+      }
       // The reorder is the server's to compute, so re-render the index rather
-      // than guessing a position client-side. Nothing to re-sort on the detail
-      // page, so it only announces.
-      if (onIndex) reindexProjects();
+      // than guessing a position client-side. Focus follows the project into
+      // its new group.
+      await reindexProjects(() => projectFocusTarget(id));
+      const name = onIndex.getAttribute("data-project-name");
+      say(ANNOUNCE, `${name} ${next ? "pinned" : "unpinned"}`);
     } catch (error) {
       console.error("bridge: pinning the project failed", error);
       say(`[data-project-status="${id}"]`, next ? "⚠ Not pinned" : "⚠ Not unpinned");
@@ -100,31 +139,27 @@ document.addEventListener("click", async (event) => {
   if (hide) {
     const id = hide.getAttribute("data-project-hide");
     const card = hide.closest("[data-project-card]");
-    // The dashboard's card names itself in an `<h2>`; the Projects index row
-    // (`project_summary_row`) names itself in a `.project-row__name` span
-    // instead -- both are checked so Hide announces the right name on either
-    // page rather than throwing on a null `<h2>` lookup.
-    const nameNode = card ? card.querySelector("h2, .project-row__name") : null;
-    const name = nameNode ? nameNode.textContent.trim() : id;
+    // The index row carries its name; the workspace has no row, and names the
+    // project in its page title instead.
+    const name = card ? card.getAttribute("data-project-name")
+      : document.querySelector(".page-title").textContent.trim();
+    const neighbour = card
+      ? neighbourId(card, "[data-project-row-item]", "data-project-card") : null;
+    say(ANNOUNCE, "");
     try {
       await patchProject(id, "hidden");
-      // On the workspace there is no `[data-project-card]` ancestor to fold
-      // into the hidden list, and a reload here would 404 now that the project
-      // is hidden -- so send the user to a page that still exists rather than
-      // silently doing nothing. On /projects the card is present, so the row
-      // moves into the hidden list as before.
+      // On the workspace a reload would 404 now that the project is hidden --
+      // so send the user to a page that still exists rather than silently doing
+      // nothing. Through the router when it is present so the shell survives; a
+      // hard assign would tear down the SSE connection and reload every script.
       if (!card) {
-        // Go through the router when it is present so the shell survives; a hard
-        // assign would tear down the SSE connection and reload every script.
-        if (window.bridgeNavigate) window.bridgeNavigate("/projects");
+        if (window.bridgeNavigate) await window.bridgeNavigate("/projects");
         else window.location.assign("/projects");
-        return;
+      } else {
+        await reindexProjects(() => projectFocusTarget(neighbour));
       }
-      const list = document.querySelector("[data-hidden-list]");
-      if (list) list.append(hiddenRow(id, name));
-      card.remove();
       // Never fail silently -- a success says so, matching pin/restore.
-      say(`[data-project-status="${id}"]`, "✓ Hidden");
+      say(ANNOUNCE, `${name} hidden from the dashboard`);
     } catch (error) {
       // The card stays, so its own status node is still on screen to say why.
       console.error("bridge: hiding the project failed", error);
@@ -182,13 +217,19 @@ document.addEventListener("click", async (event) => {
   if (!restore) return;
 
   const id = restore.getAttribute("data-project-restore");
+  const row = restore.closest("[data-hidden-project]");
+  const name = row.querySelector(".hidden-project__name").textContent.trim();
+  const neighbour = neighbourId(row, "[data-hidden-project]", "data-hidden-project");
+  say(ANNOUNCE, "");
   try {
     await patchProject(id, "active");
     // A restored project becomes a full card again, in whatever sort group it
     // now belongs to — markup only the server renders. So re-render the index
-    // rather than announcing a reload the user has to perform by hand.
-    say("[data-hidden-status]", "✓ Restored");
-    reindexProjects();
+    // rather than announcing a reload the user has to perform by hand. The
+    // Hidden filter is carried across, so focus moves on to the next Restore.
+    await reindexProjects(() => (neighbour
+      ? document.querySelector(`[data-project-restore="${neighbour}"]`) : null));
+    say(ANNOUNCE, `${name} restored to the dashboard`);
   } catch (error) {
     console.error("bridge: restoring the project failed", error);
     say("[data-hidden-status]", "⚠ Not restored");

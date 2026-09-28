@@ -96,15 +96,23 @@ function saveScrollPosition(pos) {
 // landed on. A real navigation restores the position the browser recorded;
 // pushState navigation gets none of that for free, so without this Back
 // dropped the user at the top of a page they had scrolled deep into.
-function announceArrival(restore) {
+//
+// `focus` is how a caller re-rendering the page it is already on (projects.js
+// after a pin, hide or restore) keeps the user's place: it returns the control
+// that stands where the clicked one did, and that -- not #main -- takes focus.
+// Landing on #main would throw a keyboard user back to the top of the list
+// they were working through. It is asked only now, after the swap and the
+// enter hooks, because the element it names exists only in the new render.
+function announceArrival(restore, focus) {
   const main = document.getElementById("main");
+  const target = focus ? focus() : null;
   // Focus the new content for the screen reader, but NOT with the browser's
   // scroll-into-view. At >=1024px the shell is a fixed 100vh cage and
   // `.shell__body` -- not the window -- is the scroll container, so focusing a
   // `#main` taller than the viewport would scroll that container to pin #main's
   // top and push the whole page header (breadcrumb, title, actions) out of
   // view. `preventScroll` keeps focus a pure a11y move.
-  if (main && main.focus) main.focus({ preventScroll: true });
+  if (!target && main && main.focus) main.focus({ preventScroll: true });
   // Land at the top like a real navigation -- unless this is a pop with a
   // recorded position, which lands where the user left off instead.
   // `window.scrollTo` handles the document scroll below 1024px; setting
@@ -114,10 +122,14 @@ function announceArrival(restore) {
   if (restore) {
     window.scrollTo(restore.x || 0, restore.y || 0);
     if (body) body.scrollTop = restore.body || 0;
-    return;
+  } else {
+    window.scrollTo(0, 0);
+    if (body) body.scrollTop = 0;
   }
-  window.scrollTo(0, 0);
-  if (body) body.scrollTop = 0;
+  // Last, and WITH the browser's scroll-into-view: the saved position is
+  // already back, so the page moves only when the target sits outside it -- a
+  // pinned project that has just moved up to the Pinned group.
+  if (target) target.focus();
 }
 
 // The view transition. `@view-transition { navigation: auto }` in app.css is a
@@ -165,13 +177,16 @@ async function withViewTransition(update) {
 // href either -- the newer navigation is already doing the right thing.
 let navEpoch = 0;
 
-async function navigate(href, { push = true, restore = null } = {}) {
+async function navigate(href, { push = true, restore = null, focus = null } = {}) {
   const url = new URL(href, window.location.href);
   if (!swappable(url)) { window.location.assign(href); return; }
   const epoch = ++navEpoch;
   // Read before anything awaits: the swap below replaces the very container
   // whose offset this is.
   const departure = push ? scrollPosition() : null;
+  // A re-render in place (the caller names what takes focus) stays where the
+  // user was reading, instead of landing at the top like a navigation.
+  const stay = focus ? scrollPosition() : null;
   try {
     // Awaited -- not fire-and-forget. A leave hook's own async work (launch.js's
     // prompt flush) must settle before the fragment fetch and the swap it feeds,
@@ -198,7 +213,7 @@ async function navigate(href, { push = true, restore = null } = {}) {
         window.history.pushState({ bridge: true }, "", url.href);
       }
       window.bridgePage.enter();
-      announceArrival(restore);
+      announceArrival(restore || stay, focus);
     });
   } catch (error) {
     if (epoch !== navEpoch) return;  // a newer navigation already took over

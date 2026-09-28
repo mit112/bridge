@@ -408,3 +408,18 @@ def test_every_other_page_still_reports_unavailable_too(tmp_path):
         assert "Unavailable" in footer, path
         assert "Connected" not in footer, path
     store.close()
+
+
+def test_the_shell_announcer_sits_outside_everything_a_swap_replaces(tmp_path):
+    """projects.js announces a pin, hide or restore into `[data-shell-announce]`
+    AFTER the list re-renders. Anywhere inside `.shell__body` the swap would
+    replace it with a fresh, silent copy -- the very failure it exists to fix --
+    so it must be in the full page, ahead of `.shell`, and absent from the
+    fragment payload altogether."""
+    client = _client(tmp_path)
+    html = client.get("/projects").text
+    assert html.count("data-shell-announce") == 1
+    assert html.index("data-shell-announce") < html.index('<div class="shell">')
+    assert 'role="status" aria-live="polite" data-shell-announce' in html
+    fragment = client.get("/projects", headers={"X-Bridge-Fragment": "1"}).text
+    assert "data-shell-announce" not in fragment
